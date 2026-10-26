@@ -311,7 +311,8 @@ def call_claude(req, system, prompt):
 AGENT_TOOLS = [
     "list_windows", "list_workspaces", "system_info", "list_apps", "launch_app", "focus_window", "close_window",
     "focus_workspace", "move_window_to_workspace", "window_action", "save_layout", "list_layouts", "restore_layout",
-    "read_screen", "clipboard_get", "clipboard_set", "notifications", "type_text", "press_keys", "run_steps",
+    "read_screen", "clipboard_get", "clipboard_set", "notifications", "dismiss_notifications", "notification_action",
+    "snooze_notification", "do_not_disturb", "clear_notification_history", "type_text", "press_keys", "run_steps",
     "shell_ipc", "shell_ipc_list", "list_themes", "set_theme", "set_wallpaper", "widget", "equalizer", "calendar",
     "tasks", "contacts", "notify", "ui_read", "ui_act", "remind", "recall", "screen_capture",
 ]
