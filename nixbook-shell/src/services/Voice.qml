@@ -9,7 +9,7 @@ import QtQuick
 
 /**
  * Talking to the desktop (ai.voice): push to talk (Mod+T, `voice toggle`,
- * the card's mic button). Two engines (ai.voice.engine; "auto": Meta when
+ * the mic button of Claude's speech bubble). Two engines (ai.voice.engine; "auto": Meta when
  * it is the model provider with a key, else this computer):
  *   - meta: the microphone streamed to Muse Voice Transcribe while the user
  *     speaks (`nixbook-voice-stream`, scripts/voice-stream.py): the words
@@ -18,11 +18,12 @@ import QtQuick
  *   - local: records (PipeWire, 16 kHz mono, ffmpeg), stops once the user
  *     has spoken and then been quiet for ai.voice.silenceSeconds (or the key
  *     again, or 30 s), and transcribes with whisper.cpp
- *     (`nixbook-voice-transcribe`, nothing leaves the computer). What was said goes to the Quick AI card: a follow-up
- * when a conversation is open in it, else an order (QuickAi.command: a
- * plain command done at once by QuickIntent, else the model with the
- * desktop tools). The card shows the listening (`level`, a live meter) and
- * the transcribing; Escape cancels.
+ *     (`nixbook-voice-transcribe`, nothing leaves the computer).
+ * It all happens in Claude's speech bubble (the Mod+C one, AgentSpeech.qml):
+ * listening calls it up, the words show in its field as they come, and
+ * what was said is sent there (Initiative.reply: a plain command done at
+ * once by QuickIntent, else Quick AI answers or acts with the desktop
+ * tools, or Claude in its own thread). Escape in the bubble cancels.
  */
 Singleton {
     id: root
@@ -69,8 +70,8 @@ Singleton {
                 Translation.tr("Turn it on in Settings > Desktop agents > Quick AI")]);
             return;
         }
-        // The card shows the listening (an empty one when nothing is open).
-        if (!QuickAi.open) QuickAi.askQuestion("", "voice");
+        // The bubble shows the listening (called up when it isn't).
+        QuickAi.askQuestion("", "voice");
         root.error = "";
         root.heard = false;
         root.level = 0;
@@ -123,16 +124,13 @@ Singleton {
         }
         root.transcribing = false;
         root.level = 0;
-        // A card that only listened: closed.
-        if (QuickAi.open && QuickAi.source?.kind === "voice" && !QuickAi.busy && QuickAi.answer.length === 0
-                && QuickAi.steps.length === 0 && QuickAi.turns.length === 0)
-            QuickAi.close();
+        root.delivered();
     }
 
     // A recording (16 kHz mono WAV, deleted afterwards) taken as said.
     function transcribeFile(path) {
         if (root.listening || root.transcribing || !root.available) return;
-        if (!QuickAi.open) QuickAi.askQuestion("", "voice");
+        QuickAi.askQuestion("", "voice");
         root.error = "";
         transcriber.file = path;
         transcriber.wanted = true;
@@ -140,13 +138,14 @@ Singleton {
         transcriber.running = true;
     }
 
-    // What was said: into the conversation open in the card, else an order.
+    // The bubble's field is emptied (what was said is sent, or cancelled).
+    signal delivered()
+    // What was said: sent in the bubble, as if typed there.
     function deliver(text) {
         root.lastText = text;
-        const conversing = QuickAi.open && (QuickAi.answer.length > 0 || QuickAi.turns.length > 0
-            || QuickAi.steps.length > 0 || QuickAi.busy) && !QuickAi.instant;
-        if (conversing) QuickAi.followUp(text);
-        else QuickAi.command(text, "voice");
+        root.delivered();
+        if (Initiative.speaking) Initiative.reply(text);
+        else QuickAi.askQuestion(text, "voice");
     }
 
     Timer {

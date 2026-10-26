@@ -27,7 +27,6 @@
       "effort": "low",
       "defaultMode": "auto",
       "translateTo": "",
-      "typewriter": true,
       "launcher": true,
       "notifications": true,
       "confirm": "destructive"

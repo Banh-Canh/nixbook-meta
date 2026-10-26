@@ -214,17 +214,17 @@ Singleton {
                     property string smallModel: "" // in place of Haiku (meta: muse-spark-1.3)
                     property string bigModel: "" // in place of Opus (meta: muse-wonder-1.0)
                 }
-                // Quick AI (services/QuickAi.qml, scripts/quick-ai.py): the
-                // card answering in a couple of seconds about the voice (Mod+T),
+                // Quick AI (services/QuickAi.qml, scripts/quick-ai.py): the model
+                // provider's model called directly to answer and act in a few
+                // seconds, in Claude's speech bubble (Mod+C, Mod+T to talk), from
                 // the screenshot app's Ask AI, the launcher's "!" and a
-                // notification. The provider's API called directly (no agent).
+                // notification's AI buttons.
                 property JsonObject quick: JsonObject {
                     property bool enable: true
                     property string model: "small" // small, main or big: the provider's
                     property string effort: "low" // the model's thinking: low, medium, high
                     property string defaultMode: "auto" // auto (from the text), explain, summarize, translate, rewrite, fix, ask
                     property string translateTo: "" // empty: the interface language
-                    property bool typewriter: true // the answer typed out as it arrives
                     property bool launcher: true // "!" and the "Ask AI" row in the launcher
                     property bool notifications: true // Summarize / Suggest replies on notifications
                     // Doing things (the desktop tools): ask before "destructive"
@@ -233,8 +233,8 @@ Singleton {
                     property string confirm: "destructive"
                 }
                 // Talking to the desktop (services/Voice.qml): push to talk
-                // (Mod+T), transcribed on this computer by whisper.cpp, then
-                // sent to the Quick AI card.
+                // (Mod+T), transcribed by Meta or on this computer, then sent
+                // in Claude's speech bubble.
                 property JsonObject voice: JsonObject {
                     property bool enable: true
                     // auto: Meta's Muse Voice Transcribe when Meta is the model

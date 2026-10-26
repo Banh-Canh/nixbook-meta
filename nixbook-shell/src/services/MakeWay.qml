@@ -30,6 +30,7 @@ import QtQuick
  *     cut-in or the bubble hidden while the agent works, back when it
  *     stops; never the side panel (it lets the agent through already) nor
  *     the lock screen or a password prompt.
+ * Also the Kiroshi scan.
  * The windows read `active`, `capture`, `fade(base, name)`.
  */
 Singleton {
@@ -68,6 +69,7 @@ Singleton {
         if (Initiative.speaking !== null) out.push("speechBubble")
         if (Notifications.popupList.length > 0) out.push("notificationPopups")
         if (Object.values(root.cutIns).some(v => v)) out.push("cutIn")
+        if (Kiroshi.open) out.push("kiroshi")
         return out
     }
     onOverlaysChanged: overlaysWrite.restart()

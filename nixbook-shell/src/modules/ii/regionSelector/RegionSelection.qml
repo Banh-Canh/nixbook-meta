@@ -34,7 +34,7 @@ PanelWindow {
     }
 
     // Modes
-    // AskAi: the region goes to the Quick AI card (services/QuickAi.qml).
+    // AskAi: the region goes to Quick AI, in the speech bubble (services/QuickAi.qml).
     enum SnipAction { Copy, Edit, Search, CharRecognition, Record, RecordWithSound, AskAi }
     // Window / Screen: hovering a window or a screen selects it, a click takes it.
     enum SelectionMode { RectCorners, Circle, Window, Screen }

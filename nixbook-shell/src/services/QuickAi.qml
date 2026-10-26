@@ -9,23 +9,23 @@ import Quickshell.Wayland
 import QtQuick
 
 /**
- * Quick AI (ai.quick): AI where the user already is, answering in a couple
- * of seconds. One card (modules/ii/quickAi/QuickAiCard.qml) at the top of
- * the focused screen, called up on:
- *   - the screenshot app (Print, its Ask AI action or `A`; `quickAi screen`
- *     opens it so): a region, a window or a screen, sent as an image; What's
- *     this / Explain / Summarize / Translate / Copy text / Ask;
- *   - the voice (Mod+T, services/Voice.qml) and the empty card: an order;
- *   - a selection (`quickAi selection`, unbound): the primary selection
- *     (else the clipboard); Explain / Summarize / Translate / Rewrite / Fix
- *     / Ask, the text typed back over the selection with Replace;
- *   - the launcher ("!" or the "Ask AI" row): a question;
- *   - a notification: Summarize, or three replies to send in one click.
- * Each answer can be followed up, copied, or continued in the side panel.
- * No agent: `nixbook-quick-ai` (scripts/quick-ai.py) calls the provider's
- * Messages API itself with its small model (Meta: muse-spark), through
- * `nixbook-model-provider run` for the key; with Anthropic, `claude -p`
- * with Haiku. Text goes through desktop-mcp's privacy mask on the way.
+ * Quick AI (ai.quick): fast answers and actions, in Claude's speech bubble
+ * (modules/ii/notificationPopup/AgentSpeech.qml, the Mod+C one): one box to
+ * talk to the AI. What the user asks there (typed, said with Mod+T, from
+ * the launcher's "!", a notification's Summarize / Suggest replies, the
+ * screenshot app's Ask AI, a Kiroshi task) is answered by the model
+ * provider's small model called directly (`nixbook-quick-ai`,
+ * scripts/quick-ai.py, through `nixbook-model-provider run`; Meta: Muse
+ * Spark, a few seconds), not by an agent that has to start: plain commands
+ * are done at once by QuickIntent first (Initiative.reply), anything else
+ * by the model with the desktop tools ("do"), each step in the bubble's
+ * status line. Its answers are messages of the bubble's conversation (an
+ * AiChatSession), so expanding the bubble carries it on in the side panel
+ * with Claude Code. Under the answer, the bubble shows `chips`: Allow / No
+ * for a destructive step, the suggested replies, the modes of a screen
+ * region (What's this, Explain, Summarize, Translate, Copy text), Copy.
+ * With Anthropic as the provider, `claude -p` (Haiku) answers instead.
+ * Text goes through desktop-mcp's privacy mask on the way.
  */
 Singleton {
     id: root
@@ -34,72 +34,67 @@ Singleton {
 
     readonly property bool available: Config.ready && (Config.options.ai.quick?.enable ?? true)
         && Config.options.policies.ai === 1
-    property bool open: false
 
-    // What it is about: {kind: selection|clipboard|screen|launcher|
-    // notification|empty, text, image, app, title, notificationId, inline}.
-    property var source: ({})
-    property string mode: "explain"
-    // The conversation after the first answer: [{role, text}].
-    property var turns: []
+    // The bubble's conversation it answers in, and what it is about: its
+    // first turn {mode, question, text, image, context, notificationId,
+    // inline, start (the index of its first message)}.
+    property var chat: null
+    property var convo: ({})
+    // The answer being written (an AiMessageData of `chat`).
+    property var msg: null
     property string answer: ""
+    property var steps: []
     property var replies: []
+    // The step waiting for the user's OK ({id, tool, summary}).
+    property var pending: null
+    property bool paused: false
     property bool busy: false
     property string error: ""
     property string provider: ""
     property string model: ""
-    property int lastMs: 0
-    property real startedAt: 0
-    // Bumped on every new answer: the card restarts its typewriter.
-    property int revision: 0
-    // Doing things (mode "do"): the tool calls as they happen, [{id, tool,
-    // summary, status: run|ok|error|denied, result}], what the model said
-    // between them, the step waiting for the user's OK ({id, tool,
-    // summary}), and desktop control found paused.
-    property var steps: []
-    property var notes: []
-    property var pending: null
-    property bool paused: false
-    // Said at once by QuickIntent (no model): music, volume, apps…
-    property bool instant: false
 
     readonly property var modeInfo: ({
-        explain: { label: Translation.tr("Explain"), icon: "lightbulb" },
-        summarize: { label: Translation.tr("Summarize"), icon: "summarize" },
-        translate: { label: Translation.tr("Translate"), icon: "translate" },
-        rewrite: { label: Translation.tr("Rewrite"), icon: "edit_note" },
-        fix: { label: Translation.tr("Fix"), icon: "spellcheck" },
-        ask: { label: Translation.tr("Ask"), icon: "chat" },
-        reply: { label: Translation.tr("Suggest replies"), icon: "quickreply" },
-        do: { label: Translation.tr("Do it"), icon: "bolt" },
-        screen: { label: Translation.tr("What's this?"), icon: "center_focus_strong" },
-        extract: { label: Translation.tr("Copy text"), icon: "text_fields" },
+        explain: Translation.tr("Explain"),
+        summarize: Translation.tr("Summarize"),
+        translate: Translation.tr("Translate"),
+        rewrite: Translation.tr("Rewrite"),
+        fix: Translation.tr("Fix"),
+        ask: Translation.tr("Ask"),
+        reply: Translation.tr("Suggest replies"),
+        do: Translation.tr("Do it"),
+        screen: Translation.tr("What's this?"),
+        extract: Translation.tr("Copy text"),
     })
-    // The modes offered for the source.
-    readonly property var modes: {
-        const k = root.source?.kind ?? "";
-        // The screenshot app's Ask AI: the text in the region too.
-        if (k === "screen") return ["screen", "explain", "summarize", "translate", "extract", "ask"];
-        if (k === "notification") return ["summarize", "reply", "explain", "translate"];
-        if (k === "launcher" || k === "empty" || k === "voice" || k === "scan") return [];
-        return ["explain", "summarize", "translate", "rewrite", "fix", "ask"];
+
+    function owns(chat) {
+        return chat !== null && chat !== undefined && chat === root.chat;
     }
-    // The answer stands in for the selection: Replace types it over it.
-    readonly property bool canReplace: (root.source?.kind === "selection")
-        && ["rewrite", "fix", "translate"].includes(root.mode) && !root.busy && root.answer.length > 0
-    readonly property string sourceLabel: {
-        const s = root.source ?? {};
-        const app = s.app ? ` · ${s.app}` : "";
-        switch (s.kind) {
-        case "selection": return Translation.tr("Selection") + app;
-        case "clipboard": return Translation.tr("Clipboard") + app;
-        case "screen": return Translation.tr("Screen");
-        case "launcher": return Translation.tr("Launcher");
-        case "voice": return Translation.tr("Voice");
-        case "scan": return Translation.tr("Kiroshi scan");
-        case "notification": return Translation.tr("Notification") + app;
-        default: return Translation.tr("Ask anything");
+
+    // Under the answer in the bubble: {label, main, run}.
+    readonly property var chips: {
+        const out = [];
+        if (root.pending) {
+            const what = root.pending.tool.replace(/_/g, " ") + (root.pending.summary ? ` (${root.pending.summary})` : "");
+            out.push({ label: Translation.tr("Allow: %1").arg(what), main: true, run: () => root.approve(true) });
+            out.push({ label: Translation.tr("No"), main: false, run: () => root.approve(false) });
+            return out;
         }
+        if (root.busy) return out;
+        if (root.paused) {
+            out.push({ label: Translation.tr("Allow desktop control and retry"), main: true, run: () => root.allowControl() });
+            return out;
+        }
+        for (const r of root.replies)
+            out.push({ label: r, main: out.length === 0, run: () => root.sendReply(r) });
+        if (out.length > 0) return out;
+        if (root.convo.image) {
+            for (const m of ["screen", "explain", "summarize", "translate", "extract"])
+                if (m !== root.convo.mode || root.answer.length === 0)
+                    out.push({ label: root.modeInfo[m], main: out.length === 0 && root.answer.length === 0, run: () => root.run(m) });
+        }
+        if (root.answer.length > 0)
+            out.push({ label: Translation.tr("Copy"), main: false, run: () => root.copy() });
+        return out;
     }
 
     // The mode a text gets by itself (ai.quick.defaultMode "auto"): an
@@ -118,175 +113,234 @@ Singleton {
         return { app: top?.appId ?? "", title: top?.title ?? "" };
     }
 
-    // ── Entry points ──
-    // The selection (else the clipboard): read, then the card.
+    function refuse() {
+        Quickshell.execDetached(["notify-send", "-a", "Quick AI", "-t", "4000", Translation.tr("Quick AI is off"),
+            Config.options.policies.ai !== 1 ? Translation.tr("AI features are off (Settings > Desktop agents)")
+                : Translation.tr("Turn it on in Settings > Desktop agents > Talk to your desktop")]);
+    }
+
+    // ── The bubble ──
+    // A conversation in the bubble to start: the one called up and still
+    // empty, else a new one (the one before stays in the history).
+    function newConversation() {
+        const it = Initiative.speaking;
+        if (it && it.kind === "ask" && !Initiative.conversing) Initiative.focusWanted();
+        else Initiative.fresh();
+        Initiative.prepare();
+        return Initiative.chat;
+    }
+    // The bubble called up for a question or an order (Mod+T, the launcher,
+    // Settings' Try it): asked at once when there is one.
+    function askQuestion(question, kind = "launcher") {
+        if (!root.available) return root.refuse();
+        const q = String(question ?? "").trim();
+        if (q.length === 0) {
+            if (!Initiative.speaking) Initiative.summon();
+            else Initiative.focusWanted();
+            return;
+        }
+        root.newConversation();
+        Initiative.reply(q);
+    }
+    // An order given by the shell itself (a Kiroshi task): `label` is what
+    // the bubble shows as the user's message.
+    function command(text, kind = "scan", label = "") {
+        if (!root.available) return root.refuse();
+        root.begin({ mode: "do", question: String(text ?? "").trim() }, label || text);
+    }
+    // A region of the screen (the screenshot app's Ask AI, Kiroshi's Tell me
+    // more): the modes as chips, or the question asked at once.
+    function askImage(path, question = "", label = "") {
+        if (!root.available) return root.refuse();
+        const q = String(question ?? "").trim();
+        if (q.length > 0) {
+            root.begin({ mode: "screen", image: path, question: q }, label || q);
+            return;
+        }
+        const chat = root.newConversation();
+        if (!chat) return;
+        root.stop();
+        root.chat = chat;
+        root.clear();
+        root.convo = { mode: "screen", image: path, question: "", context: root.focusedApp(), start: chat.messageIDs.length };
+        chat.addMessage(Translation.tr("📷 A region of the screen: what do you want to know?"), "user");
+    }
+    // The screenshot app in its Ask AI action.
+    function askScreen() {
+        if (!root.available) return root.refuse();
+        GlobalStates.regionAskAiRequested();
+    }
+    // A notification: summarized, or replies to send in one click.
+    function askNotification(notif, mode = "summarize") {
+        if (!root.available || !notif) return root.refuse();
+        const text = [notif.summary, String(notif.body ?? "").replace(/<[^>]+>/g, "")].filter(s => s).join("\n");
+        const inline = (Notifications.replyMethod(notif)?.kind ?? "") === "inline";
+        const who = [notif.appName, notif.summary].filter(s => s).join(" — ");
+        root.begin({ mode: mode, text: text, notificationId: notif.notificationId, inline: inline,
+                     context: { app: notif.appName ?? "", title: notif.summary ?? "" } },
+            mode === "reply" ? Translation.tr("Suggest replies: %1").arg(who) : Translation.tr("Summarize: %1").arg(who));
+    }
+    // A text (`quickAi selection`: the primary selection, else the clipboard).
+    function askText(text, kind = "selection", where = null, mode = "") {
+        if (!root.available) return root.refuse();
+        const t = String(text ?? "").trim();
+        if (t.length === 0) return root.askQuestion("", kind);
+        const m = mode || root.autoMode(t);
+        root.begin({ mode: m, text: t, context: where ?? root.focusedApp() },
+            `${root.modeInfo[m] ?? m}: “${t.length > 120 ? t.slice(0, 117) + "…" : t}”`);
+    }
     function askSelection() {
         if (!root.available) return root.refuse();
-        if (root.open && root.source?.kind === "selection") { root.close(); return; }
         selectionReader.where = root.focusedApp();
         selectionReader.primary = true;
         selectionReader.running = false;
         selectionReader.running = true;
     }
-    function askText(text, kind = "selection", where = null, mode = "") {
-        if (!root.available) return root.refuse();
-        const w = where ?? root.focusedApp();
-        const t = String(text ?? "").trim();
-        if (t.length === 0) {
-            root.start({ kind: "empty", app: w.app, title: w.title }, "ask", "");
-            return;
-        }
-        root.start({ kind: kind, text: t, app: w.app, title: w.title }, mode || root.autoMode(t), "");
-    }
-    // A question or an order with no text (the launcher, the empty card,
-    // the voice): done at once when QuickIntent knows it, else the model
-    // with the desktop tools ("do": it answers, or acts).
-    function askQuestion(question, kind = "launcher") {
-        if (!root.available) return root.refuse();
-        const q = String(question ?? "").trim();
-        root.start(Object.assign({ kind: kind }, root.focusedApp()), "do", q);
-    }
-    function command(text, kind = "voice") {
-        root.askQuestion(text, kind);
-    }
-    // A region of the screen (the region selector's Ask AI action).
-    function askImage(path, question = "") {
-        if (!root.available) return root.refuse();
-        root.start(Object.assign({ kind: "screen", image: path }, root.focusedApp()), "screen", question);
-    }
-    // The screenshot app (region selector) in its Ask AI action.
-    function askScreen() {
-        if (!root.available) return root.refuse();
-        GlobalStates.regionAskAiRequested();
-    }
-    // A notification: Summarize or Suggest replies (mode "reply").
-    function askNotification(notif, mode = "summarize") {
-        if (!root.available || !notif) return root.refuse();
-        const text = [notif.summary, String(notif.body ?? "").replace(/<[^>]+>/g, "")].filter(s => s).join("\n");
-        const inline = (Notifications.replyMethod(notif)?.kind ?? "") === "inline";
-        root.start({ kind: "notification", text: text, app: notif.appName ?? "", title: notif.summary ?? "",
-            notificationId: notif.notificationId, inline: inline }, mode, "");
-    }
 
-    function refuse() {
-        Quickshell.execDetached(["notify-send", "-a", "Quick AI", "-t", "4000", Translation.tr("Quick AI is off"),
-            Config.options.policies.ai !== 1 ? Translation.tr("AI features are off (Settings > Desktop agents)")
-                : Translation.tr("Turn it on in Settings > Desktop agents > Quick AI")]);
-    }
-
-    // ── The conversation ──
-    function start(source, mode, question) {
-        root.source = source;
-        root.mode = mode;
-        root.turns = [];
-        root.open = true;
-        if (!question && ["empty", "launcher", "voice", "scan"].includes(source.kind)) {
-            root.stop();
-            root.clearAnswer();
-            return;
+    // What the user says in the bubble (Initiative.reply, after QuickIntent):
+    // answered here when it is a conversation this started or a new one of
+    // theirs; false for Claude's own threads (Claude Code answers them).
+    function handle(said, attach = "") {
+        if (!root.available) return false;
+        const chat = Initiative.chat;
+        if (root.owns(chat)) {
+            // A region still waiting for its question: this is it.
+            if (!attach && root.convo.image && root.answer.length === 0 && !root.busy)
+                root.convo = Object.assign({}, root.convo, { mode: "screen", question: said, start: chat.messageIDs.length });
+            if (attach) {
+                chat.attachFile("");
+                root.convo = Object.assign({}, root.convo, { image: attach, mode: "screen", question: said,
+                    start: chat.messageIDs.length });
+            }
+            chat.addMessage(said, "user");
+            root.request();
+            return true;
         }
-        if (mode === "do" && root.tryInstant(question)) return;
-        root.request(question, "");
-    }
-    // The same source, another mode.
-    function run(mode) {
-        if (!root.modeInfo[mode] || root.source?.kind === undefined) return;
-        root.mode = mode;
-        root.turns = [];
-        root.request("", "");
-    }
-    // A question after an answer (the first one, when nothing was asked yet).
-    function followUp(question) {
-        const q = String(question ?? "").trim();
-        if (q.length === 0) return;
-        closeLater.stop();
-        if (root.answer.length === 0 && root.turns.length === 0 && root.steps.length === 0) {
-            if (root.mode === "do" && root.tryInstant(q)) return;
-            root.request(q, "");
-            return;
-        }
-        // After an instant command: a new order, not a follow-up.
-        if (root.instant) {
-            root.start(Object.assign({}, root.source), "do", q);
-            return;
-        }
-        const turns = root.turns.slice();
-        if (root.answer.length > 0) turns.push({ role: "assistant", text: root.answer });
-        root.turns = turns;
-        root.request(root.firstQuestion, q);
-    }
-    function clearAnswer() {
-        root.answer = "";
-        root.replies = [];
-        root.error = "";
-        root.steps = [];
-        root.notes = [];
-        root.pending = null;
-        root.paused = false;
-        root.instant = false;
-    }
-    // A plain command QuickIntent does in code: no model, no wait.
-    function tryInstant(text) {
-        const did = QuickIntent.run(text);
-        if (!did) return false;
+        const item = Initiative.speaking;
+        if (!Initiative.isAsk(item) || Initiative.conversing) return false;
+        if (!chat) Initiative.prepare();
+        const fresh = Initiative.chat;
+        if (!fresh) return false;
+        if (attach) fresh.attachFile("");
         root.stop();
-        root.clearAnswer();
-        root.firstQuestion = text;
-        root.instant = true;
-        root.provider = "";
-        root.model = "";
-        root.lastMs = 0;
-        root.answer = did;
-        root.revision++;
-        closeLater.restart();
+        root.chat = fresh;
+        root.clear();
+        root.convo = { mode: attach ? "screen" : "do", image: attach, question: said, context: root.focusedApp(),
+                       start: fresh.messageIDs.length };
+        fresh.addMessage(said, "user");
+        root.request();
         return true;
     }
-    // An instant command's card goes by itself.
-    Timer {
-        id: closeLater
-        interval: 2200
-        onTriggered: if (root.instant && !root.busy) root.close()
-    }
-    function retry() {
-        root.request(root.firstQuestion, root.lastFollowUp);
-    }
-    property string firstQuestion: ""
-    property string lastFollowUp: ""
 
-    function request(question, followUp) {
+    // A conversation started by the shell, with `label` as the user's message.
+    function begin(convo, label) {
+        const chat = root.newConversation();
+        if (!chat) return;
         root.stop();
-        if (!followUp) root.firstQuestion = question;
-        root.lastFollowUp = followUp;
-        const s = root.source;
-        const turns = root.turns.slice();
-        if (followUp) turns.push({ role: "user", text: followUp });
+        root.chat = chat;
+        root.clear();
+        root.convo = Object.assign({ context: root.focusedApp() }, convo, { start: chat.messageIDs.length });
+        chat.addMessage(String(label || convo.question || ""), "user");
+        root.request();
+    }
+    // The same subject, another mode (a chip).
+    function run(mode) {
+        if (!root.chat || !root.modeInfo[mode]) return;
+        root.convo = Object.assign({}, root.convo, { mode: mode, question: "", start: root.chat.messageIDs.length });
+        root.chat.addMessage(root.modeInfo[mode], "user");
+        root.request();
+    }
+
+    function clear() {
+        root.answer = "";
+        root.steps = [];
+        root.replies = [];
+        root.pending = null;
+        root.paused = false;
+        root.error = "";
+    }
+
+    // Asks the model: the conversation's first turn (convo) and what was said
+    // since its start in the chat (history), the last user message as the
+    // follow-up when there is more than the first.
+    function request() {
+        root.stop();
+        const chat = root.chat;
+        if (!chat) return;
+        const said = chat.messageIDs.slice(root.convo.start ?? 0).map(id => chat.messageByID[id])
+            .filter(m => m && (m.role === "user" || m.role === "assistant"));
+        const users = said.filter(m => m.role === "user");
+        const followUp = users.length > 1 ? users[users.length - 1].content : "";
+        const history = followUp ? said.slice(1, -1).map(m => ({ role: m.role, text: m.content })) : [];
+        const c = root.convo;
         const req = {
-            mode: root.mode, question: question, text: s.text ?? "", image: s.image ?? "",
-            context: { app: s.app ?? "", title: s.title ?? "", source: s.kind },
-            history: followUp ? root.turns : [], followUp: followUp,
+            mode: c.mode ?? "do", question: c.question || (users[0]?.content ?? ""),
+            text: c.text ?? "", image: c.image ?? "",
+            context: { app: c.context?.app ?? "", title: c.context?.title ?? "", source: "bubble" },
+            history: history, followUp: followUp,
             lang: ConfigAssistant.uiLang(), target: Config.options.ai.quick?.translateTo || "",
             model: Config.options.ai.quick?.model ?? "small", effort: Config.options.ai.quick?.effort ?? "low",
             claude: Ai.claudeCodePath, confirm: Config.options.ai.quick?.confirm ?? "destructive",
         };
-        if (followUp) root.turns = turns;
-        root.clearAnswer();
+        // Modes about a text or an image ask nothing themselves.
+        if (!c.question && c.mode !== "do" && !followUp) req.question = "";
+        // The answer's message, filled as it comes ("Thinking…" meanwhile).
+        chat.addMessage("…", "assistant");
+        const m = chat.messageByID[chat.messageIDs[chat.messageIDs.length - 1]];
+        m.content = "";
+        m.rawContent = "<think>\n";
+        m.thinking = true;
+        m.done = false;
+        root.msg = m;
+        root.clear();
         root.busy = true;
-        root.startedAt = Date.now();
-        root.revision++;
         proc.serial++;
         proc.requestJson = JSON.stringify(req);
         proc.running = true;
+    }
+    // The message as it stands: each step a closed think block (the bubble
+    // says "Used <tool>…"), the one running open, then the text.
+    function render() {
+        const m = root.msg;
+        if (!m) return;
+        let raw = "";
+        for (const s of root.steps) {
+            raw += `<think>\n**${s.tool.replace(/_/g, " ")}**${s.summary ? "\n" + s.summary : ""}`;
+            if (s.status !== "run")
+                raw += `\n${s.status === "ok" ? "✓" : s.status === "denied" ? "✗ refused" : "✗ " + (s.result ?? "")}\n</think>\n`;
+        }
+        const text = root.answer.length > 0 ? root.answer : root.error.length > 0 ? "⚠ " + root.error : "";
+        if (root.busy && text.length === 0 && (root.steps.length === 0 || root.steps[root.steps.length - 1].status !== "run"))
+            raw += "<think>\n";
+        m.rawContent = raw + text;
+        m.content = text;
+    }
+    function finish() {
+        root.busy = false;
+        root.pending = null;
+        const m = root.msg;
+        if (!m) return;
+        if (root.answer.length === 0 && root.error.length === 0 && root.replies.length > 0)
+            root.answer = Translation.tr("Pick a reply below.");
+        root.render();
+        if (m.content.length === 0) {
+            m.content = Translation.tr("(no answer)");
+            m.rawContent = m.rawContent + m.content;
+        }
+        m.thinking = false;
+        m.done = true;
+        m.model = root.model;
     }
     function stop() {
         if (proc.running) {
             proc.serial++;
             proc.running = false;
+            if (root.msg && !root.msg.done) {
+                if (root.answer.length === 0) root.answer = Translation.tr("(stopped)");
+                root.finish();
+            }
         }
         root.busy = false;
-    }
-    function close() {
-        root.stop();
-        root.open = false;
     }
 
     // The step waiting for an OK: done or not.
@@ -304,62 +358,34 @@ Singleton {
     Timer {
         id: allowRetry
         interval: 400
-        onTriggered: root.retry()
+        onTriggered: {
+            if (!root.chat) return;
+            // The refused answer goes: asked again.
+            const ids = root.chat.messageIDs;
+            if (ids.length > 0 && root.chat.messageByID[ids[ids.length - 1]]?.role === "assistant")
+                root.chat.removeMessage(ids.length - 1);
+            root.request();
+        }
     }
-
-    // ── What to do with the answer ──
     function copy(text = root.answer) {
         if (!text) return;
         Quickshell.execDetached(["wl-copy", "--", text]);
     }
-    // Typed over the selection, once the card has given the keyboard back.
-    function replace() {
-        if (!root.canReplace) return;
-        replaceTimer.text = root.answer;
-        root.close();
-        replaceTimer.restart();
-    }
-    Timer {
-        id: replaceTimer
-        property string text: ""
-        interval: 220
-        onTriggered: Quickshell.execDetached(["wtype", "--", text])
-    }
     // A suggested reply: sent inline when the app takes it, else copied and
     // the app's own reply opened.
     function sendReply(text) {
-        const s = root.source;
-        if (s.kind !== "notification") { root.copy(text); return; }
-        if (s.inline && Notifications.sendReply(s.notificationId, text)) {
-            Quickshell.execDetached(["notify-send", "-a", "Quick AI", "-t", "2500", Translation.tr("Reply sent"), text]);
-            root.close();
+        const c = root.convo;
+        if (!c.notificationId) { root.copy(text); return; }
+        root.replies = [];
+        if (c.inline && Notifications.sendReply(c.notificationId, text)) {
+            root.chat?.addMessage(Translation.tr("Sent: %1").arg(text), "user");
             return;
         }
         root.copy(text);
-        const notif = Notifications.list.find(n => n.notificationId === s.notificationId);
+        const notif = Notifications.list.find(n => n.notificationId === c.notificationId);
         const how = notif ? Notifications.replyMethod(notif) : null;
-        if (how?.identifier) Notifications.attemptInvokeAction(s.notificationId, how.identifier);
-        Quickshell.execDetached(["notify-send", "-a", "Quick AI", "-t", "3000", Translation.tr("Reply copied"),
-            Translation.tr("Paste it in the conversation")]);
-        root.close();
-    }
-    // The conversation goes on in the side panel's chat (Claude Code there,
-    // with the desktop tools).
-    function continueInChat() {
-        const s = root.source;
-        const lines = [];
-        if (s.text) lines.push("> " + s.text.split("\n").slice(0, 30).join("\n> "));
-        if (s.app) lines.push(Translation.tr("(from %1)").arg(s.app));
-        if (root.firstQuestion) lines.push(root.firstQuestion);
-        else lines.push(root.modeInfo[root.mode]?.label ?? "");
-        for (const t of root.turns) lines.push((t.role === "assistant" ? "AI: " : "") + t.text);
-        if (root.answer) lines.push(Translation.tr("Quick answer so far:") + "\n" + root.answer);
-        lines.push(Translation.tr("Let's go further."));
-        Ai.newChat();
-        if (s.image) Ai.attachFile(s.image);
-        GlobalStates.sidebarLeftOpen = true;
-        Ai.sendUserMessage(lines.join("\n\n"));
-        root.close();
+        if (how?.identifier) Notifications.attemptInvokeAction(c.notificationId, how.identifier);
+        root.chat?.addMessage(Translation.tr("Copied, to paste in the conversation: %1").arg(text), "user");
     }
 
     // ── Processes ──
@@ -400,6 +426,7 @@ Singleton {
                 try { ev = JSON.parse(line); } catch (e) {
                     // nixbook-model-provider's own failure (no key…).
                     if (line.trim().length > 0) root.error = line.trim();
+                    root.render();
                     return;
                 }
                 switch (ev.type) {
@@ -430,16 +457,11 @@ Singleton {
                 case "approve":
                     root.pending = { id: ev.id, tool: ev.tool, summary: ev.summary ?? "" };
                     break;
-                case "note":
-                    root.notes = root.notes.concat([ev.text ?? ""]);
-                    break;
                 case "paused":
                     root.paused = true;
                     break;
-                case "done":
-                    root.lastMs = ev.ms ?? (Date.now() - root.startedAt);
-                    break;
                 }
+                root.render();
             }
         }
         stderr: SplitParser {
@@ -450,37 +472,30 @@ Singleton {
         }
         onExited: (code) => {
             if (proc.mine !== proc.serial) return;
-            root.busy = false;
-            root.pending = null;
             if (code !== 0 && root.error.length === 0 && root.answer.length === 0)
                 root.error = Translation.tr("The model didn't answer (exit %1)").arg(code);
+            root.finish();
         }
     }
 
     IpcHandler {
         target: "quickAi"
-        // The selection (else the clipboard), in the card.
+        // The selection (else the clipboard), in the bubble.
         function selection(): void { root.askSelection(); }
         // A region of the screen, drawn first.
         function screen(): void { root.askScreen(); }
-        // A question or an order, answered or done in the card.
+        // A question or an order, answered or done in the bubble.
         function ask(question: string): void { root.askQuestion(question); }
+        // An image file, asked about.
+        function image(path: string): void { root.askImage(path); }
         // The step waiting for an OK.
         function approve(): void { root.approve(true); }
         function deny(): void { root.approve(false); }
-        // An image file, asked about.
-        function image(path: string): void { root.askImage(path); }
-        function close(): void { root.close(); }
-        // The card, empty, to ask anything (again: closes it).
-        function toggle(): void {
-            if (root.open) root.close();
-            else root.askQuestion("", "empty");
-        }
+        function stop(): void { root.stop(); }
         function status(): string {
-            return JSON.stringify({ open: root.open, busy: root.busy, mode: root.mode, source: root.source?.kind ?? "",
-                provider: root.provider, model: root.model, ms: root.lastMs, error: root.error,
-                answer: root.answer.slice(0, 400), replies: root.replies, steps: root.steps,
-                pending: root.pending, instant: root.instant });
+            return JSON.stringify({ busy: root.busy, mode: root.convo.mode ?? "", provider: root.provider, model: root.model,
+                error: root.error, answer: root.answer.slice(0, 400), replies: root.replies, steps: root.steps,
+                pending: root.pending, paused: root.paused, inBubble: root.chat !== null && root.chat === Initiative.chat });
         }
     }
 }

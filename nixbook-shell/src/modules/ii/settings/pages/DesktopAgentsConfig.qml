@@ -100,8 +100,9 @@ ContentPage {
             }
         }
 
-        // Quick AI (services/QuickAi.qml): the card answering and acting in a
-        // couple of seconds, on a key, the voice, the launcher, notifications.
+        // Quick AI (services/QuickAi.qml): answering and acting in a couple of
+        // seconds in Claude's speech bubble: typed, said, from the screenshot
+        // app, the launcher, notifications.
         ContentSection {
             icon: "bolt"
             title: Translation.tr("Talk to your desktop")
@@ -110,7 +111,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Quick AI answers and acts in a couple of seconds, without starting an agent: the model provider's small model is called directly (Meta: Muse Spark). Mod+T: talk: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step shown. The screenshot app (Print) has Ask AI (its toolbar, or A): draw a region, a window or a screen, then What's this, Explain, Summarize, Translate, Copy text or ask anything about it. Mod+K: Kiroshi scan, a brief of what is going on with what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
+                text: Translation.tr("One place to talk to the AI: Claude's speech bubble (Mod+C, or Mod+T to talk). What you ask there is answered in a couple of seconds by the model provider's small model called directly (Meta: Muse Spark), without starting an agent: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step in the bubble, with Allow / No before anything destructive. Expand the bubble to go on in the side panel with Claude Code. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -144,14 +145,6 @@ ContentPage {
                     text: Translation.tr("On notifications (Summarize, Suggest replies)")
                     checked: Config.options.ai.quick.notifications
                     onCheckedChanged: Config.options.ai.quick.notifications = checked
-                }
-                ConfigSwitch {
-                    configKey: "ai.quick.typewriter"
-                    enabled: !nixManaged && Config.options.ai.quick.enable
-                    buttonIcon: "keyboard"
-                    text: Translation.tr("Type the answers out")
-                    checked: Config.options.ai.quick.typewriter
-                    onCheckedChanged: Config.options.ai.quick.typewriter = checked
                 }
             }
             ConfigSelectionArray {

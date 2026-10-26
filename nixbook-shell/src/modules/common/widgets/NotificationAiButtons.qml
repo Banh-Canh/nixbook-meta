@@ -6,7 +6,7 @@ import QtQuick.Layouts
 /**
  * Quick AI on a notification (ai.quick.notifications): Summarize, and
  * Suggest replies on what looks like a message (the app takes a reply, or
- * it is a chat app). Both open the Quick AI card (services/QuickAi.qml),
+ * it is a chat app). Both ask Quick AI in the speech bubble (services/QuickAi.qml),
  * whose replies are sent inline or copied; the popup is hidden (kept in
  * the centre), like mark-as-read. Used by NotificationGroup (Material) and
  * PersonaMessage (the Persona chat), each passing its own button look.
