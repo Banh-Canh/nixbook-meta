@@ -782,4 +782,125 @@ Singleton {
             }
         }
     }
+
+    // The live notifications (the centre's, popups included), for desktop
+    // agents (nixbook-desktop-mcp's notifications on_screen and
+    // dismiss_notifications): listed with their ids, dismissed as the
+    // user's × would (the app is told; the history keeps them). Not counted
+    // as the user's own dismissals (Initiative learns from those).
+    function _brief(n) {
+        return { id: n.notificationId, app: n.appName, summary: n.summary,
+                 body: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 300),
+                 time: n.time, popup: n.popup, unread: !n.read,
+                 actions: (n.actions ?? []).filter(a => a.identifier !== "default" || a.text).map(a => a.text || a.identifier),
+                 canReply: n.hasInlineReply === true };
+    }
+    function _dismissFor(found) {
+        for (const n of found) root._actedIds[n.notificationId] = true;
+        if (found.length > 0) root.discardNotifications(found.map(n => n.notificationId));
+        return JSON.stringify({ dismissed: found.map(n => root._brief(n)), left: root.list.length });
+    }
+    // Snoozed (dismissed now, shown again later): {at, app, icon, summary,
+    // body}; kept until the shell restarts.
+    property var snoozed: []
+    Timer {
+        interval: 15000
+        repeat: true
+        running: root.snoozed.length > 0
+        onTriggered: {
+            const now = Date.now();
+            const due = root.snoozed.filter(s => s.at <= now);
+            if (due.length === 0) return;
+            root.snoozed = root.snoozed.filter(s => s.at > now);
+            for (const s of due)
+                Quickshell.execDetached(["notify-send", "-a", s.app || "Snoozed", "-i", s.icon || "alarm",
+                    s.summary || Translation.tr("Reminder"), s.body || ""]);
+        }
+    }
+    // Do Not Disturb for a while (dnd with minutes): off again then.
+    property real dndUntil: 0
+    Timer {
+        id: dndTimer
+        onTriggered: {
+            root.silent = false;
+            root.dndUntil = 0;
+        }
+    }
+    IpcHandler {
+        target: "notifications"
+        // JSON: [{id, app, summary, body, time, popup, unread}], oldest first.
+        function list(): string {
+            return JSON.stringify(root.list.map(n => root._brief(n)));
+        }
+        // Ids separated by commas or spaces.
+        function dismiss(ids: string): string {
+            const wanted = String(ids).split(/[\s,]+/).filter(s => s).map(Number);
+            const found = root.list.filter(n => wanted.includes(n.notificationId));
+            const missing = wanted.filter(id => !found.some(n => n.notificationId === id));
+            const out = JSON.parse(root._dismissFor(found));
+            out.missing = missing;
+            return JSON.stringify(out);
+        }
+        // Those of an app (case-insensitive part of its name) and/or with a
+        // text in their title or body; one of the two at least.
+        function dismissMatching(app: string, contains: string): string {
+            const a = String(app ?? "").trim().toLowerCase(), c = String(contains ?? "").trim().toLowerCase();
+            if (!a && !c) return JSON.stringify({ error: "an app or a text to match is needed" });
+            return root._dismissFor(root.list.filter(n => (!a || String(n.appName).toLowerCase().includes(a))
+                && (!c || `${n.summary}\n${n.body}`.toLowerCase().includes(c))));
+        }
+        function dismissAll(): string {
+            return root._dismissFor(root.list.slice(0));
+        }
+        // One of its buttons (its label or identifier), as a click would.
+        function invoke(id: int, action: string): string {
+            const n = root.list.find(x => x.notificationId === id);
+            if (!n?.notification) return JSON.stringify({ error: `notification #${id} is no longer live` });
+            const want = String(action ?? "").trim().toLowerCase();
+            const a = (n.actions ?? []).find(x => String(x.identifier).toLowerCase() === want || String(x.text).toLowerCase() === want);
+            if (!a) return JSON.stringify({ error: `no action "${action}"; it has: ${(n.actions ?? []).map(x => x.text || x.identifier).join(", ") || "none"}` });
+            root._actedIds[id] = true;
+            root.attemptInvokeAction(id, a.identifier);
+            return JSON.stringify({ ok: true, invoked: a.text || a.identifier, notification: root._brief(n) });
+        }
+        // Its inline reply (the app takes typed answers: canReply).
+        function reply(id: int, text: string): string {
+            const n = root.list.find(x => x.notificationId === id);
+            if (!n?.notification) return JSON.stringify({ error: `notification #${id} is no longer live` });
+            if (!n.hasInlineReply) {
+                const how = root.replyMethod(n);
+                return JSON.stringify({ error: how ? `it takes no typed reply; its "${how.identifier}" action opens the conversation`
+                    : "it takes no reply" });
+            }
+            if (!root.sendReply(id, text)) return JSON.stringify({ error: "the reply wasn't sent" });
+            return JSON.stringify({ ok: true, replied: text, notification: root._brief(n) });
+        }
+        // Gone now, shown again in `minutes` (until the shell restarts).
+        function snooze(id: int, minutes: int): string {
+            const n = root.list.find(x => x.notificationId === id);
+            if (!n) return JSON.stringify({ error: `notification #${id} is not in the centre` });
+            const m = Math.max(1, Math.min(24 * 60, minutes));
+            root.snoozed = root.snoozed.concat([{ at: Date.now() + m * 60000, app: n.appName, icon: n.appIcon,
+                summary: n.summary, body: String(n.body ?? "").replace(/<[^>]+>/g, "") }]);
+            root._dismissFor([n]);
+            return JSON.stringify({ ok: true, minutes: m, notification: root._brief(n) });
+        }
+        // Do Not Disturb: "on", "off", "status", or minutes (on, then off).
+        function dnd(state: string): string {
+            const v = String(state ?? "").trim().toLowerCase();
+            if (/^\d+$/.test(v)) {
+                root.silent = true;
+                dndTimer.interval = Math.max(1, Math.min(24 * 60, parseInt(v))) * 60000;
+                root.dndUntil = Date.now() + dndTimer.interval;
+                dndTimer.restart();
+            } else if (v === "on" || v === "off") {
+                dndTimer.stop();
+                root.dndUntil = 0;
+                root.silent = v === "on";
+            } else if (v !== "status") {
+                return JSON.stringify({ error: "on, off, status or minutes" });
+            }
+            return JSON.stringify({ silent: root.silent, until: dndTimer.running ? root.dndUntil : 0 });
+        }
+    }
 }

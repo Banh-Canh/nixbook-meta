@@ -235,6 +235,26 @@ if [ "${*: -1}" = "show" ]; then
 fi
 # The shell's theme target (Themes.qml): the registry, and set.
 case "$*" in
+  # Notifications.qml's target: the centre, and dismissing.
+  *"notifications list"*)
+    if [ -n "${STUB_NOTIF_EMPTY:-}" ]; then echo '[]'; else
+    echo '[{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed","time":1790000000000,"popup":true,"unread":true,"canReply":true,"actions":["Mark as read"]},
+      {"id":7,"app":"Spotify","summary":"Now playing","body":"A song","time":1790000060000,"popup":false,"unread":false}]'; fi ;;
+  *"notifications dismissAll"*)
+    echo '{"dismissed":[{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"},{"id":7,"app":"Spotify","summary":"Now playing","body":"A song"}],"left":0}' ;;
+  *"notifications dismissMatching"*)
+    echo '{"dismissed":[{"id":7,"app":"Spotify","summary":"Now playing","body":"A song"}],"left":1}' ;;
+  *"notifications invoke 3 Nope"*) echo '{"error":"no action \"Nope\"; it has: Mark as read"}' ;;
+  *"notifications invoke"*) echo '{"ok":true,"invoked":"Mark as read","notification":{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}}' ;;
+  *"notifications reply"*) echo '{"ok":true,"replied":"oui","notification":{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}}' ;;
+  *"notifications snooze"*) echo '{"ok":true,"minutes":30,"notification":{"id":7,"app":"Spotify","summary":"Now playing","body":"A song"}}' ;;
+  *"notifications dnd off"*) echo '{"silent":false,"until":0}' ;;
+  *"notifications dnd"*) echo '{"silent":true,"until":0}' ;;
+  *"notificationHistory count"*)
+    if [ -e "$STUB_CALLS.histcleared" ]; then echo 0; else echo 12; fi ;;
+  *"notificationHistory clear"* | *"notificationHistory deleteOlderThan"*) touch "$STUB_CALLS.histcleared" ;;
+  *"notifications dismiss "*)
+    echo '{"dismissed":[{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}],"left":1,"missing":[99]}' ;;
   *"theme list"*)
     echo '{"current":"material","variant":"","themeLocked":false,"themes":[
       {"id":"material","name":"Material","variant":"","variantLocked":false,"variants":[]},
@@ -437,7 +457,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 53 tools" 53 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 58 tools" 58 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -867,6 +887,41 @@ expect_eq "make way: overlays hidden while the screen is captured" '{"capture":t
 expect_eq "make way: shown again after" false "$(jq .capture "$sh_rt/make-way.json")"
 expect_contains "make way: set_aside hides a cut-in for a while, never for good" "$(call set_aside '{"name":"cutIn"}')" "cutIn hidden while you work; back"
 expect_contains "make way: never the side panel" "$(call set_aside '{"name":"sidePanel"}')" "the user's chat with you"
+
+# The notification centre: listed with ids, dismissed by ids, app/text or all.
+out=$(call notifications '{"on_screen":true}')
+expect_contains "notifications on screen: with their ids" "$out" "#3 "
+expect_contains "notifications on screen: popup and unread said" "$out" "(popup) (unread)"
+expect_contains "notifications on screen: filtered by app" "$(call notifications '{"on_screen":true,"app":"spot"}')" "#7 "
+expect_eq "notifications on screen: the filter leaves the others out" "" "$(call notifications '{"on_screen":true,"app":"spot"}' | grep -c '#3 ' | grep -v '^0$')"
+expect_contains "notifications on screen: none" "$(STUB_NOTIF_EMPTY=1 call notifications '{"on_screen":true}')" "the notification centre is empty"
+out=$(call dismiss_notifications '{"ids":[3,99]}')
+expect_contains "dismiss: by ids" "$out" "dismissed 1, 1 left in the centre"
+expect_contains "dismiss: what is gone is said" "$out" "[Vesktop] build bot"
+expect_contains "dismiss: an id no longer there is said" "$out" "#99"
+expect_contains "dismiss: through the shell" "$(grep 'ipc call notifications dismiss 3,99' "$calls")" "dismiss 3,99"
+expect_contains "dismiss: by app" "$(call dismiss_notifications '{"app":"spotify"}')" "[Spotify] Now playing"
+expect_contains "dismiss: by app, through the shell" "$(grep 'notifications dismissMatching spotify' "$calls")" "dismissMatching"
+expect_contains "dismiss: all" "$(call dismiss_notifications '{"all":true}')" "dismissed 2, 0 left"
+expect_contains "dismiss: something to dismiss is needed" "$(call dismiss_notifications '{}')" "say which"
+expect_contains "dismiss: ids are numbers" "$(call dismiss_notifications '{"ids":["3"]}')" "list of integers"
+expect_contains "notifications on screen: buttons and replies said" "$(call notifications '{"on_screen":true}')" "(can reply) actions: Mark as read"
+expect_contains "notification_action: a button" "$(call notification_action '{"id":3,"action":"Mark as read"}')" 'clicked "Mark as read"'
+expect_contains "notification_action: an unknown button, the ones it has said" "$(call notification_action '{"id":3,"action":"Nope"}')" "it has: Mark as read"
+expect_contains "notification_action: a reply" "$(call notification_action '{"id":3,"reply":"oui"}')" "replied to #3"
+expect_contains "notification_action: the reply through the shell" "$(grep 'notifications reply 3 oui' "$calls")" "reply 3 oui"
+expect_contains "notification_action: a button or a reply" "$(call notification_action '{"id":3}')" "either"
+expect_contains "snooze_notification" "$(call snooze_notification '{"id":7,"minutes":30}')" "snoozed for 30 min"
+expect_contains "snooze_notification: minutes checked" "$(call snooze_notification '{"id":7,"minutes":0}')" "1 to 1440"
+expect_contains "do_not_disturb: on for a while" "$(call do_not_disturb '{"minutes":45}')" "Do Not Disturb is on"
+expect_contains "do_not_disturb: through the shell" "$(grep 'notifications dnd 45' "$calls")" "dnd 45"
+expect_contains "do_not_disturb: off" "$(call do_not_disturb '{"state":"off"}')" "is off"
+expect_contains "clear_notification_history" "$(call clear_notification_history '{}')" "12 → 0 entries"
+expect_contains "clear_notification_history: older than" "$(
+  grep 'notificationHistory deleteOlderThan' "$calls"
+  call clear_notification_history '{"older_than_days":7}' >/dev/null
+  grep 'notificationHistory deleteOlderThan 7' "$calls"
+)" "deleteOlderThan 7"
 : >"$calls.mw"
 out=$(call type_text '{"text":"hi"}')
 expect_eq "make way: an action dismisses the cut-in" '{"clearCutIns":true}' "$(sort -u "$calls.mw")"
