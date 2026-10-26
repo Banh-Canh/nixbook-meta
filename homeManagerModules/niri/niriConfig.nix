@@ -951,6 +951,12 @@ in
                   "kiroshi"
                   "scan"
                 ];
+                # Full AI mode: the AI runs the desktop, the user talks (the
+                # mascot shows what it does); Escape or this again leaves.
+                "Mod+Shift+T" = [
+                  "fullAi"
+                  "toggle"
+                ];
                 # Claude's speech bubble, to ask anything (it answers there).
                 # Takes Mod+C: centering the column moves to Mod+Shift+C.
                 "Mod+C" = [

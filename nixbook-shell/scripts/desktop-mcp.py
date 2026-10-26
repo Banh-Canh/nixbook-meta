@@ -92,7 +92,7 @@ DEFAULT_CONFIG = {
     # layout tools). Only the user may use them. quickAi: its approve would
     # OK another agent's step; voice: the user's microphone.
     "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay", "quickAi",
-                            "voice"],
+                            "voice", "fullAi"],
     "allowSuperKey": False,
     "maxTextLength": 4000,
     # A note written into the notes widget (it goes through a file, not the

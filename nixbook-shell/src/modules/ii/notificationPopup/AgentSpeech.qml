@@ -146,7 +146,8 @@ Scope {
         // and clicks go to the apps then, the field only once clicked into);
         // else only once clicked into, never taken from the app.
         property bool grab: false
-        WlrLayershell.keyboardFocus: MakeWay.active ? WlrKeyboardFocus.None
+        // (Full AI mode: never, the user talks; Escape is the mode's.)
+        WlrLayershell.keyboardFocus: MakeWay.active || FullAi.active ? WlrKeyboardFocus.None
             : window.grab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
         // Only the card takes clicks; none while an agent works underneath.
         mask: MakeWay.active ? noInput : cardRegion
@@ -811,7 +812,9 @@ Scope {
                                     color: root.fg
                                     placeholderTextColor: Qt.alpha(root.fg, 0.5)
                                     font.family: root.font
-                                    placeholderText: Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")
+                                    placeholderText: FullAi.active ? (Voice.listening ? Translation.tr("Listening… (Esc leaves Full AI)")
+                                            : Translation.tr("Full AI: talk to it (Mod+T: mic)"))
+                                        : Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")
                                             : Translation.tr("Listening… speak now"))
                                         : Voice.transcribing ? Translation.tr("Understanding…")
                                         : window.grab ? Translation.tr("Message Claude… (Esc: put away, /new: start over)")
