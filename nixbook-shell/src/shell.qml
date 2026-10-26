@@ -49,6 +49,12 @@ ShellRoot {
         TimerService.load()
         SongRec.load()
         EqualizerAutoService.load()
+        // Quick AI's targets (quickAi, voice, kiroshi, nixOnboarding): the keys
+        // call them before any of their panels was opened.
+        QuickAi.load()
+        Voice.load()
+        Kiroshi.load()
+        NixOnboarding.load()
     }
     
     PanelFamilyLoader {
