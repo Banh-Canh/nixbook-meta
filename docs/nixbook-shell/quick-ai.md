@@ -113,8 +113,15 @@ Talk as you would to someone: a pause in the middle of a sentence is fine; what
 you say ends after a longer pause (`ai.voice.pauseSeconds`, 1.8 s) and can last
 up to 2 minutes (`ai.voice.maxSeconds`).
 
+**It answers out loud** (_Read the answers out_: _When I talk_ by default,
+_Always_ or _Never_): the answer to what you said is read by a voice on this
+computer (Piper: English, French, German or Vietnamese, picked from the answer's
+language; Meta's Model API has no speech synthesis). After acting, it says the
+report's outcome and what needs you; when a step waits for your OK, it asks
+"May I …?". `Mod+T` or `Esc` cuts it short.
+
 **A conversation** (_Talk back and forth_, on by default): after `Mod+T`, once the
-answer is there, the microphone opens again by itself, so you just go on
+answer has been said, the microphone opens again by itself, so you just go on
 talking. When a step waits for your OK, say "yes" / "oui" or "no" / "non". It ends
 when you say "that's all", "thanks", "c'est tout", "merci"…, press `Esc`, put the
 bubble away, or say nothing for 8 seconds.

@@ -108,6 +108,78 @@ let
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-stream.py} "$@"
   '';
 
+  # The desktop agent's voice (scripts/voice-speak.py, ai.voice.speak):
+  # Piper on this computer (Meta's Model API has no speech synthesis), one
+  # medium voice per language, streamed to the speakers with pacat.
+  piperVoices = pkgs.linkFarm "nixbook-piper-voices" [
+    {
+      name = "en.onnx";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx";
+        hash = "sha256-Xv4J5pkCGHgnr2RuGm6dJp3udp+Yd9F7FrG0buqvAZ8=";
+      };
+    }
+    {
+      name = "en.onnx.json";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json";
+        hash = "sha256-7+GcQXvtBV8taZCCSMa6ZQ+hNbyGiw5quz2hgdq2kKA=";
+      };
+    }
+    {
+      name = "fr.onnx";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx";
+        hash = "sha256-ZB0asJfaK4ESjAdoEO2wUrOF3syL4zgYFIAqZKc7r5k=";
+      };
+    }
+    {
+      name = "fr.onnx.json";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx.json";
+        hash = "sha256-OUeZFsLbGStayXZNrd0MdE2D4COtiQxpdsBjOuTfiVk=";
+      };
+    }
+    {
+      name = "de.onnx";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx";
+        hash = "sha256-fmR2LY5RGLtXjy7qYgfho1qODDBZUBC2ZvmD/Ie7eBk=";
+      };
+    }
+    {
+      name = "de.onnx.json";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json";
+        hash = "sha256-l0re55BTOtsnOhrIj0kCfSobjw8s9JBZVKR5HnkmToU=";
+      };
+    }
+    {
+      name = "vi.onnx";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx";
+        hash = "sha256-7HyJ4shfTR7cJLYSDBiq8b2mFPBrURVn65x8DeFeLas=";
+      };
+    }
+    {
+      name = "vi.onnx.json";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx.json";
+        hash = "sha256-+vudoTVO1Ld8Ma8ijtQftBzYJcFM/6EFRUsl5q51HuA=";
+      };
+    }
+  ];
+  voiceSpeak = pkgs.writeShellScriptBin "nixbook-voice-speak" ''
+    export PATH=${
+      lib.makeBinPath [
+        pkgs.piper-tts
+        pkgs.pulseaudio # pacat
+      ]
+    }:$PATH
+    export NIXBOOK_PIPER_VOICES=''${NIXBOOK_PIPER_VOICES:-${piperVoices}}
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-speak.py} "$@"
+  '';
+
   voiceTranscribe = pkgs.writeShellScriptBin "nixbook-voice-transcribe" ''
     export PATH=${
       lib.makeBinPath [
@@ -308,6 +380,7 @@ let
       nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
       voiceStream # `nixbook-voice-stream` — Quick AI's voice through Meta's Muse Voice Transcribe
+      voiceSpeak # `nixbook-voice-speak` — the agent's answers read out loud (Piper)
       desktopMcp # `nixbook-desktop-mcp` — desktop tools of the AI chat
       updateCheck # `nixbook-update-check` — the update check (services/UpdateState.qml)
       improve # `nixbook-improve` — the desktop agent's fixes to nixbook (services/SelfImprove.qml)
@@ -429,6 +502,7 @@ launcher.overrideAttrs (old: {
       quickAi
       voiceTranscribe
       voiceStream
+      voiceSpeak
       nixOnboard
       configName
       settingsLib
