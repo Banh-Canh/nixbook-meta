@@ -236,6 +236,16 @@ MouseArea {
                             color: root.popup || replyButton.toggled ? root.spec.tagText : Appearance.colors.colOnLayer1
                         }
                     }
+                    // Quick AI: Summarize / Suggest replies.
+                    NotificationAiButtons {
+                        notifications: root.notifications
+                        popup: root.popup
+                        spacing: 2
+                        buttonRadius: Persona.corner
+                        colBackground: root.popup ? root.spec.tag : "transparent"
+                        colBackgroundHover: Persona.shadowColor
+                        iconColor: root.popup ? root.spec.tagText : Appearance.colors.colOnLayer1
+                    }
                     RippleButton {
                         id: expandButton
                         visible: root.canExpand

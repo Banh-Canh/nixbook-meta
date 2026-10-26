@@ -110,6 +110,8 @@ cmd_shell() {
   bash nixbook-shell/tests/scripts.sh || failed=1
   section "nixbook-shell desktop control MCP server"
   bash nixbook-shell/tests/desktop-mcp.sh || failed=1
+  section "nixbook-shell Quick AI (nixbook-quick-ai)"
+  bash nixbook-shell/tests/quick-ai.sh || failed=1
   section "nixbook-shell accounts backend (nixbook-accounts)"
   local accounts
   accounts=$(nix-build --no-out-link -E '(import ./nixbook-shell { }).package.passthru.accounts' 2> >(annotate >&2)) &&

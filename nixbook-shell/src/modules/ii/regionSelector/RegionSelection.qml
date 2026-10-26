@@ -34,8 +34,8 @@ PanelWindow {
     }
 
     // Modes
-    // TODO: Ask: sidebar AI
-    enum SnipAction { Copy, Edit, Search, CharRecognition, Record, RecordWithSound } 
+    // AskAi: the region goes to the Quick AI card (services/QuickAi.qml).
+    enum SnipAction { Copy, Edit, Search, CharRecognition, Record, RecordWithSound, AskAi }
     // Window / Screen: hovering a window or a screen selects it, a click takes it.
     enum SelectionMode { RectCorners, Circle, Window, Screen }
     enum Phase { Select, Post }
@@ -47,6 +47,17 @@ PanelWindow {
     signal selectionModeRequested(var mode)
     // A recording of this screen started: the other screens' selectors close.
     signal recordingStarted()
+    // The action is shared by every screen's selector too (the toolbar's
+    // Ask AI toggle, the A key): ask RegionSelector.
+    signal actionRequested(var action)
+    // Ask AI: crop `source` (pixels) and hand it to Quick AI (RegionSelector
+    // does it: this window is gone by then).
+    signal askAiRequested(string source, real x, real y, real width, real height)
+    function toggleAskAi() {
+        if (!QuickAi.available) return;
+        root.actionRequested(root.action === RegionSelection.SnipAction.AskAi
+            ? RegionSelection.SnipAction.Copy : RegionSelection.SnipAction.AskAi);
+    }
     // niri's gaps/struts, for the window estimate (RegionFunctions.parseNiriLayout).
     property var niriLayout: RegionFunctions.parseNiriLayout("")
 
@@ -279,6 +290,16 @@ PanelWindow {
         root.regionWidth = Math.max(0, Math.min(root.regionWidth, root.screen.width - root.regionX));
         root.regionHeight = Math.max(0, Math.min(root.regionHeight, root.screen.height - root.regionY));
 
+        // Ask AI: cropped from the frozen capture (a window as shown, not
+        // niri's window capture, which would also copy it and notify).
+        if (root.action === RegionSelection.SnipAction.AskAi) {
+            root.snipped = true; // the crop reads and removes the capture
+            root.askAiRequested(root.screenshotPath, root.regionX * root.monitorScale, root.regionY * root.monitorScale,
+                root.regionWidth * root.monitorScale, root.regionHeight * root.monitorScale);
+            root.dismiss();
+            return;
+        }
+
         // Adjust action
         if (root.action === RegionSelection.SnipAction.Copy || root.action === RegionSelection.SnipAction.Edit) {
             root.action = root.mouseButton === Qt.RightButton ? RegionSelection.SnipAction.Edit : RegionSelection.SnipAction.Copy;
@@ -353,6 +374,8 @@ PanelWindow {
                 root.toggleSelectionMode(RegionSelection.SelectionMode.Screen);
             } else if (event.key === Qt.Key_W) { // hover a window to select it
                 root.toggleSelectionMode(RegionSelection.SelectionMode.Window);
+            } else if (event.key === Qt.Key_A) { // ask AI about the region
+                root.toggleAskAi();
             }
         }
     }
@@ -528,6 +551,7 @@ PanelWindow {
                 }
                 selectionMode: root.selectionMode
                 onSelectionModeSelected: mode => root.selectionModeRequested(mode)
+                onAskAiToggled: root.toggleAskAi()
                 onDismiss: root.dismiss();
             }
             ToolbarPairedFab {

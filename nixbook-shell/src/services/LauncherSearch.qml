@@ -26,7 +26,7 @@ Singleton {
     }
 
     function ensurePrefix(prefix) {
-        if ([Config.options.search.prefix.action, Config.options.search.prefix.app, Config.options.search.prefix.clipboard, Config.options.search.prefix.emojis, Config.options.search.prefix.symbols, Config.options.search.prefix.themes, Config.options.search.prefix.layouts, Config.options.search.prefix.math, Config.options.search.prefix.shellCommand, Config.options.search.prefix.webSearch,].some(i => root.query.startsWith(i))) {
+        if ([Config.options.search.prefix.action, Config.options.search.prefix.app, Config.options.search.prefix.clipboard, Config.options.search.prefix.emojis, Config.options.search.prefix.symbols, Config.options.search.prefix.themes, Config.options.search.prefix.layouts, Config.options.search.prefix.math, Config.options.search.prefix.shellCommand, Config.options.search.prefix.webSearch, Config.options.search.prefix.ai,].some(i => i !== "" && root.query.startsWith(i))) {
             root.query = prefix + root.query.slice(1);
         } else {
             root.query = prefix + root.query;
@@ -503,6 +503,32 @@ Singleton {
         }
     }
 
+    // Quick AI (services/QuickAi.qml): "!question" asks it, and a query that
+    // reads like a question (3+ words, or a final "?") with few app results
+    // gets an "Ask AI" row too (ai.quick.launcher). Answered in its card.
+    readonly property bool aiEnabled: (Config.options.ai.quick?.launcher ?? true) && QuickAi.available
+    readonly property bool aiPrefixed: Config.options.search.prefix.ai !== "" && root.query.startsWith(Config.options.search.prefix.ai)
+    readonly property string aiQuery: (root.aiPrefixed ? StringUtils.cleanPrefix(root.query, Config.options.search.prefix.ai) : root.query).trim()
+    function looksLikeQuestion(query) {
+        const q = query.trim();
+        return q.length > 0 && (q.endsWith("?") || q.split(/\s+/).filter(Boolean).length >= 3);
+    }
+    LauncherSearchResult {
+        id: aiResultObject
+        name: root.aiQuery.length > 0 ? Translation.tr("Ask AI: %1").arg(root.aiQuery) : Translation.tr("Ask AI anything")
+        verb: Translation.tr("Ask")
+        type: Translation.tr("Quick AI")
+        comment: root.aiEnabled ? Translation.tr("Answered in a couple of seconds, in its card")
+            : Translation.tr("Quick AI is off (Settings > Desktop agents)")
+        iconName: "auto_awesome"
+        iconType: LauncherSearchResult.IconType.Material
+        execute: () => {
+            const question = root.aiQuery;
+            // After the launcher has closed: the card then takes the keyboard.
+            Qt.callLater(() => QuickAi.askQuestion(question));
+        }
+    }
+
     // Rows past a few screenfuls are never scrolled to; building them only
     // cost time on each keystroke.
     readonly property int maxListResults: 200
@@ -545,7 +571,10 @@ Singleton {
         root.trimEntryCache();
 
         ///////////// Special cases ///////////////
-        if (root.query.startsWith(Config.options.search.prefix.clipboard)) {
+        if (root.aiPrefixed) {
+            // Quick AI: the one row (off: it says so, and asking explains why).
+            return [aiResultObject];
+        } else if (root.query.startsWith(Config.options.search.prefix.clipboard)) {
             // Clipboard
             const searchString = StringUtils.cleanPrefix(root.query, Config.options.search.prefix.clipboard);
             const clipEntries = Cliphist.fuzzyQuery(searchString).slice(0, root.maxListResults);
@@ -806,6 +835,18 @@ Singleton {
         result = result.concat(settingsResults);
         ////////// Launcher actions ////////////
         result = result.concat(launcherActionObjects);
+        ////////////// Quick AI ////////////////
+        // A question with few app results: ask it. First when nothing else
+        // matched, else after the apps (before command and web search).
+        if (root.aiEnabled && !startsWithNumber && !startsWithMathPrefix && !startsWithShellCommandPrefix
+                && !startsWithWebSearchPrefix && !root.query.startsWith(Config.options.search.prefix.action)
+                && !root.query.startsWith(Config.options.search.prefix.app)
+                && appResultObjects.length < 3 && root.looksLikeQuestion(root.query)) {
+            if (result.length === 0)
+                result.unshift(aiResultObject);
+            else
+                result.push(aiResultObject);
+        }
 
         /// Math result, command, web search ///
         if (Config.options.search.prefix.showDefaultActionsWithoutPrefix) {

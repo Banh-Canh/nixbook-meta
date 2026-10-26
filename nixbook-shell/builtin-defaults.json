@@ -21,6 +21,23 @@
       "smallModel": "",
       "bigModel": ""
     },
+    "quick": {
+      "enable": true,
+      "model": "small",
+      "effort": "low",
+      "defaultMode": "auto",
+      "translateTo": "",
+      "typewriter": true,
+      "launcher": true,
+      "notifications": true,
+      "confirm": "destructive"
+    },
+    "voice": {
+      "enable": true,
+      "language": "auto",
+      "model": "small",
+      "silenceSeconds": 1.2
+    },
     "claudeCode": {
       "allowedTools": ["WebSearch", "WebFetch"],
       "asComputer": true,
@@ -701,6 +718,7 @@
     "nonAppResultDelay": 30,
     "prefix": {
       "action": "/",
+      "ai": "!",
       "app": ">",
       "clipboard": ";",
       "emojis": ":",

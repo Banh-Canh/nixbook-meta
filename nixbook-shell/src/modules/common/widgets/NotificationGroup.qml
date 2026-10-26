@@ -188,7 +188,7 @@ MouseArea { // Notification group area
                     RowLayout {
                         id: topTextRow
                         anchors.left: parent.left
-                        anchors.right: markReadButton.left
+                        anchors.right: aiButtons.left
                         anchors.rightMargin: 4
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 5
@@ -215,6 +215,23 @@ MouseArea { // Notification group area
                             font.pixelSize: topRow.fontSize
                             color: Appearance.colors.colSubtext
                         }
+                    }
+                    // Quick AI: Summarize / Suggest replies (popup and centre).
+                    NotificationAiButtons {
+                        id: aiButtons
+                        notifications: root.notifications
+                        popup: root.popup
+                        anchors.right: markReadButton.left
+                        anchors.rightMargin: visible ? 4 : 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: visible ? implicitWidth : 0
+                        spacing: 4
+                        buttonSize: expandButton.implicitHeight
+                        iconSize: topRow.fontSize + 3
+                        colBackground: ColorUtils.mix(Appearance.colors.colLayer2, Appearance.colors.colLayer2Hover, 0.5)
+                        colBackgroundHover: Appearance.colors.colLayer2Hover
+                        colRipple: Appearance.colors.colLayer2Active
+                        iconColor: Appearance.colors.colOnLayer2
                     }
                     // Popups: mark as read (Notifications.markRead — hides the
                     // popup, keeps it in the centre, runs the app's own
