@@ -392,6 +392,23 @@ ContentPage {
                             }
                         }
                     }
+
+                    ConfigRow {
+                        uniform: true
+                        ConfigTextArea {
+                            configKey: "search.prefix.ai";
+                            enabled: !nixManaged;
+                            Layout.fillWidth: true
+                            buttonIcon: "auto_awesome"
+                            fieldWidth: 100
+                            text: Translation.tr("Ask AI")
+                            value: Config.options.search.prefix.ai
+                            onValueChanged: {
+                                Config.options.search.prefix.ai = value;
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
                 }
             }
             ContentSubsection {

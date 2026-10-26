@@ -6,14 +6,17 @@ import qs.modules.ii.background
 import qs.modules.ii.bar
 import qs.modules.ii.dock
 import qs.modules.ii.equalizer
+import qs.modules.ii.kiroshi
 import qs.modules.ii.layoutRestore
 import qs.modules.ii.lock
 import qs.modules.ii.mediaControls
+import qs.modules.ii.nixOnboarding
 import qs.modules.ii.notificationPopup
 import qs.modules.ii.onScreenDisplay
 import qs.modules.ii.onScreenKeyboard
 import qs.modules.ii.overview
 import qs.modules.ii.polkit
+import qs.modules.ii.quickAi
 import qs.modules.ii.settings
 import qs.modules.ii.regionSelector
 import qs.modules.ii.screenCorners
@@ -48,6 +51,7 @@ Scope {
     PanelLoader { component: Overlay {} }
     PanelLoader { component: Overview {} }
     PanelLoader { component: Polkit {} }
+    PanelLoader { component: QuickAiCard {} }
     PanelLoader { component: RegionSelector {} }
     PanelLoader { component: ScreenCorners {} }
     PanelLoader { component: ScreenTranslator {} }
@@ -62,12 +66,14 @@ Scope {
     PanelLoader { component: ContactsApp {} }
     PanelLoader { component: AccountsWindow {} }
     PanelLoader { component: CalendarApp {} }
+    PanelLoader { component: NixOnboardingWindow {} }
     PanelLoader { component: Settings {} }
     PanelLoader { component: DesktopMenu {} }
     PanelLoader { component: DropShelfPanel {} }
     PanelLoader { component: NiriBackdrop {} }
     PanelLoader { component: ScreenFrame {} }
     PanelLoader { component: LayoutRestoreOverlay {} }
+    PanelLoader { component: KiroshiScan {} }
     // Loading screen while the Preloader builds every popup (last, so it is
     // stacked above the other overlay surfaces mapped during boot).
     PanelLoader { component: BootSplash {} }

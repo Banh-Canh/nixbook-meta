@@ -214,6 +214,33 @@ Singleton {
                     property string smallModel: "" // in place of Haiku (meta: muse-spark-1.3)
                     property string bigModel: "" // in place of Opus (meta: muse-wonder-1.0)
                 }
+                // Quick AI (services/QuickAi.qml, scripts/quick-ai.py): the
+                // card answering in a couple of seconds about a selection
+                // (Mod+S), the screen (Mod+Shift+S), the launcher's "!" and a
+                // notification. The provider's API called directly (no agent).
+                property JsonObject quick: JsonObject {
+                    property bool enable: true
+                    property string model: "small" // small, main or big: the provider's
+                    property string effort: "low" // the model's thinking: low, medium, high
+                    property string defaultMode: "auto" // auto (from the text), explain, summarize, translate, rewrite, fix, ask
+                    property string translateTo: "" // empty: the interface language
+                    property bool typewriter: true // the answer typed out as it arrives
+                    property bool launcher: true // "!" and the "Ask AI" row in the launcher
+                    property bool notifications: true // Summarize / Suggest replies on notifications
+                    // Doing things (the desktop tools): ask before "destructive"
+                    // steps (a window closed, an event deleted), every "actions"
+                    // step, or "never".
+                    property string confirm: "destructive"
+                }
+                // Talking to the desktop (services/Voice.qml): push to talk
+                // (Mod+T), transcribed on this computer by whisper.cpp, then
+                // sent to the Quick AI card.
+                property JsonObject voice: JsonObject {
+                    property bool enable: true
+                    property string language: "auto" // auto, or a two-letter code (en, fr, de, vi…)
+                    property string model: "small" // small (multilingual, ~1.2 s) or base (~0.6 s, English mostly)
+                    property real silenceSeconds: 1.2 // quiet after speaking that ends the recording
+                }
                 // Claude through Claude Code (`claude -p`, the user's own
                 // Claude login): the "Claude" model, with the desktop tools
                 // (nixbook-desktop-mcp) unless the tool is "none".
@@ -1117,6 +1144,7 @@ Singleton {
                     property string math: "="
                     property string shellCommand: "$"
                     property string webSearch: "?"
+                    property string ai: "!" // Quick AI (services/QuickAi.qml): ask, answered in its card
                 }
                 property JsonObject imageSearch: JsonObject {
                     property string imageSearchEngineBaseUrl: "https://lens.google.com/uploadbyurl?url="

@@ -53,6 +53,8 @@ Scope {
                 selectionMode: root.selectionMode
                 niriLayout: RegionFunctions.parseNiriLayout(niriConfigFile.text())
                 onSelectionModeRequested: mode => root.selectionMode = mode
+                onActionRequested: action => root.action = action
+                onAskAiRequested: (source, x, y, width, height) => root.askAiCrop(source, x, y, width, height)
                 onRecordingStarted: root.recordingScreen = regionSelectorLoader.modelData.name
             }
         }
@@ -68,6 +70,40 @@ Scope {
         root.action = RegionSelection.SnipAction.Copy
         root.selectionMode = RegionSelection.SelectionMode.RectCorners
         GlobalStates.regionSelectorOpen = true
+    }
+
+    // Ask AI (Quick AI, Mod+Shift+S): the region drawn, then the card.
+    function askAi() {
+        if (!QuickAi.available) return QuickAi.refuse();
+        if (Persistent.states.record.enable) return;
+        root.action = RegionSelection.SnipAction.AskAi
+        root.selectionMode = RegionSelection.SelectionMode.RectCorners
+        GlobalStates.regionSelectorOpen = true
+    }
+    Connections {
+        target: GlobalStates
+        function onRegionAskAiRequested() { root.askAi() }
+    }
+    // The capture cropped (scaled down past 1800 px: plenty for the model,
+    // and quicker to send), in the runtime dir, then asked about.
+    function askAiCrop(source, x, y, width, height) {
+        const out = `${Directories.runtimeTemp}/quick-ai/screen-${Date.now()}.png`;
+        askAiProc.out = out;
+        // Crops over an hour old go (the card shows only the latest).
+        askAiProc.command = ["bash", "-c", 'mkdir -p -m 700 "$(dirname "$5")" && '
+            + 'find "$(dirname "$5")" -maxdepth 1 -name "screen-*.png" -mmin +60 -delete; '
+            + 'magick "$6" -crop "$3x$4+$1+$2" +repage -resize "1800x1800>" "$5"; rc=$?; rm -f "$6"; exit $rc',
+            "_", String(Math.round(x)), String(Math.round(y)), String(Math.max(1, Math.round(width))),
+            String(Math.max(1, Math.round(height))), out, source];
+        askAiProc.running = true;
+    }
+    Process {
+        id: askAiProc
+        property string out: ""
+        onExited: (code) => {
+            if (code === 0) QuickAi.askImage(askAiProc.out);
+            else console.warn("[Region Selector] Ask AI: the crop failed (" + code + ")");
+        }
     }
 
     function search() {
@@ -117,6 +153,10 @@ Scope {
         }
         function ocr() {
             root.ocr()
+        }
+        // The region drawn goes to the Quick AI card.
+        function askAi() {
+            root.askAi()
         }
         function record() {
             root.record()

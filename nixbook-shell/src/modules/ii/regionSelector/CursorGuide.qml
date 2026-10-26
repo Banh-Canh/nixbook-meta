@@ -20,6 +20,10 @@ Item {
         return Translation.tr("Search with Google Lens");
     case RegionSelection.SnipAction.CharRecognition:
         return Translation.tr("Recognize text");
+    case RegionSelection.SnipAction.AskAi:
+        return root.target === "window" ? Translation.tr("Ask AI about this window")
+            : root.target === "screen" ? Translation.tr("Ask AI about this screen")
+            : Translation.tr("Ask AI about this region");
     case RegionSelection.SnipAction.Record:
     case RegionSelection.SnipAction.RecordWithSound:
         return root.target === "window" ? Translation.tr("Record window")
@@ -34,6 +38,8 @@ Item {
         return "image_search";
     case RegionSelection.SnipAction.CharRecognition:
         return "document_scanner";
+    case RegionSelection.SnipAction.AskAi:
+        return "auto_awesome";
     case RegionSelection.SnipAction.Record:
     case RegionSelection.SnipAction.RecordWithSound:
         return root.target === "window" ? "select_window" : root.target === "screen" ? "monitor" : "videocam";

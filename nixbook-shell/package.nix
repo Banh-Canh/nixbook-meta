@@ -68,6 +68,64 @@ let
     ${builtins.readFile ./scripts/model-provider.sh}
   '';
 
+  # Quick AI's answers (scripts/quick-ai.py, services/QuickAi.qml): the
+  # provider's Messages API called directly with its small model, run
+  # through nixbook-model-provider for the key (Anthropic: `claude -p`).
+  quickAi = pkgs.writeShellScriptBin "nixbook-quick-ai" ''
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/quick-ai.py} "$@"
+  '';
+
+  # Quick AI's voice (scripts/voice-transcribe.sh, services/Voice.qml):
+  # speech to text on this computer with whisper.cpp (Vulkan: ~0.6 s for 5 s
+  # of speech with base on a Radeon 680M, ~1.2 s with small) and its
+  # multilingual models, fetched once from the whisper.cpp model repository.
+  whisperModels = pkgs.linkFarm "nixbook-whisper-models" [
+    {
+      name = "ggml-small.bin";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin";
+        hash = "sha256-G+OpsgY4Z7k35k4ux0gzZKeZF+FX+pjF2UtcH//qmHs=";
+      };
+    }
+    {
+      name = "ggml-base.bin";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+        hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
+      };
+    }
+  ];
+  voiceTranscribe = pkgs.writeShellScriptBin "nixbook-voice-transcribe" ''
+    export PATH=${
+      lib.makeBinPath [
+        pkgs.whisper-cpp-vulkan
+        pkgs.coreutils
+        pkgs.gnused
+      ]
+    }:$PATH
+    export NIXBOOK_WHISPER_MODELS=''${NIXBOOK_WHISPER_MODELS:-${whisperModels}}
+    ${builtins.readFile ./scripts/voice-transcribe.sh}
+  '';
+
+  # Setting up the desktop by talking (scripts/nix-onboard.py,
+  # services/NixOnboarding.qml): the model's configuration is checked with
+  # Nix itself, the shell's settings against their typed options (lib.nix +
+  # its JSON inputs, nixpkgs' lib copied alone: not the whole source).
+  nixOnboardInputs = pkgs.runCommand "nixbook-nix-onboard-inputs" { } ''
+    mkdir -p $out/settings/src/modules/common
+    cp ${./lib.nix} $out/settings/lib.nix
+    cp ${./builtin-defaults.json} $out/settings/builtin-defaults.json
+    cp ${./src/modules/common/themes.json} $out/settings/src/modules/common/themes.json
+    cp -r ${pkgs.path + "/lib"} $out/nixpkgs-lib
+  '';
+  nixOnboard = pkgs.writeShellScriptBin "nixbook-nix-onboard" ''
+    export NIXBOOK_SETTINGS_LIB=${nixOnboardInputs}/settings
+    export NIXBOOK_NIXPKGS_LIB=${nixOnboardInputs}/nixpkgs-lib
+    # nix-instantiate: the system's (the shell's PATH may not carry it).
+    export PATH=$PATH:/run/current-system/sw/bin
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/nix-onboard.py} "$@"
+  '';
+
   # Claude usage reader for the AnthropicUsage bar widget (OpenCode OAuth).
   anthropicUsage = pkgs.writeShellScriptBin "anthropic-usage" (
     builtins.readFile ./scripts/anthropic-usage.sh
@@ -233,6 +291,9 @@ let
       shell.passthru.pythonEnv
       anthropicUsage # `anthropic-usage` — AnthropicUsage bar widget
       modelProvider # `nixbook-model-provider` — the model provider Claude Code talks to
+      quickAi # `nixbook-quick-ai` — Quick AI's instant answers (services/QuickAi.qml)
+      nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
+      voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
       desktopMcp # `nixbook-desktop-mcp` — desktop tools of the AI chat
       updateCheck # `nixbook-update-check` — the update check (services/UpdateState.qml)
       improve # `nixbook-improve` — the desktop agent's fixes to nixbook (services/SelfImprove.qml)
@@ -351,6 +412,9 @@ launcher.overrideAttrs (old: {
       accounts
       improve
       modelProvider
+      quickAi
+      voiceTranscribe
+      nixOnboard
       configName
       settingsLib
       cliphistWatch
