@@ -336,6 +336,7 @@ Singleton {
     // brought back then: the user busy), so the bar's bubble lights up.
     property var parked: null
     readonly property bool thinking: (root.chat?.responding ?? false) || (root.parked?.chat?.responding ?? false)
+        || (QuickAi.busy && (QuickAi.owns(root.chat) || QuickAi.owns(root.parked?.chat ?? null)))
     // The user is writing in the bubble: nothing takes its place meanwhile.
     property bool typing: false
     // The bubble's field wants the keys (it was called up with the keyboard).
@@ -470,6 +471,13 @@ Singleton {
                 root.speaking = { id: "", kind: "quick", text: did }
                 return
             }
+        }
+        // Quick AI (ai.quick): the user's own conversations answered by the
+        // provider's model directly, in a few seconds (the desktop tools
+        // included); Claude Code takes them on once expanded to the panel.
+        if (QuickAi.handle(said, attach ?? "")) {
+            root._taken(item)
+            return
         }
         if (!root.chat) root.prepare()
         if (!root.chat) return

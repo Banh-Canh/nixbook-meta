@@ -138,7 +138,8 @@ Singleton {
         if (draft !== undefined && draft !== null && String(draft) !== (h.draft ?? ""))
             text += `\n\nThe text to send or type is exactly this (the user edited it):\n<<<\n${draft}\n>>>`;
         root.close();
-        QuickAi.command(text, "scan");
+        // The bubble shows the task's title, the agent gets the instruction.
+        QuickAi.command(text, "scan", h.title ? `${h.title} (${it.label})` : it.label);
     }
     // The routine ones, in one go.
     function handleRoutine() {
@@ -146,7 +147,8 @@ Singleton {
         if (ready.length === 0) return;
         const lines = ready.map((i, n) => `${n + 1}. ${root.items[i].label}: ${root.items[i].handle.instruction}`);
         root.close();
-        QuickAi.command(`Handle these small things for me, in order, without asking:\n${lines.join("\n")}`, "scan");
+        QuickAi.command(`Handle these small things for me, in order, without asking:\n${lines.join("\n")}`, "scan",
+            Translation.tr("Handle the routine ones: %1").arg(ready.map(i => root.items[i].label).join(", ")));
     }
     // The item's part of the screen, explained in context.
     function tellMore(i) {
@@ -158,6 +160,7 @@ Singleton {
         const cw = Math.min(root.imageWidth - x0, w + 2 * pad), ch = Math.min(root.imageHeight - y0, h + 2 * pad);
         crop.question = Translation.tr("Explain this in detail, in context (I'm %1). What should I know or do? It's \"%2\": %3")
             .arg(root.doing || Translation.tr("at my desk")).arg(it.label).arg(it.detail || it.gist || "");
+        crop.label = Translation.tr("Tell me more: %1").arg(it.label);
         crop.target = root.imagePath.replace(/\.jpg$/, `-crop${i}.png`);
         crop.command = ["magick", root.imagePath, "-crop", `${Math.round(cw)}x${Math.round(ch)}+${Math.round(x0)}+${Math.round(y0)}`,
             "+repage", crop.target];
@@ -168,8 +171,9 @@ Singleton {
         id: crop
         property string target: ""
         property string question: ""
+        property string label: ""
         onExited: (code) => {
-            if (code === 0) QuickAi.askImage(crop.target, crop.question);
+            if (code === 0) QuickAi.askImage(crop.target, crop.question, crop.label);
         }
     }
 

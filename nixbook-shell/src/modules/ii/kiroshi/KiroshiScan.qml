@@ -84,7 +84,12 @@ Scope {
             visible: !GlobalStates.screenLocked
             WlrLayershell.namespace: "quickshell:kiroshi"
             WlrLayershell.layer: WlrLayer.Overlay
-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+            // An agent acting on the user's desktop meanwhile (services/MakeWay.qml):
+            // its keys and clicks reach the apps, the scan faded and gone from
+            // its screenshots.
+            WlrLayershell.keyboardFocus: MakeWay.active ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
+            mask: MakeWay.active ? noInput : null
+            Region { id: noInput }
             exclusionMode: ExclusionMode.Ignore
             color: "transparent"
             anchors { top: true; bottom: true; left: true; right: true }
@@ -149,6 +154,7 @@ Scope {
             Item {
                 id: content
                 anchors.fill: parent
+                opacity: MakeWay.fade(0.6, "kiroshi")
                 focus: true
                 Component.onCompleted: forceActiveFocus()
                 Keys.onEscapePressed: {

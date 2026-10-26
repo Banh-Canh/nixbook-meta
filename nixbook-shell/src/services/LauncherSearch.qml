@@ -524,7 +524,7 @@ Singleton {
         iconType: LauncherSearchResult.IconType.Material
         execute: () => {
             const question = root.aiQuery;
-            // After the launcher has closed: the card then takes the keyboard.
+            // After the launcher has closed: the speech bubble then takes the keyboard.
             Qt.callLater(() => QuickAi.askQuestion(question));
         }
     }
