@@ -52,6 +52,10 @@ Singleton {
     property string error: ""
     property string provider: ""
     property string model: ""
+    // After acting: the report ({summary, done, failed, needsYou, steps,
+    // ok, ko}) the bubble shows as a brief under its message (reportMsg).
+    property var report: null
+    property var reportMsg: null
 
     readonly property var modeInfo: ({
         explain: Translation.tr("Explain"),
@@ -252,6 +256,8 @@ Singleton {
     }
 
     function clear() {
+        root.report = null;
+        root.reportMsg = null;
         root.answer = "";
         root.steps = [];
         root.replies = [];
@@ -330,6 +336,9 @@ Singleton {
         m.thinking = false;
         m.done = true;
         m.model = root.model;
+        // It acted: the user hears of it, the bubble put away meanwhile
+        // coming back (the bar's bubble lit when they are busy).
+        if (root.report && root.chat) Initiative.chatAnswered(root.chat);
     }
     function stop() {
         if (proc.running) {
@@ -459,6 +468,10 @@ Singleton {
                     break;
                 case "paused":
                     root.paused = true;
+                    break;
+                case "report":
+                    root.report = ev;
+                    root.reportMsg = root.msg;
                     break;
                 }
                 root.render();

@@ -319,10 +319,13 @@ AGENT_TOOLS = [
 AGENT_SYSTEM = (
     "You run the user's desktop for them (nixbook: NixOS, the niri scrolling compositor, its own shell). They "
     "talk to you instead of clicking, so you must be at least as fast as doing it by hand: act at once with the "
-    "fewest tool calls (several independent calls in one turn), never ask \"shall I?\" (the user's card asks "
-    "them before anything destructive), never explain what you are about to do. When done, one short sentence "
-    "of what changed (\"Firefox is open on workspace 3.\"). A question: answer it in two or three sentences, "
-    "with tools only if it is about their desktop or data. Media and volume: shell_ipc (target mpris: "
+    "fewest tool calls (several independent calls in one turn), never ask \"shall I?\" (the user's bubble asks "
+    "them before anything destructive), never explain what you are about to do. When you changed anything, end "
+    "with a report for the user, exactly: <report>{{\"summary\": \"one line: the outcome\", \"done\": [\"each thing "
+    "you did, with its result, one line each (\\\"Dismissed 12 Spotify notifications\\\")\"], \"failed\": [\"what didn't "
+    "work, and why\"], \"needs_you\": [\"what only the user can do or decide now\"]}}</report>, nothing after it; "
+    "empty lists are fine, never invent results. A question with no change: just answer it in two or three "
+    "sentences, no report, with tools only if it is about their desktop or data. Media and volume: shell_ipc (target mpris: "
     "playPause, next, previous; target audio or brightness when listed by shell_ipc_list). Answer in {lang}."
 )
 AGENT_STEPS = 10
@@ -407,6 +410,57 @@ def post(req, body):
     raise RuntimeError("the server refused the request")
 
 
+# This run's steps ({tool, summary, status, result, read_only}), by id:
+# what the report says was done comes from them, not only from the model.
+RUN_STEPS = {}
+
+
+def note_step(step_id, tool, summary, status, result="", read_only=False):
+    RUN_STEPS[step_id] = {"tool": tool, "summary": summary, "status": status, "result": result, "read_only": read_only}
+
+
+def step_line(s):
+    line = s["tool"].replace("_", " ") + (f" ({s['summary']})" if s.get("summary") else "")
+    if s["status"] == "denied":
+        return line + ": you said no"
+    if s["status"] == "error" and s.get("result"):
+        return line + ": " + str(s["result"]).strip().splitlines()[0][:160]
+    return line
+
+
+def build_report(text):
+    """The answer and, when the agent changed something, its report: the
+    model's own (<report>{…}</report>) where it gave one, the steps that
+    failed added when it left them out. None for a plain answer."""
+    import re as _re
+    m = _re.search(r"<report>\s*(\{.*?\})\s*</report>", text, _re.S)
+    model = {}
+    if m:
+        try:
+            model = json.loads(m.group(1))
+        except ValueError:
+            model = {}
+        text = (text[:m.start()] + text[m.end():]).strip()
+    steps = list(RUN_STEPS.values())
+    acted = [s for s in steps if not s["read_only"]]
+    if not acted and not model:
+        return text, None
+    lst = lambda k: [str(x).strip() for x in (model.get(k) or []) if str(x).strip()][:12]  # noqa: E731
+    done, failed, needs = lst("done"), lst("failed"), lst("needs_you")
+    bad = [s for s in steps if s["status"] in ("error", "denied")]
+    if bad and not failed:
+        failed = [step_line(s) for s in bad][:8]
+    if not done:
+        done = [step_line(s) for s in acted if s["status"] == "ok"][:12]
+    summary = str(model.get("summary") or "").strip() or (text.splitlines()[0] if text else "") or \
+        ("Done." if not bad else "Done, with problems.")
+    report = {"summary": summary, "done": done, "failed": failed, "needsYou": needs, "steps": len(steps),
+              "ok": sum(1 for s in steps if s["status"] == "ok"), "ko": len(bad)}
+    parts = [summary]
+    parts += [f"- ✓ {d}" for d in done] + [f"- ✗ {f}" for f in failed] + [f"- → {n}" for n in needs]
+    return "\n".join(parts), report
+
+
 def agent(req, system, messages):
     """The model with the desktop tools, up to AGENT_STEPS rounds. Each
     call is a "step" event; one needing the user's OK an "approve" event,
@@ -433,6 +487,7 @@ def agent(req, system, messages):
                 emit("approve", id=c["id"], tool=name, summary=shown, args=json.loads(unmask(json.dumps(args, ensure_ascii=False))))
                 answer = sys.stdin.readline().strip().lower()
                 if answer not in ("y", "yes", "ok"):
+                    note_step(c["id"], name, shown, "denied", read_only=meta.get(name, {}).get("read_only", False))
                     emit("step", id=c["id"], tool=name, summary=shown, status="denied")
                     results.append({"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
                                     "content": "the user said no: don't do it, don't retry it another way"})
@@ -441,6 +496,8 @@ def agent(req, system, messages):
             out, failed = run_tool(name, args)
             emit("step", id=c["id"], tool=name, summary=shown, status="error" if failed else "ok",
                  result=unmask(out[:300]))
+            note_step(c["id"], name, shown, "error" if failed else "ok", unmask(out[:300]),
+                      meta.get(name, {}).get("read_only", False))
             if failed and "desktop control is paused" in out:
                 emit("paused")
             results.append({"type": "tool_result", "tool_use_id": c["id"], "content": out, "is_error": failed})
@@ -483,6 +540,11 @@ def agent_claude(req, system, prompt):
             elif b.get("type") == "tool_result" and b.get("tool_use_id") in names:
                 name, shown = names[b["tool_use_id"]]
                 emit("step", id=b["tool_use_id"], tool=name, summary=shown, status="error" if b.get("is_error") else "ok")
+                content = b.get("content")
+                result = content if isinstance(content, str) else " ".join(
+                    str(x.get("text", "")) for x in content or [] if isinstance(x, dict))
+                note_step(b["tool_use_id"], name, shown, "error" if b.get("is_error") else "ok", result[:300],
+                          meta.get(name, {}).get("read_only", False))
         if ev.get("type") == "result":
             if ev.get("is_error"):
                 raise RuntimeError(str(ev.get("result") or "Claude Code failed")[:300])
@@ -539,6 +601,9 @@ def ask(path):
                 _, text = agent(req, dsystem, messages)
             else:
                 _, text = agent_claude(req, dsystem, prompt)
+            text, report = build_report(unmask(text))
+            if report:
+                emit("report", **report)
         elif api:
             # Replies come as JSON: only the suggestions are shown.
             stream = (lambda piece: None) if mode == "reply" else (lambda piece: emit("delta", text=unmask(piece)))
