@@ -131,6 +131,14 @@ ContentPage {
                     onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.enable = checked
                 }
                 ConfigSwitch {
+                    configKey: "ai.voice.conversation"
+                    enabled: !nixManaged && Config.options.ai.quick.enable && (Config.options.ai.voice?.enable ?? true)
+                    buttonIcon: "record_voice_over"
+                    text: Translation.tr("Talk back and forth (the mic opens again after each answer, until \"that's all\")")
+                    checked: Config.options.ai.voice?.conversation ?? true
+                    onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.conversation = checked
+                }
+                ConfigSwitch {
                     configKey: "ai.quick.launcher"
                     enabled: !nixManaged && Config.options.ai.quick.enable
                     buttonIcon: "search"

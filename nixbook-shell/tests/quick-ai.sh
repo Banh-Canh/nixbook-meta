@@ -25,6 +25,9 @@ fail() {
   [ $# -lt 2 ] || printf '%s\n' "$2" | sed 's/^/       /' >&2
   failures=$((failures + 1))
 }
+expect_contains_() {
+  case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "expected to contain: $3"$'\n'"actual: $2" ;; esac
+}
 expect_eq() {
   if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "expected: $2"$'\n'"actual:   $3"; fi
 }
@@ -103,9 +106,20 @@ ask act '{"mode": "do", "question": "open firefox", "lang": "en"}'
 expect_eq "do: the step ran" '"run"
 "ok"' "$(event act step .status)"
 expect_eq "do: through desktop-mcp" 'launch_app {"app": "firefox"}' "$(head -n1 "$tmp/calls.log")"
-expect_eq "do: the answer" '"Firefox is open."' "$(event act answer .text)"
+expect_eq "do: the answer, the report under it" '"Firefox is open.\n- ✓ launch app (app=firefox)"' "$(event act answer .text)"
 expect_eq "do: only the offered tools, without desktop-mcp's extras" '["launch_app","close_window"]
 []' "$(jq -c 'select(.body.tools) | [.body.tools[].name], [.body.tools[0].input_schema.properties | keys[] | select(. == "wait_ms")]' "$tmp/requests.log" | head -n2)"
+
+# The report after acting: built from the steps when the model gives none,
+# the model's own otherwise; none for a plain answer.
+expect_eq "report: from the steps" '["launch app (app=firefox)"]' "$(event act report .done)"
+expect_eq "report: the steps counted" '1 1 0' "$(event act report ' | "\(.steps) \(.ok) \(.ko)"' | tr -d '"')"
+expect_contains_ "report: in the answer too" "$(event act answer .text)" "✓ launch app"
+ask reported '{"mode": "do", "question": "REPORTME open firefox", "lang": "en"}'
+expect_eq "report: the model's summary" '"Firefox is ready"' "$(event reported report .summary)"
+expect_eq "report: what needs the user" '["Sign in to your account"]' "$(event reported report .needsYou)"
+expect_eq "report: no report tag left in the answer" "" "$(event reported answer .text | grep -o '<report>')"
+expect_eq "report: none for a plain answer" "" "$(event explain report .summary)"
 
 # A destructive step: asked, refused, not run.
 : >"$tmp/calls.log"
@@ -113,6 +127,7 @@ ask deny '{"mode": "do", "question": "CLOSE the window", "lang": "en"}' $'no\n'
 expect_eq "deny: asked first" '"close_window"' "$(event deny approve .tool)"
 expect_eq "deny: not run" '"denied"' "$(event deny step .status)"
 expect_eq "deny: nothing called" "" "$(cat "$tmp/calls.log")"
+expect_eq "deny: reported as failed" '["close window (id=7): you said no"]' "$(event deny report .failed)"
 : >"$tmp/calls.log"
 ask allow '{"mode": "do", "question": "CLOSE the window", "lang": "en"}' $'yes\n'
 expect_eq "allow: run once allowed" 'close_window {"id": 7}' "$(cat "$tmp/calls.log")"

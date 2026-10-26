@@ -16,8 +16,8 @@ import QtQuick
  *     show as they are recognised (`partial`) and the server says when the
  *     speech has ended; nothing heavy runs here;
  *   - local: records (PipeWire, 16 kHz mono, ffmpeg), stops once the user
- *     has spoken and then been quiet for ai.voice.silenceSeconds (or the key
- *     again, or 30 s), and transcribes with whisper.cpp
+ *     has spoken and then been quiet for ai.voice.pauseSeconds (or the key
+ *     again, or ai.voice.maxSeconds), and transcribes with whisper.cpp
  *     (`nixbook-voice-transcribe`, nothing leaves the computer).
  * It all happens in Claude's speech bubble (the Mod+C one, AgentSpeech.qml):
  * listening calls it up, the words show in its field as they come, and
@@ -57,10 +57,47 @@ Singleton {
     }
 
     readonly property string dir: `${Directories.runtimeTemp}/voice`
+    // How long one turn may last, and the pause that ends it (a sentence
+    // can take shorter ones).
+    readonly property real maxSeconds: Math.max(5, Math.min(600, Config.options.ai.voice?.maxSeconds ?? 120))
+    readonly property real pauseSeconds: Math.max(0.5, Math.min(10, Config.options.ai.voice?.pauseSeconds ?? 1.8))
 
+    // A conversation by voice (ai.voice.conversation): once Mod+T started it,
+    // the microphone opens again when the answer is done (or when a step
+    // waits for a yes or a no), until the user says they're done ("that's
+    // all", "thanks", "c'est tout"…), presses Escape, puts the bubble away,
+    // or says nothing for a while.
+    property bool session: false
+    readonly property bool conversation: Config.options.ai.voice?.conversation ?? true
+    readonly property var endWords: /^(ok\s+)?(stop|that'?s all|that is all|that'?s it|thanks?|thank you|no thanks|goodbye|bye|merci|c'?est tout|c'?est bon|stop merci|arr[eê]te|au revoir|danke|das (ist )?alles|tsch[uü]ss|c[aả]m [oơ]n|th[oô]i|xong r[oồ]i)[\s.!]*$/i
+    function endSession() {
+        root.session = false;
+        relisten.stop();
+    }
+    Timer {
+        id: relisten
+        interval: 700
+        onTriggered: {
+            if (!root.session || root.listening || root.transcribing || !Initiative.speaking) return;
+            if (Initiative.thinking && !QuickAi.pending) return;
+            root.start();
+        }
+    }
+    Connections {
+        target: Initiative
+        function onThinkingChanged() { if (!Initiative.thinking && root.session) relisten.restart(); }
+        function onSpeakingChanged() { if (!Initiative.speaking) root.endSession(); }
+    }
+    Connections {
+        target: QuickAi
+        function onPendingChanged() { if (QuickAi.pending && root.session) relisten.restart(); }
+    }
     function toggle() {
         if (root.listening) root.stop();
-        else root.start();
+        else {
+            root.session = root.conversation;
+            root.start();
+        }
     }
     function start() {
         if (root.listening || root.transcribing) return;
@@ -110,6 +147,7 @@ Singleton {
     }
     // Stops without sending anything.
     function cancel() {
+        root.endSession();
         if (stream.running) {
             stream.wanted = false;
             stream.write("cancel\n");
@@ -144,13 +182,29 @@ Singleton {
     function deliver(text) {
         root.lastText = text;
         root.delivered();
+        // "That's all": the conversation ends, nothing sent.
+        if (root.session && root.endWords.test(text.trim())) {
+            root.endSession();
+            return;
+        }
+        // A step waiting for an OK: yes or no, said.
+        if (QuickAi.pending) {
+            if (/^(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|oui|ouais|vas-?y|d'?accord|ja|klar|mach|c[oó]|[dđ][uư][oợ]c|l[aà]m [dđ]i)\b/i.test(text.trim())) {
+                QuickAi.approve(true);
+                return;
+            }
+            if (/^(no|nope|don'?t|non|nein|kh[oô]ng)\b/i.test(text.trim())) {
+                QuickAi.approve(false);
+                return;
+            }
+        }
         if (Initiative.speaking) Initiative.reply(text);
         else QuickAi.askQuestion(text, "voice");
     }
 
     Timer {
         id: maxTimer
-        interval: 30000
+        interval: root.maxSeconds * 1000
         onTriggered: root.stop()
     }
 
@@ -170,10 +224,10 @@ Singleton {
         // listening): stopped when the shell dies (pdeathsig), and after
         // 31 s whatever happens. direct=1: each frame's level written at
         // once, not buffered.
-        command: ["bash", "-c", 'mkdir -p -m 700 "$(dirname "$1")" && find "$(dirname "$1")" -name "rec-*.wav" -mmin +1 -delete; exec setpriv --pdeathsig INT timeout -s INT 31 ffmpeg -hide_banner -loglevel error -nostdin '
+        command: ["bash", "-c", 'mkdir -p -m 700 "$(dirname "$1")" && find "$(dirname "$1")" -name "rec-*.wav" -mmin +1 -delete; exec setpriv --pdeathsig INT timeout -s INT "$2" ffmpeg -hide_banner -loglevel error -nostdin '
             + '-f pulse -i default -ac 1 -ar 16000 '
             + '-af "astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=/dev/stdout:direct=1" '
-            + '-y "$1"', "_", rec.file]
+            + '-y "$1"', "_", rec.file, String(Math.ceil(root.maxSeconds) + 1)]
         stdout: SplitParser {
             onRead: (line) => {
                 const m = /RMS_level=(-?[0-9.]+|-inf)/.exec(line);
@@ -199,7 +253,7 @@ Singleton {
                     rec.loud = 0;
                     if (root.heard) {
                         rec.quiet += 0.05;
-                        if (rec.quiet >= (Config.options.ai.voice?.silenceSeconds ?? 1.2)) root.stop();
+                        if (rec.quiet >= root.pauseSeconds) root.stop();
                     }
                 }
                 // Nothing said for 8 s: given up (the card stays, saying so).
@@ -213,7 +267,8 @@ Singleton {
             root.level = 0;
             maxTimer.stop();
             if (!rec.wanted || !root.heard) {
-                if (rec.wanted) root.error = Translation.tr("I didn't hear anything");
+                if (rec.wanted && root.session) root.endSession();
+                else if (rec.wanted) root.error = Translation.tr("I didn't hear anything");
                 Quickshell.execDetached(["rm", "-f", rec.file]);
                 return;
             }
@@ -232,8 +287,8 @@ Singleton {
         property int frames: 0
         property real floor: -50
         stdinEnabled: true
-        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1"', "_",
-            root.languages]
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1" --pause "$2" --max "$3"', "_",
+            root.languages, String(root.pauseSeconds), String(root.maxSeconds)]
         stdout: SplitParser {
             onRead: (line) => {
                 let ev;
@@ -265,7 +320,9 @@ Singleton {
                     if ((ev.text ?? "").trim().length > 0) root.deliver(ev.text.trim());
                     break;
                 case "nothing":
-                    root.error = Translation.tr("I didn't hear anything");
+                    // Silence in a conversation: it ends, quietly.
+                    if (root.session) root.endSession();
+                    else root.error = Translation.tr("I didn't hear anything");
                     break;
                 case "error":
                     root.error = ev.error ?? Translation.tr("Voice failed");
