@@ -250,6 +250,9 @@ Singleton {
                     // A conversation: the microphone opens again after each answer
                     // until "that's all", Escape or a silence.
                     property bool conversation: true
+                    // Its answers read out (Piper, on this computer): "voice" (to
+                    // what was said), "always", "never".
+                    property string speak: "voice"
                 }
                 // Claude through Claude Code (`claude -p`, the user's own
                 // Claude login): the "Claude" model, with the desktop tools

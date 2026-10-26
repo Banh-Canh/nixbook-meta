@@ -38,7 +38,8 @@
       "model": "small",
       "pauseSeconds": 1.8,
       "maxSeconds": 120,
-      "conversation": true
+      "conversation": true,
+      "speak": "voice"
     },
     "claudeCode": {
       "allowedTools": ["WebSearch", "WebFetch"],

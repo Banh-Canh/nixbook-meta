@@ -78,23 +78,100 @@ Singleton {
         id: relisten
         interval: 700
         onTriggered: {
-            if (!root.session || root.listening || root.transcribing || !Initiative.speaking) return;
+            if (!root.session || root.listening || root.transcribing || root.speaking || !Initiative.speaking) return;
             if (Initiative.thinking && !QuickAi.pending) return;
             root.start();
         }
     }
     Connections {
         target: Initiative
-        function onThinkingChanged() { if (!Initiative.thinking && root.session) relisten.restart(); }
-        function onSpeakingChanged() { if (!Initiative.speaking) root.endSession(); }
+        function onThinkingChanged() {
+            if (Initiative.thinking) return;
+            // The answer to what was said, read out (then the mic again).
+            if (root.wantsSpeech()) root.speak(root.lastAnswer());
+            else if (root.session) relisten.restart();
+        }
+        function onSpeakingChanged() {
+            if (!Initiative.speaking) {
+                root.endSession();
+                root.stopSpeaking();
+            }
+        }
     }
     Connections {
         target: QuickAi
-        function onPendingChanged() { if (QuickAi.pending && root.session) relisten.restart(); }
+        function onPendingChanged() {
+            if (!QuickAi.pending || !(root.session || root.voiceTurn)) return;
+            // A step waiting for an OK, asked out loud: answered by voice.
+            const what = QuickAi.pending.tool.replace(/_/g, " ") + (QuickAi.pending.summary ? `, ${QuickAi.pending.summary}` : "");
+            if (!root.speak(Translation.tr("May I %1?").arg(what))) relisten.restart();
+        }
+    }
+
+    // ── The agent's answers read out (ai.voice.speak: "voice", the answers to
+    // what was said; "always"; "never"), by Piper on this computer
+    // (`nixbook-voice-speak`: Meta has no speech synthesis). The microphone
+    // waits until it has finished; Mod+T or Escape cuts it short.
+    property bool speaking: false
+    // The last message was said, not typed: its answer is read out.
+    property bool voiceTurn: false
+    readonly property string speakMode: Config.options.ai.voice?.speak ?? "voice"
+    function wantsSpeech() {
+        const yes = root.speakMode === "always" || (root.speakMode === "voice" && root.voiceTurn);
+        root.voiceTurn = false;
+        return yes && root.lastAnswer().length > 0;
+    }
+    // What to say of the last answer: a report's outcome (and what needs the
+    // user), else the answer itself (the speaker keeps it short).
+    function lastAnswer() {
+        const chat = Initiative.chat;
+        if (!chat) return "";
+        const ids = chat.messageIDs;
+        for (let i = ids.length - 1; i >= 0; i--) {
+            const m = chat.messageByID[ids[i]];
+            if (!m || m.role === "user") return "";
+            if (m.role !== "assistant") continue;
+            if (QuickAi.report && QuickAi.reportMsg === m) {
+                const r = QuickAi.report;
+                return [r.summary, ...(r.failed ?? []).slice(0, 2), ...(r.needsYou ?? [])].join(". ");
+            }
+            return m.content ?? "";
+        }
+        return "";
+    }
+    function speak(text) {
+        if (root.speakMode === "never" || !String(text ?? "").trim()) return false;
+        root.stopSpeaking();
+        speaker.text = String(text);
+        speaker.wanted = true;
+        root.speaking = true;
+        speaker.running = true;
+        return true;
+    }
+    function stopSpeaking() {
+        if (speaker.running) {
+            speaker.wanted = false;
+            speaker.signal(15);
+        }
+        root.speaking = false;
+    }
+    Process {
+        id: speaker
+        property string text: ""
+        property bool wanted: true
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --lang "$1" "$2"', "_",
+            "auto", speaker.text]
+        onExited: {
+            root.speaking = false;
+            // Said: the user's turn (a conversation).
+            if (speaker.wanted && root.session) relisten.restart();
+        }
     }
     function toggle() {
         if (root.listening) root.stop();
         else {
+            // Talking over it: it stops.
+            root.stopSpeaking();
             root.session = root.conversation;
             root.start();
         }
@@ -148,6 +225,8 @@ Singleton {
     // Stops without sending anything.
     function cancel() {
         root.endSession();
+        root.stopSpeaking();
+        root.voiceTurn = false;
         if (stream.running) {
             stream.wanted = false;
             stream.write("cancel\n");
@@ -198,8 +277,14 @@ Singleton {
                 return;
             }
         }
+        root.voiceTurn = true;
         if (Initiative.speaking) Initiative.reply(text);
         else QuickAi.askQuestion(text, "voice");
+        // A plain command done at once (QuickIntent): what it did, said.
+        if (Initiative.speaking?.kind === "quick" && !Initiative.thinking) {
+            root.voiceTurn = false;
+            if (!(root.speakMode !== "never" && root.speak(Initiative.speaking.text)) && root.session) relisten.restart();
+        }
     }
 
     Timer {
@@ -377,11 +462,15 @@ Singleton {
         function stop(): void { root.stop(); }
         // Stop without sending.
         function cancel(): void { root.cancel(); }
+        // Read a text out (the agent's voice); stop reading.
+        function say(text: string): void { root.speak(text); }
+        function hush(): void { root.stopSpeaking(); }
         // A recording sent as if it had just been said (16 kHz mono WAV;
         // the file is deleted afterwards).
         function transcribe(path: string): void { root.transcribeFile(path); }
         function status(): string {
             return JSON.stringify({ available: root.available, engine: root.engine, listening: root.listening,
+                speaking: root.speaking, session: root.session,
                 transcribing: root.transcribing, heard: root.heard, level: root.level, partial: root.partial,
                 error: root.error, last: root.lastText });
         }
