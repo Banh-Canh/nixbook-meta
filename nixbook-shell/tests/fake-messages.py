@@ -63,6 +63,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(500, {"error": {"message": "boom"}})
         if "NOEFFORT" in text and "output_config" in body:
             return self.send(400, {"error": {"message": "unknown parameter `output_config`"}})
+        if body.get("tools") and (body.get("tool_choice") or {}).get("type") == "none":
+            return self.send(200, {"content": [{"type": "text", "text": "Concluded without more tools."}],
+                                   "stop_reason": "end_turn"})
+        if body.get("tools") and "LOOP" in text:
+            # Never done: a tool call every time (the step limit ends it).
+            return self.send(200, {"content": [{"type": "tool_use", "id": f"call_{count}", "name": "launch_app",
+                                                "input": {"app": "firefox"}}], "stop_reason": "tool_use"})
         if body.get("tools"):
             last = body["messages"][-1]
             done = isinstance(last.get("content"), list) and any(b.get("type") == "tool_result" for b in last["content"])
@@ -74,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
                               '"failed": [], "needs_you": ["Sign in to your account"]}</report>')
                 return self.send(200, {"content": [{"type": "text", "text": answer}], "stop_reason": "end_turn"})
             call = ({"name": "close_window", "input": {"id": 7}} if "CLOSE" in text
+                    else {"name": "tasks", "input": {"action": "list"}} if "TASKS" in text
                     else {"name": "launch_app", "input": {"app": "firefox"}})
             return self.send(200, {"content": [{"type": "tool_use", "id": "call_1", **call}], "stop_reason": "tool_use"})
         if '"replies"' in text:

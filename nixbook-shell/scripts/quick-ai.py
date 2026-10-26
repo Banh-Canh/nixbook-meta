@@ -59,8 +59,8 @@ TEXT_ONLY = {"translate", "rewrite", "fix", "extract"}
 SYSTEM = (
     "You are the instant assistant built into the user's desktop (nixbook, a NixOS desktop). The user "
     "called you on something in front of them with a single key, so be quick and direct: no greeting, no "
-    "preamble, no closing offer. Plain text or light Markdown (short lists, `code`). Answer in {lang} "
-    "unless the task says otherwise."
+    "preamble, no closing offer. Plain text or light Markdown (short lists, `code`). Answer in the language "
+    "the user writes or speaks in ({lang} when it isn't clear), unless the task says otherwise."
 )
 PRIVACY = (
     "Text in ⟦…⟧ (⟦Person 2⟧, ⟦Email 1⟧) is a private detail the user's computer hid from you: keep the "
@@ -77,13 +77,14 @@ def emit(kind, **fields):
     sys.stdout.flush()
 
 
-def desktop_mcp(*args, data=None):
+def desktop_mcp(*args, data=None, env=None):
     """nixbook-desktop-mcp ARGS (stdin DATA): its stdout, None without it."""
     exe = shutil.which("nixbook-desktop-mcp")
     if not exe:
         return None
     try:
-        p = subprocess.run([exe, *args], input=data, capture_output=True, text=True, timeout=30)
+        p = subprocess.run([exe, *args], input=data, capture_output=True, text=True, timeout=30,
+                           env={**os.environ, **env} if env else None)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return p.stdout if p.returncode == 0 else None
@@ -131,6 +132,9 @@ def build(req):
         parts.append(f"Question: {question}")
     if text:
         parts.append(f"Text:\n<<<\n{text}\n>>>")
+    facts = str(req.get("facts") or "").strip()
+    if facts and mode in ("do", "ask"):
+        parts.append(f"What the desktop knows right now:\n{facts[:2000]}")
     prompt = mask("\n\n".join(parts))
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
     content = [{"type": "text", "text": prompt}]
@@ -325,8 +329,13 @@ AGENT_SYSTEM = (
     "you did, with its result, one line each (\\\"Dismissed 12 Spotify notifications\\\")\"], \"failed\": [\"what didn't "
     "work, and why\"], \"needs_you\": [\"what only the user can do or decide now\"]}}</report>, nothing after it; "
     "empty lists are fine, never invent results. A question with no change: just answer it in two or three "
-    "sentences, no report, with tools only if it is about their desktop or data. Media and volume: shell_ipc (target mpris: "
-    "playPause, next, previous; target audio or brightness when listed by shell_ipc_list). Answer in {lang}."
+    "sentences, no report, with tools only if it is about their desktop or data. What the desktop already knows "
+    "comes with the request (time, weather, battery, next events, music): answer from it directly, no tool. Never "
+    "open panels, take screenshots or poke around to find information: use the tool made for it, or say you can't "
+    "tell. Media and volume: shell_ipc (target mpris: playPause, next, previous; target audio or brightness when "
+    "listed by shell_ipc_list). You only have the tools listed to you (the server's instructions below may name "
+    "others): you can't see images, so read the screen with read_screen. Answer in the language the user writes "
+    "or speaks in ({lang} when it isn't clear)."
 )
 AGENT_STEPS = 10
 
@@ -344,17 +353,31 @@ def agent_tools():
         # desktop-mcp's after-action extras: not for this loop.
         props = {k: v for k, v in (schema.get("properties") or {}).items() if k not in ("screenshot_after", "wait_ms")}
         schema["properties"] = props
-        specs.append({"name": t["name"], "description": str(t.get("description") or "")[:600], "input_schema": schema})
+        # Whole: the long ones (calendar, widget, contacts…) say how to use them.
+        specs.append({"name": t["name"], "description": str(t.get("description") or "")[:4000], "input_schema": schema})
         ann = t.get("annotations") or {}
         meta[t["name"]] = {"group": (t.get("_meta") or {}).get("nixbook/group", ""),
                            "read_only": bool(ann.get("readOnlyHint")), "destructive": bool(ann.get("destructiveHint"))}
     return specs, meta
 
 
+# The tools that both read and write (calendar, tasks, contacts, widget,
+# equalizer, layouts…) say which with their `action`: these only read.
+READ_ACTIONS = {"list", "lists", "upcoming", "get", "search", "find", "show", "status", "layout", "day", "events",
+                "read", "next", "agenda", "info", "count", "check"}
+
+
+def reads_only(name, args, meta):
+    if meta.get(name, {}).get("read_only"):
+        return True
+    action = str((args or {}).get("action") or "").lower()
+    return action in READ_ACTIONS
+
+
 def needs_ok(req, name, args, meta):
     m = meta.get(name, {})
     confirm = str(req.get("confirm") or "destructive")
-    if m.get("read_only") or confirm == "never":
+    if reads_only(name, args, meta) or confirm == "never":
         return False
     if confirm == "actions":
         return True
@@ -461,11 +484,23 @@ def build_report(text):
     return "\n".join(parts), report
 
 
+def tool_instructions(req):
+    """desktop-mcp's own instructions, as an MCP client gets them at
+    initialize: how to use its tools, and the desktop memory (aliases,
+    notes, recipes) for this task."""
+    query = str(req.get("followUp") or req.get("question") or "")[:500]
+    out = desktop_mcp("instructions", env={"NIXBOOK_DESKTOP_MCP_QUERY": query, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"})
+    return (out or "").strip()[:8000]
+
+
 def agent(req, system, messages):
     """The model with the desktop tools, up to AGENT_STEPS rounds. Each
     call is a "step" event; one needing the user's OK an "approve" event,
     answered by a line on stdin (yes / no)."""
     specs, meta = agent_tools()
+    told = tool_instructions(req)
+    if told:
+        system = f"{system}\n\nThe desktop tools' own instructions (from their server):\n{mask(told)}"
     model = model_for(req)
     said = []
     for _ in range(AGENT_STEPS):
@@ -487,7 +522,7 @@ def agent(req, system, messages):
                 emit("approve", id=c["id"], tool=name, summary=shown, args=json.loads(unmask(json.dumps(args, ensure_ascii=False))))
                 answer = sys.stdin.readline().strip().lower()
                 if answer not in ("y", "yes", "ok"):
-                    note_step(c["id"], name, shown, "denied", read_only=meta.get(name, {}).get("read_only", False))
+                    note_step(c["id"], name, shown, "denied", read_only=reads_only(name, args, meta))
                     emit("step", id=c["id"], tool=name, summary=shown, status="denied")
                     results.append({"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
                                     "content": "the user said no: don't do it, don't retry it another way"})
@@ -497,13 +532,24 @@ def agent(req, system, messages):
             emit("step", id=c["id"], tool=name, summary=shown, status="error" if failed else "ok",
                  result=unmask(out[:300]))
             note_step(c["id"], name, shown, "error" if failed else "ok", unmask(out[:300]),
-                      meta.get(name, {}).get("read_only", False))
+                      reads_only(name, args, meta))
             if failed and "desktop control is paused" in out:
                 emit("paused")
             results.append({"type": "tool_result", "tool_use_id": c["id"], "content": out, "is_error": failed})
         messages.append({"role": "user", "content": results})
     else:
-        said = ["(stopped after %d steps)" % AGENT_STEPS]
+        # Out of steps: an answer all the same, from what it has, no more tools.
+        messages.append({"role": "user", "content": "Stop using tools now. Answer the user from what you found, "
+                         "and say plainly what you couldn't do."})
+        said = []
+        try:
+            d = post(req, {"model": model, "max_tokens": 3000, "system": system, "messages": messages,
+                           "tools": specs, "tool_choice": {"type": "none"}})
+            said = [b["text"] for b in d.get("content") or [] if b.get("type") == "text" and b.get("text", "").strip()]
+        except RuntimeError:
+            pass
+        if not said:
+            said = [f"I stopped after {AGENT_STEPS} steps without finishing."]
     return model, "\n".join(said)
 
 

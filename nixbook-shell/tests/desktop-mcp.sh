@@ -888,6 +888,8 @@ expect_eq "make way: shown again after" false "$(jq .capture "$sh_rt/make-way.js
 expect_contains "make way: set_aside hides a cut-in for a while, never for good" "$(call set_aside '{"name":"cutIn"}')" "cutIn hidden while you work; back"
 expect_contains "make way: never the side panel" "$(call set_aside '{"name":"sidePanel"}')" "the user's chat with you"
 
+expect_contains "instructions: what an MCP client gets at initialize" "$(python3 "$mcp" instructions 2>&1)" "Tools to see and drive"
+
 # The notification centre: listed with ids, dismissed by ids, app/text or all.
 out=$(call notifications '{"on_screen":true}')
 expect_contains "notifications on screen: with their ids" "$out" "#3 "

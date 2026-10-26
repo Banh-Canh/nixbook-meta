@@ -42,6 +42,8 @@ tools) cat <<'JSON'
   "annotations": {"readOnlyHint": false, "destructiveHint": false}, "_meta": {"nixbook/group": "windows"}},
  {"name": "close_window", "description": "Close a window", "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}},
   "annotations": {"readOnlyHint": false, "destructiveHint": true}, "_meta": {"nixbook/group": "windows"}},
+ {"name": "tasks", "description": "The to-do lists: list, add, done", "inputSchema": {"type": "object", "properties": {"action": {"type": "string"}}},
+  "annotations": {"readOnlyHint": false, "destructiveHint": true}, "_meta": {"nixbook/group": "shell"}},
  {"name": "ignored_tool", "description": "Not offered", "inputSchema": {"type": "object"}, "annotations": {}}]
 JSON
 ;;
@@ -49,6 +51,7 @@ call) echo "\$2 \$3" >>"$tmp/calls.log"; echo "done: \$2" ;;
 privacy)
   if [ "\$2" = mask ]; then sed 's/Julien/⟦Person 1⟧/g'; else sed 's/⟦Person 1⟧/Julien/g'; fi ;;
 sent) echo "\$3|\$5" >>"$tmp/sent.log" ;;
+instructions) echo "Tools to see and drive the desktop. Notes: QUERY=\$NIXBOOK_DESKTOP_MCP_QUERY" ;;
 esac
 EOF
 chmod +x "$tmp/bin/nixbook-desktop-mcp"
@@ -107,7 +110,7 @@ expect_eq "do: the step ran" '"run"
 "ok"' "$(event act step .status)"
 expect_eq "do: through desktop-mcp" 'launch_app {"app": "firefox"}' "$(head -n1 "$tmp/calls.log")"
 expect_eq "do: the answer, the report under it" '"Firefox is open.\n- ✓ launch app (app=firefox)"' "$(event act answer .text)"
-expect_eq "do: only the offered tools, without desktop-mcp's extras" '["launch_app","close_window"]
+expect_eq "do: only the offered tools, without desktop-mcp's extras" '["launch_app","close_window","tasks"]
 []' "$(jq -c 'select(.body.tools) | [.body.tools[].name], [.body.tools[0].input_schema.properties | keys[] | select(. == "wait_ms")]' "$tmp/requests.log" | head -n2)"
 
 # The report after acting: built from the steps when the model gives none,
@@ -120,6 +123,23 @@ expect_eq "report: the model's summary" '"Firefox is ready"' "$(event reported r
 expect_eq "report: what needs the user" '["Sign in to your account"]' "$(event reported report .needsYou)"
 expect_eq "report: no report tag left in the answer" "" "$(event reported answer .text | grep -o '<report>')"
 expect_eq "report: none for a plain answer" "" "$(event explain report .summary)"
+
+# What the desktop knows goes along (answered without a tool).
+ask facts '{"mode": "do", "question": "FACTS what is the weather?", "lang": "en", "facts": "Weather in Paris: rain, 11°C"}'
+expect_contains_ "facts: sent with the question" "$(grep FACTS "$tmp/requests.log" | tail -n1)" "Weather in Paris: rain"
+# Out of steps: an answer all the same, without tools.
+ask loop '{"mode": "do", "question": "LOOP forever", "lang": "en"}'
+expect_contains_ "out of steps: an answer all the same" "$(event loop answer .text)" "Concluded without more tools."
+expect_eq "out of steps: asked without tools" '{"type":"none"}' "$(jq -c 'select(.body.tool_choice) | .body.tool_choice' "$tmp/requests.log" | tail -n1)"
+
+expect_contains_ "do: the tools' own instructions, for this task" "$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | head -n1)" "QUERY=open firefox"
+# A tool that also writes, asked only to read (its action): no OK needed,
+# even when every action is asked about; and no report for it.
+: >"$tmp/calls.log"
+ask reads '{"mode": "do", "question": "TASKS what is on my list?", "lang": "en", "confirm": "actions"}'
+expect_eq "read actions: not asked" "" "$(event reads approve .tool)"
+expect_eq "read actions: run" 'tasks {"action": "list"}' "$(cat "$tmp/calls.log")"
+expect_eq "read actions: no report" "" "$(event reads report .summary)"
 
 # A destructive step: asked, refused, not run.
 : >"$tmp/calls.log"

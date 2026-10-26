@@ -30,12 +30,16 @@ What you say or type in the bubble is an order or a question:
 1. **Plain commands are done at once, in code, with no model**: the music (play,
    pause, next), the volume and brightness, dark mode, Do Not Disturb, opening an
    app, a saved window layout, a timer. The bubble says what it did.
-2. **Anything else goes to the model with the desktop tools** (the same ones as
+2. **What the desktop already knows comes with every question**: the date and
+   time, the weather, the battery, your next events, the music playing. "Quel
+   temps fait-il ?" or "what's next today?" is answered at once, without a tool,
+   in the language you used.
+3. **Anything else goes to the model with the desktop tools** (the same ones as
    [desktop control](./desktop-agents.md): windows, workspaces, apps, layouts,
    clipboard, typing, notifications, calendar, tasks, contacts, themes,
    wallpaper, widgets, equalizer, shell actions). The bubble says which step it
-   is on. When it is done, one sentence says what changed.
-3. **It asks before anything destructive** (closing a window, deleting an
+   is on. When it is done, it says what changed; if it runs out of steps (10), it still answers with what it found and what it couldn't do.
+4. **It asks before anything destructive** (closing a window, deleting an
    event): **Allow** or **No** under the answer. Settings > Desktop agents >
    Talk to your desktop > _Ask me before_ also offers _Every action_ and _Never_.
 

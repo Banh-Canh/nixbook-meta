@@ -14650,6 +14650,12 @@ def main(argv):
         return desktop_command(argv[1:])
     if cmd == "layout":
         return layout_command(cfg, argv[1:])
+    if cmd == "instructions":
+        # What an MCP client gets at initialize (usage, the desktop memory
+        # for NIXBOOK_DESKTOP_MCP_QUERY): for clients calling the tools
+        # without MCP (nixbook-quick-ai's agent).
+        print(instructions_with_memory(cfg))
+        return 0
     if cmd == "memory":
         return memory_command(cfg, argv[1:])
     if cmd == "initiative":
