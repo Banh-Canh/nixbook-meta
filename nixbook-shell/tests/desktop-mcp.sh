@@ -244,6 +244,12 @@ case "$*" in
     echo '{"dismissed":[{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"},{"id":7,"app":"Spotify","summary":"Now playing","body":"A song"}],"left":0}' ;;
   *"notifications dismissMatching"*)
     echo '{"dismissed":[{"id":7,"app":"Spotify","summary":"Now playing","body":"A song"}],"left":1}' ;;
+  # Initiative.qml's conversation target.
+  *"conversation history"*)
+    echo '[{"id":"c1","title":"Weather","created":1790000000000,"updated":1790000060000,"pinned":false,"open":true},{"id":"c2","title":"Old chat","created":1789000000000,"updated":1789000060000,"pinned":true,"open":false}]' ;;
+  *"conversation remove"*) echo '{"deleted":1,"keptOpen":1,"left":1}' ;;
+  *"conversation clear"*) echo "ok: a new conversation once this answer is done (this one stays in the history)" ;;
+  *"conversation hide"*) echo "ok: the bubble put away (the conversation comes back with Mod+C)" ;;
   *"notifications invoke 3 Nope"*) echo '{"error":"no action \"Nope\"; it has: Mark as read"}' ;;
   *"notifications invoke"*) echo '{"ok":true,"invoked":"Mark as read","notification":{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}}' ;;
   *"notifications reply"*) echo '{"ok":true,"replied":"oui","notification":{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}}' ;;
@@ -457,7 +463,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 58 tools" 58 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 60 tools" 60 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -919,6 +925,15 @@ expect_contains "do_not_disturb: on for a while" "$(call do_not_disturb '{"minut
 expect_contains "do_not_disturb: through the shell" "$(grep 'notifications dnd 45' "$calls")" "dnd 45"
 expect_contains "do_not_disturb: off" "$(call do_not_disturb '{"state":"off"}')" "is off"
 expect_contains "clear_notification_history" "$(call clear_notification_history '{}')" "12 → 0 entries"
+expect_contains "conversation: clear (after the answer)" "$(call conversation '{"action":"clear"}')" "once this answer is done"
+expect_contains "conversation: hide" "$(call conversation '{"action":"hide"}')" "put away"
+out=$(call conversation '{"action":"history"}')
+expect_contains "conversation: history, the open one said" "$out" "c1 "
+expect_contains "conversation: history flags" "$out" "(pinned)"
+expect_contains "delete_conversations: by ids, the open one kept" "$(call delete_conversations '{"ids":["c1","c2"]}')" "the one open in the bubble kept"
+expect_contains "delete_conversations: through the shell" "$(grep 'conversation remove c1,c2' "$calls")" "remove c1,c2"
+expect_contains "delete_conversations: something to delete is needed" "$(call delete_conversations '{}')" "say which"
+expect_contains "delete_conversations: ids checked" "$(call delete_conversations '{"ids":["../x"]}')" "conversation ids"
 expect_contains "clear_notification_history: older than" "$(
   grep 'notificationHistory deleteOlderThan' "$calls"
   call clear_notification_history '{"older_than_days":7}' >/dev/null

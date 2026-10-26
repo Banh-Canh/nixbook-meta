@@ -758,6 +758,56 @@ Singleton {
         }
     }
 
+    // The conversations, for desktop agents (nixbook-desktop-mcp's
+    // conversation and delete_conversations tools): a fresh one in the
+    // bubble (once the answer being written is done: an agent clearing the
+    // chat it answers in), the bubble put away or shown, the saved ones
+    // listed or deleted (never the one open in the bubble).
+    property bool freshAfter: false
+    onThinkingChanged: if (!root.thinking && root.freshAfter) {
+        root.freshAfter = false
+        root.fresh()
+    }
+    IpcHandler {
+        target: "conversation"
+        function clear(): string {
+            if (root.thinking) {
+                root.freshAfter = true
+                return "ok: a new conversation once this answer is done (this one stays in the history)"
+            }
+            root.fresh()
+            return "ok: a new conversation (the last one stays in the history)"
+        }
+        function hide(): string {
+            if (!root.speaking) return "ok: the bubble is already away"
+            root.hush("wait")
+            return "ok: the bubble put away (the conversation comes back with Mod+C)"
+        }
+        function show(): string {
+            root.summon()
+            return "ok: the bubble is up"
+        }
+        // JSON: [{id, title, created, updated, pinned, open}], newest first.
+        function history(count: int): string {
+            const open = root.chat?.chatId ?? ""
+            return JSON.stringify(Ai.history.slice(0, Math.max(1, Math.min(200, count || 20))).map(c => ({
+                id: c.id, title: c.title, created: c.created, updated: c.updated, pinned: c.pinned === true,
+                open: c.id === open })))
+        }
+        // Ids separated by commas or spaces, or "all" (not the pinned ones).
+        function remove(ids: string): string {
+            const open = root.chat?.chatId ?? ""
+            let wanted = String(ids ?? "").trim() === "all"
+                ? Ai.history.filter(c => !c.pinned).map(c => c.id)
+                : String(ids ?? "").split(/[\s,]+/).filter(s => s)
+            const known = new Set(Ai.history.map(c => c.id))
+            const kept = wanted.filter(id => id === open)
+            wanted = wanted.filter(id => id !== open && known.has(id))
+            Ai.deleteChats(wanted)
+            return JSON.stringify({ deleted: wanted.length, keptOpen: kept.length, left: Ai.history.length })
+        }
+    }
+
     // `nixbook-shell ipc call claude toggle` (Mod+C): its bubble, to ask, or
     // put away; `ask`: always called up.
     IpcHandler {

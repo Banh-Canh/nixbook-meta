@@ -10673,6 +10673,82 @@ def t_clear_notification_history(ctx, args):
     return [text(f"notification history: {before or '?'} → {after or '?'} entries")]
 
 
+def shell_conversation(fn, *args):
+    p = qs_ipc("call", "conversation", fn, *args)
+    out = (p.stdout or "").strip()
+    if p.returncode != 0 or not out:
+        raise ToolError(f"the shell didn't answer ({short((p.stderr or out).strip(), 200) or 'is it running?'})")
+    return out
+
+
+@tool(
+    "conversation",
+    "shell",
+    "The user's conversation with you in the shell's speech bubble (Mod+C, Full AI mode): `clear` starts a "
+    "fresh one (once the answer you are writing is done; the last one stays in the history), `hide` puts "
+    "the bubble away, `show` calls it up, `history` lists the saved conversations (id, title, when, pinned, "
+    "open). Deleting them: delete_conversations.",
+    obj({"action": {"type": "string", "enum": ["clear", "hide", "show", "history"]},
+         "count": {"type": "integer", "description": "history: at most this many, newest first (default 20)"}},
+        ["action"]),
+)
+def t_conversation(ctx, args):
+    action = as_str(args, "action", max_len=16)
+    if action not in ("clear", "hide", "show", "history"):
+        raise ToolError("`action`: clear, hide, show or history")
+    if action != "history":
+        ctx.guard.check_rate()
+        return [text(shell_conversation(action))]
+    count = args.get("count", 20)
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ToolError("`count` must be a positive integer")
+    try:
+        chats = json.loads(shell_conversation("history", str(count)))
+    except ValueError:
+        raise ToolError("the shell's history answer is unreadable")
+    if not chats:
+        return [text("no saved conversations")]
+    lines = []
+    for c in chats:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime((c.get("updated") or 0) / 1000))
+        flags = "".join(f" ({f})" for f in ("pinned", "open") if c.get(f))
+        lines.append(f"{c.get('id')} {when} {c.get('title') or ''}{flags}")
+    return [text("\n".join(lines))]
+
+
+@tool(
+    "delete_conversations",
+    "shell",
+    "Delete saved conversations for good (from conversation history): by `ids`, or `all` (not the pinned "
+    "ones); never the one open in the bubble. `forget_learned`: Full AI mode forgets what it learned of "
+    "the user's answers to events. Only when the user asks.",
+    obj({"ids": {"type": "array", "items": {"type": "string"}}, "all": {"type": "boolean"},
+         "forget_learned": {"type": "boolean"}}),
+    destructive=True,
+)
+def t_delete_conversations(ctx, args):
+    ids = args.get("ids")
+    everything = args.get("all") is True
+    forget = args.get("forget_learned") is True
+    if ids is not None and (not isinstance(ids, list) or not all(isinstance(i, str) and re.fullmatch(r"[\w.-]{1,80}", i) for i in ids)):
+        raise ToolError("`ids` must be conversation ids (conversation history)")
+    if not ids and not everything and not forget:
+        raise ToolError("say which: `ids`, `all` or `forget_learned`")
+    ctx.guard.check_rate()
+    out = []
+    if ids or everything:
+        res = json.loads(shell_conversation("remove", "all" if everything else ",".join(ids[:200])))
+        out.append(f"deleted {res.get('deleted', 0)} conversation(s), {res.get('left', '?')} left"
+                   + (" (the one open in the bubble kept)" if res.get("keptOpen") else ""))
+    if forget:
+        exe = shutil.which("nixbook-quick-ai")
+        if not exe:
+            raise ToolError("nixbook-quick-ai isn't installed")
+        subprocess.run([exe, "learn", '{"forget": true}'], capture_output=True, timeout=30, check=False)
+        out.append("Full AI mode forgot what it learned")
+    return [text("; ".join(out))]
+
+
 @tool(
     "clipboard_set",
     "input",
