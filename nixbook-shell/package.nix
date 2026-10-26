@@ -95,6 +95,19 @@ let
       };
     }
   ];
+  # Quick AI's voice through Meta (scripts/voice-stream.py): the microphone
+  # streamed to Muse Voice Transcribe (ai.voice.engine meta/auto), run
+  # through nixbook-model-provider for the key.
+  voiceStream = pkgs.writeShellScriptBin "nixbook-voice-stream" ''
+    export PATH=${
+      lib.makeBinPath [
+        pkgs.ffmpeg
+        pkgs.util-linux
+      ]
+    }:$PATH
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-stream.py} "$@"
+  '';
+
   voiceTranscribe = pkgs.writeShellScriptBin "nixbook-voice-transcribe" ''
     export PATH=${
       lib.makeBinPath [
@@ -294,6 +307,7 @@ let
       quickAi # `nixbook-quick-ai` — Quick AI's instant answers (services/QuickAi.qml)
       nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
+      voiceStream # `nixbook-voice-stream` — Quick AI's voice through Meta's Muse Voice Transcribe
       desktopMcp # `nixbook-desktop-mcp` — desktop tools of the AI chat
       updateCheck # `nixbook-update-check` — the update check (services/UpdateState.qml)
       improve # `nixbook-improve` — the desktop agent's fixes to nixbook (services/SelfImprove.qml)
@@ -414,6 +428,7 @@ launcher.overrideAttrs (old: {
       modelProvider
       quickAi
       voiceTranscribe
+      voiceStream
       nixOnboard
       configName
       settingsLib

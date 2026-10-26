@@ -2,8 +2,7 @@
 
 Quick AI puts the AI where you already are, and answers in a couple of seconds:
 no agent to start, no panel to open. One card at the top of the screen answers
-about what you selected, a region of the screen, a notification, or simply what
-you say or type, and it can act on the desktop for you.
+about a region of the screen, a notification, or simply what you say or type, and it can act on the desktop for you.
 
 It calls the [model provider](./ai-assistant.md)'s small model directly (Meta:
 `muse-spark-1.3`, about 2 to 5 seconds). With Anthropic as the provider, Claude
@@ -11,15 +10,14 @@ Code answers instead, using Haiku and your own login, a little slower.
 
 ## Where to call it
 
-| How                       | What it does                                                                                                                                                            |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Mod+T`                   | **Talk.** Say what you want, then stop talking. It is transcribed on this computer (whisper.cpp) and done.                                                              |
-| `Mod+S`                   | **The selected text** (else the clipboard): Explain, Summarize, Translate, Rewrite, Fix, or Ask. **Replace** types the result over the selection.                       |
-| `Mod+Shift+S`             | **A region of the screen**: draw it like a screenshot (rectangle, circle, window, screen). The image goes to the model.                                                 |
-| `Mod+K`                   | **Kiroshi scan**: the AI frames what matters on the screen, with a short note and one or two actions for each. Click an action, or press its number.                    |
-| `!` in the launcher       | A question or an order. A query that reads like a question also gets an **Ask AI** row.                                                                                 |
-| Notification buttons      | **Summarize**, and **Suggest replies** on messages. A reply is sent in one click when the app takes inline replies, otherwise it is copied and the conversation opened. |
-| Settings > Desktop agents | **Talk to your desktop > Try it** opens the empty card.                                                                                                                 |
+| How                          | What it does                                                                                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Mod+T`                      | **Talk.** Say what you want and stop talking: it is done. With Meta, your voice is streamed to Muse Voice Transcribe and your words show as you speak; otherwise whisper.cpp transcribes it on this computer.      |
+| The screenshot app (`Print`) | **Ask AI** (its toolbar button, or `A`): draw a region, pick a window or a screen, and the card offers What's this, Explain, Summarize, Translate, **Copy text** (the text in the image) or any question about it. |
+| `Mod+K`                      | **Kiroshi scan**: a brief of what you are in the middle of and what needs you, and the tasks it can handle for you (see below).                                                                                    |
+| `!` in the launcher          | A question or an order. A query that reads like a question also gets an **Ask AI** row.                                                                                                                            |
+| Notification buttons         | **Summarize**, and **Suggest replies** on messages. A reply is sent in one click when the app takes inline replies, otherwise it is copied and the conversation opened.                                            |
+| Settings > Desktop agents    | **Talk to your desktop > Try it** opens the empty card.                                                                                                                                                            |
 
 ## Doing things
 
@@ -71,12 +69,53 @@ notifications at night, I like a minimal bar") into Nix:
 
 Home Manager and NixOS blocks are only parse-checked.
 
+## Kiroshi scan
+
+`Mod+K` turns the screen into a brief, so you don't have to read everything to
+know what needs you. The AI looks at the screen together with what you are
+doing (the focused window, your recent windows and activity, the latest
+notifications, your next events) and shows:
+
+- **Focus** and **Doing** at the top: the one thing that matters now, and what
+  you are in the middle of.
+- **What matters, framed on the screen**, coloured by urgency (now, soon,
+  later, noise dimmed), each with a one-line gist.
+- **Open an item** (click it, or press its number) for the substance: key
+  facts, who asks what, what an error means. Then **what the AI can do**:
+  a short plan and, when the task writes something (a reply, a message, a
+  commit message), the **draft, editable**. **Do it** (`Enter`) hands the task
+  to Quick AI, which carries it out with the desktop tools, step by step.
+  **Copy draft**, or **Tell me more** for a closer look at that part of the
+  screen. Items only you can decide say so.
+- **Handle the routine ones** does every item the AI can deal with alone
+  (noise to dismiss, acknowledgements, todos) in one go.
+
+The brief shows in about 4 seconds and the details follow (about 12 seconds
+for everything); `Esc` closes an item, then the scan.
+
+## Voice
+
+`Mod+T` listens; `Mod+T` again (or the card's mic) stops early, `Esc` cancels.
+Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
+
+- **Meta (streamed)**: the microphone is streamed to Meta's Muse Voice
+  Transcribe while you speak. The words show in the card as they are
+  recognised, and Meta tells when you have finished, so the order goes the
+  moment you stop. Your computer only records. Your interface language and
+  English are hinted to it (`ai.voice.language`, e.g. `"fr,en"`).
+- **This computer**: whisper.cpp (the `small` model, or `base`), nothing leaves
+  the computer; it stops after a short silence. It needs a reasonable GPU or
+  CPU (about a second for a short sentence on a Radeon 680M).
+- **Auto** (the default): Meta when it is the model provider, otherwise this
+  computer.
+
 ## Privacy
 
 Text goes through the [privacy mask](./desktop-agents.md) on the way out (names,
 emails and the like become placeholders such as `⟦Person 1⟧`) and the answer is
-unmasked on this computer. Every request is listed under _What it sent_. The
-voice never leaves the computer, only its text does. Screen regions and Kiroshi
+unmasked on this computer. Every request is listed under _What it sent_. With the local engine the
+voice never leaves the computer, only its text does; with Meta it is streamed
+to Meta. Screen regions and Kiroshi
 scans are images: they go to the provider as they are.
 
 ## Settings

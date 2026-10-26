@@ -12,12 +12,13 @@ import QtQuick
  * Quick AI (ai.quick): AI where the user already is, answering in a couple
  * of seconds. One card (modules/ii/quickAi/QuickAiCard.qml) at the top of
  * the focused screen, called up on:
- *   - a selection (Mod+S, `quickAi selection`): the primary selection (else
- *     the clipboard) and the window it came from; Explain / Summarize /
- *     Translate / Rewrite / Fix / Ask, the text typed back over the
- *     selection with Replace;
- *   - the screen (Mod+Shift+S, `quickAi screen`): a region drawn with the
- *     region selector (its "Ask AI" action), sent as an image;
+ *   - the screenshot app (Print, its Ask AI action or `A`; `quickAi screen`
+ *     opens it so): a region, a window or a screen, sent as an image; What's
+ *     this / Explain / Summarize / Translate / Copy text / Ask;
+ *   - the voice (Mod+T, services/Voice.qml) and the empty card: an order;
+ *   - a selection (`quickAi selection`, unbound): the primary selection
+ *     (else the clipboard); Explain / Summarize / Translate / Rewrite / Fix
+ *     / Ask, the text typed back over the selection with Replace;
  *   - the launcher ("!" or the "Ask AI" row): a question;
  *   - a notification: Summarize, or three replies to send in one click.
  * Each answer can be followed up, copied, or continued in the side panel.
@@ -72,11 +73,13 @@ Singleton {
         reply: { label: Translation.tr("Suggest replies"), icon: "quickreply" },
         do: { label: Translation.tr("Do it"), icon: "bolt" },
         screen: { label: Translation.tr("What's this?"), icon: "center_focus_strong" },
+        extract: { label: Translation.tr("Copy text"), icon: "text_fields" },
     })
     // The modes offered for the source.
     readonly property var modes: {
         const k = root.source?.kind ?? "";
-        if (k === "screen") return ["screen", "ask"];
+        // The screenshot app's Ask AI: the text in the region too.
+        if (k === "screen") return ["screen", "explain", "summarize", "translate", "extract", "ask"];
         if (k === "notification") return ["summarize", "reply", "explain", "translate"];
         if (k === "launcher" || k === "empty" || k === "voice" || k === "scan") return [];
         return ["explain", "summarize", "translate", "rewrite", "fix", "ask"];
@@ -151,7 +154,7 @@ Singleton {
         if (!root.available) return root.refuse();
         root.start(Object.assign({ kind: "screen", image: path }, root.focusedApp()), "screen", question);
     }
-    // The region selector in its Ask AI action (Mod+Shift+S).
+    // The screenshot app (region selector) in its Ask AI action.
     function askScreen() {
         if (!root.available) return root.refuse();
         GlobalStates.regionAskAiRequested();

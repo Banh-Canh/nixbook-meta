@@ -9,11 +9,16 @@ import QtQuick
 
 /**
  * Talking to the desktop (ai.voice): push to talk (Mod+T, `voice toggle`,
- * the card's mic button). Records the default microphone (PipeWire, 16 kHz
- * mono, ffmpeg), stops by itself once the user has spoken and then been
- * quiet for ai.voice.silenceSeconds (or the key again, or 30 s), and
- * transcribes on this computer with whisper.cpp (`nixbook-voice-transcribe`,
- * nothing leaves it). What was said goes to the Quick AI card: a follow-up
+ * the card's mic button). Two engines (ai.voice.engine; "auto": Meta when
+ * it is the model provider with a key, else this computer):
+ *   - meta: the microphone streamed to Muse Voice Transcribe while the user
+ *     speaks (`nixbook-voice-stream`, scripts/voice-stream.py): the words
+ *     show as they are recognised (`partial`) and the server says when the
+ *     speech has ended; nothing heavy runs here;
+ *   - local: records (PipeWire, 16 kHz mono, ffmpeg), stops once the user
+ *     has spoken and then been quiet for ai.voice.silenceSeconds (or the key
+ *     again, or 30 s), and transcribes with whisper.cpp
+ *     (`nixbook-voice-transcribe`, nothing leaves the computer). What was said goes to the Quick AI card: a follow-up
  * when a conversation is open in it, else an order (QuickAi.command: a
  * plain command done at once by QuickIntent, else the model with the
  * desktop tools). The card shows the listening (`level`, a live meter) and
@@ -35,6 +40,20 @@ Singleton {
     property string error: ""
     // What was understood last.
     property string lastText: ""
+    // Meta: what is recognised so far, while the user speaks.
+    property string partial: ""
+    readonly property string engine: {
+        const set = Config.options.ai.voice?.engine ?? "auto";
+        if (set === "meta" || set === "local") return set;
+        return (ModelProvider.status?.kind === "meta" && ModelProvider.status?.keySaved) ? "meta" : "local";
+    }
+    // The languages hinted to Meta: ai.voice.language, else the interface's
+    // and English.
+    readonly property string languages: {
+        const set = Config.options.ai.voice?.language ?? "auto";
+        const ui = ConfigAssistant.uiLang();
+        return set && set !== "auto" ? set : ui === "en" ? "en" : `${ui},en`;
+    }
 
     readonly property string dir: `${Directories.runtimeTemp}/voice`
 
@@ -55,6 +74,15 @@ Singleton {
         root.error = "";
         root.heard = false;
         root.level = 0;
+        root.partial = "";
+        if (root.engine === "meta") {
+            stream.wanted = true;
+            stream.frames = 0;
+            stream.floor = -50;
+            root.listening = true;
+            stream.running = true;
+            return;
+        }
         rec.frames = 0;
         rec.floor = -50;
         rec.loud = 0;
@@ -68,12 +96,25 @@ Singleton {
     // Stops recording; what was said is transcribed and sent.
     function stop() {
         if (!root.listening) return;
+        if (stream.running) {
+            // The last words come once the audio has ended.
+            root.listening = false;
+            root.transcribing = true;
+            stream.write("stop\n");
+            return;
+        }
         root.listening = false;
         maxTimer.stop();
         if (rec.running) rec.signal(2); // SIGINT: ffmpeg finishes the file
     }
     // Stops without sending anything.
     function cancel() {
+        if (stream.running) {
+            stream.wanted = false;
+            stream.write("cancel\n");
+            stream.signal(15);
+        }
+        root.partial = "";
         rec.wanted = false;
         root.stop();
         if (transcriber.running) {
@@ -184,6 +225,69 @@ Singleton {
         }
     }
 
+    // Meta: the microphone streamed to Muse Voice Transcribe.
+    Process {
+        id: stream
+        property bool wanted: true
+        // The meter against the room's own noise, as for the local engine.
+        property int frames: 0
+        property real floor: -50
+        stdinEnabled: true
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1"', "_",
+            root.languages]
+        stdout: SplitParser {
+            onRead: (line) => {
+                let ev;
+                try { ev = JSON.parse(line); } catch (e) { return; }
+                if (!stream.wanted) return;
+                switch (ev.type) {
+                case "level": {
+                    if (!root.listening) break;
+                    const db = ev.db ?? -90;
+                    stream.frames++;
+                    if (stream.frames <= 2) break; // the device starting
+                    stream.floor = stream.frames <= 6 ? (stream.frames === 3 ? db : Math.min(stream.floor, db))
+                        : (db > -85 ? Math.min(stream.floor, db) : stream.floor);
+                    root.level = stream.frames <= 6 ? 0 : Math.max(0, Math.min(1, (db - stream.floor - 2) / 28));
+                    break;
+                }
+                case "speech":
+                    root.heard = true;
+                    break;
+                case "partial":
+                    root.heard = true;
+                    root.partial = ev.text ?? "";
+                    break;
+                case "final":
+                    root.listening = false;
+                    root.transcribing = false;
+                    root.level = 0;
+                    root.partial = "";
+                    if ((ev.text ?? "").trim().length > 0) root.deliver(ev.text.trim());
+                    break;
+                case "nothing":
+                    root.error = Translation.tr("I didn't hear anything");
+                    break;
+                case "error":
+                    root.error = ev.error ?? Translation.tr("Voice failed");
+                    break;
+                }
+            }
+        }
+        stderr: SplitParser {
+            onRead: (line) => {
+                if (stream.wanted && /nixbook-model-provider:/.test(line))
+                    root.error = line.replace(/^nixbook-model-provider:\s*/, "");
+            }
+        }
+        onExited: {
+            root.listening = false;
+            root.transcribing = false;
+            root.level = 0;
+            root.partial = "";
+        }
+    }
+
     Process {
         id: transcriber
         property string file: ""
@@ -221,8 +325,9 @@ Singleton {
         // the file is deleted afterwards).
         function transcribe(path: string): void { root.transcribeFile(path); }
         function status(): string {
-            return JSON.stringify({ available: root.available, listening: root.listening, transcribing: root.transcribing,
-                heard: root.heard, level: root.level, error: root.error, last: root.lastText });
+            return JSON.stringify({ available: root.available, engine: root.engine, listening: root.listening,
+                transcribing: root.transcribing, heard: root.heard, level: root.level, partial: root.partial,
+                error: root.error, last: root.lastText });
         }
     }
 }

@@ -72,7 +72,7 @@ Scope {
         GlobalStates.regionSelectorOpen = true
     }
 
-    // Ask AI (Quick AI, Mod+Shift+S): the region drawn, then the card.
+    // Ask AI (Quick AI, the toolbar button or A): the region drawn, then the card.
     function askAi() {
         if (!QuickAi.available) return QuickAi.refuse();
         if (Persistent.states.record.enable) return;

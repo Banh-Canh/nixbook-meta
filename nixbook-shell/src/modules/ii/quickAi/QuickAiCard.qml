@@ -274,7 +274,10 @@ Scope {
                         // ── What it is about ──
                         Rectangle {
                             Layout.fillWidth: true
-                            visible: (QuickAi.source?.text ?? "").length > 0
+                            // The selected text, else what was asked or ordered
+                            // (by voice, from Kiroshi, the launcher).
+                            readonly property string shown: QuickAi.source?.text || (QuickAi.mode === "do" ? QuickAi.firstQuestion : "")
+                            visible: shown.length > 0
                             implicitHeight: quote.implicitHeight + 16
                             radius: Appearance.rounding.small
                             color: Appearance.colors.colLayer1
@@ -284,7 +287,7 @@ Scope {
                                 x: 18
                                 y: 8
                                 width: parent.width - 28
-                                text: QuickAi.source?.text ?? ""
+                                text: parent.shown
                                 maximumLineCount: 3
                                 elide: Text.ElideRight
                                 wrapMode: Text.Wrap
@@ -377,13 +380,23 @@ Scope {
                             StyledText {
                                 Layout.fillWidth: true
                                 text: Voice.transcribing ? Translation.tr("Transcribing…")
-                                    : Voice.listening ? (Voice.heard ? Translation.tr("Listening… (pause to send, Esc to cancel)")
+                                    : Voice.listening ? (Voice.heard ? (Voice.engine === "meta" ? Translation.tr("Listening… (stop talking to send, Esc to cancel)") : Translation.tr("Listening… (pause to send, Esc to cancel)"))
                                         : Translation.tr("Listening… speak now"))
                                     : Voice.error
                                 elide: Text.ElideRight
                                 font.pixelSize: Appearance.font.pixelSize.small
                                 color: Voice.listening || Voice.transcribing ? root.fg : root.sub
                             }
+                        }
+                        // Meta: the words as they are recognised.
+                        StyledText {
+                            Layout.fillWidth: true
+                            visible: (Voice.listening || Voice.transcribing) && Voice.partial.length > 0
+                            text: "“" + Voice.partial + "”"
+                            wrapMode: Text.Wrap
+                            font.pixelSize: Appearance.font.pixelSize.larger
+                            font.italic: true
+                            color: root.fg
                         }
 
                         // ── The answer ──
