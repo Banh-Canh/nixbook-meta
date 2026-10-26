@@ -110,7 +110,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Quick AI answers and acts in a couple of seconds, without starting an agent: the model provider's small model is called directly (Meta: Muse Spark). Mod+T: talk: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step shown. Mod+S: about the selected text (else the clipboard): explain, summarize, translate, rewrite, fix, then Replace types it back. Mod+Shift+S: about a region of the screen. Mod+K: Kiroshi scan, what matters on screen with one-click actions. Also \"!\" in the launcher and the AI buttons on notifications.")
+                text: Translation.tr("Quick AI answers and acts in a couple of seconds, without starting an agent: the model provider's small model is called directly (Meta: Muse Spark). Mod+T: talk: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step shown. The screenshot app (Print) has Ask AI (its toolbar, or A): draw a region, a window or a screen, then What's this, Explain, Summarize, Translate, Copy text or ask anything about it. Mod+K: Kiroshi scan, a brief of what is going on with what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -125,7 +125,7 @@ ContentPage {
                     configKey: "ai.voice.enable"
                     enabled: !nixManaged && Config.options.ai.quick.enable
                     buttonIcon: "mic"
-                    text: Translation.tr("Voice (Mod+T, transcribed on this computer)")
+                    text: Translation.tr("Voice (Mod+T)")
                     checked: Config.options.ai.voice?.enable ?? true
                     onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.enable = checked
                 }
@@ -153,6 +153,25 @@ ContentPage {
                     checked: Config.options.ai.quick.typewriter
                     onCheckedChanged: Config.options.ai.quick.typewriter = checked
                 }
+            }
+            ConfigSelectionArray {
+                configKey: "ai.voice.engine"
+                text: Translation.tr("Voice transcribed by")
+                icon: "mic"
+                currentValue: Config.options.ai.voice?.engine ?? "auto"
+                onSelected: newValue => { if (Config.options.ai.voice) Config.options.ai.voice.engine = newValue }
+                options: [
+                    { displayName: Translation.tr("Auto"), icon: "auto_awesome", value: "auto" },
+                    { displayName: Translation.tr("Meta (streamed)"), icon: "cloud", value: "meta" },
+                    { displayName: Translation.tr("This computer"), icon: "computer", value: "local" }
+                ]
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Meta: your voice is streamed to Muse Voice Transcribe while you speak, the words show as they come and it knows when you've finished; nothing heavy runs here. This computer: whisper.cpp, nothing leaves it, but it needs a decent GPU or CPU. Auto: Meta when it is the model provider (now: %1).").arg(Voice.engine === "meta" ? Translation.tr("Meta") : Translation.tr("this computer"))
             }
             ConfigSelectionArray {
                 configKey: "ai.quick.confirm"

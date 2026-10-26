@@ -36,30 +36,28 @@ Niri is column/scroll based; it has no numbered workspaces (workspaces stack ver
 
 ### Applications & shell
 
-| Keybind            | Action (DMS)                                             | Action (nixbook-shell)                                     |
-| ------------------ | -------------------------------------------------------- | ---------------------------------------------------------- |
-| `Mod+Return`       | Launch Kitty terminal                                    | Launch Kitty terminal                                      |
-| `Mod+D`            | Spotlight app launcher                                   | Launcher / search overlay                                  |
-| `Mod+Q`            | Toggle clipboard manager                                 | Launcher in clipboard-history mode                         |
-| `Mod+N`            | Toggle notification center                               | Toggle right sidebar (notifications, toggles)              |
-| `Mod+B`            | Toggle top bar (+ dock when `showDock` is enabled)       | Toggle top bar                                             |
-| `Mod+O`            | Toggle dash overview                                     | Toggle workspaces overview                                 |
-| `Mod+W`            | Open wallpaper picker / dankdash                         | Open wallpaper selector                                    |
-| `Mod+L`            | Power menu                                               | Session screen (power menu)                                |
-| `Mod+Space`        | Toggle Sathi AI assistant widget                         | Toggle left sidebar (AI chat, translator)                  |
-| `Mod+I`            | Toggle idle inhibitor                                    | Start/stop `hypridle` (idle inhibit)                       |
-| `Mod+Escape`       | —                                                        | Toggle Settings panel                                      |
-| `Mod+X`            | —                                                        | Launcher in theme/variant switcher mode                    |
-| `Mod+G`            | —                                                        | Launcher as window layout picker (restore / save / delete) |
-| `Mod+Shift+Escape` | —                                                        | Pause / allow AI desktop control (every agent)             |
-| `Mod+C`            | — (Center column)                                        | Ask Claude in its speech bubble (again: put it away)       |
-| `Mod+Shift+A`      | —                                                        | AI agents: own desktop (nested niri) / yours               |
-| `Mod+Ctrl+A`       | —                                                        | Take over / give back the agents' desktop                  |
-| `Mod+S`            | —                                                        | Quick AI on the selection (else the clipboard)             |
-| `Mod+Shift+S`      | —                                                        | Quick AI about a region of the screen (draw it first)      |
-| `Mod+T`            | —                                                        | Talk: push to talk to Quick AI (again: stop and send)      |
-| `Mod+K`            | —                                                        | Kiroshi scan: what matters on screen, with actions         |
-| `Ctrl+Space`       | Toggle fcitx5 input method (when `fcitx5Config` enabled) | same                                                       |
+| Keybind            | Action (DMS)                                             | Action (nixbook-shell)                                          |
+| ------------------ | -------------------------------------------------------- | --------------------------------------------------------------- |
+| `Mod+Return`       | Launch Kitty terminal                                    | Launch Kitty terminal                                           |
+| `Mod+D`            | Spotlight app launcher                                   | Launcher / search overlay                                       |
+| `Mod+Q`            | Toggle clipboard manager                                 | Launcher in clipboard-history mode                              |
+| `Mod+N`            | Toggle notification center                               | Toggle right sidebar (notifications, toggles)                   |
+| `Mod+B`            | Toggle top bar (+ dock when `showDock` is enabled)       | Toggle top bar                                                  |
+| `Mod+O`            | Toggle dash overview                                     | Toggle workspaces overview                                      |
+| `Mod+W`            | Open wallpaper picker / dankdash                         | Open wallpaper selector                                         |
+| `Mod+L`            | Power menu                                               | Session screen (power menu)                                     |
+| `Mod+Space`        | Toggle Sathi AI assistant widget                         | Toggle left sidebar (AI chat, translator)                       |
+| `Mod+I`            | Toggle idle inhibitor                                    | Start/stop `hypridle` (idle inhibit)                            |
+| `Mod+Escape`       | —                                                        | Toggle Settings panel                                           |
+| `Mod+X`            | —                                                        | Launcher in theme/variant switcher mode                         |
+| `Mod+G`            | —                                                        | Launcher as window layout picker (restore / save / delete)      |
+| `Mod+Shift+Escape` | —                                                        | Pause / allow AI desktop control (every agent)                  |
+| `Mod+C`            | — (Center column)                                        | Ask Claude in its speech bubble (again: put it away)            |
+| `Mod+Shift+A`      | —                                                        | AI agents: own desktop (nested niri) / yours                    |
+| `Mod+Ctrl+A`       | —                                                        | Take over / give back the agents' desktop                       |
+| `Mod+T`            | —                                                        | Talk: push to talk to Quick AI (again: stop and send)           |
+| `Mod+K`            | —                                                        | Kiroshi scan: a brief of what's going on, and tasks to hand off |
+| `Ctrl+Space`       | Toggle fcitx5 input method (when `fcitx5Config` enabled) | same                                                            |
 
 nixbook-shell binds all spawn `nixbook-shell ipc call <target> <function>`.
 
@@ -150,7 +148,7 @@ nixbook-shell binds all spawn `nixbook-shell ipc call <target> <function>`.
 | `A`               | Ask AI: the selection goes to the Quick AI card instead of the clipboard (`A` again: copy)    |
 | `Esc`             | Cancel                                                                                        |
 
-`Mod+Shift+S` opens it in Ask AI directly: what you select is sent, as an image, to the Quick AI card.
+In Ask AI, the card offers What's this, Explain, Summarize, Translate, Copy text (the text in the image) or any question about it.
 
 The same selector opens to record the screen (`Shift+Print`, the bar's record button, or `nixbook-shell ipc call region recordWithSound`): a rectangle, `W` a window (the area it is shown in when clicked) or `S` a whole screen, recorded with the desktop audio. `Shift+Print` or the record button again stops it; the video is then copied to the clipboard as a file.
 

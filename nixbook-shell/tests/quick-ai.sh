@@ -74,8 +74,13 @@ expect_eq "stream: deltas" '"Hello "
 "world"' "$(event explain delta .text)"
 expect_eq "stream: the whole answer" '"Hello world"' "$(event explain answer .text)"
 expect_eq "stream: the small model" '"small-model"' "$(event explain start .model)"
-expect_eq "stream: the effort settings sent" '"low"' "$(jq -c 'select(.n == 1) | .body.output_config.effort' "$tmp/requests.log")"
+expect_eq "stream: the effort settings sent" '"low"' "$(jq -c 'select(.body.stream == true) | .body.output_config.effort' "$tmp/requests.log" | head -n1)"
 expect_eq "stream: recorded as sent" "Quick AI: explain|api:small-model" "$(head -n1 "$tmp/sent.log")"
+
+# The OpenAI-style chat endpoint, when the server has it: tried first.
+ask chat '{"mode": "explain", "text": "CHATOK this", "lang": "en"}'
+expect_eq "chat: answered through /v1/chat/completions" '"Fast answer"' "$(event chat answer .text)"
+expect_eq "chat: minimal reasoning" '"minimal"' "$(jq -c 'select(.body.reasoning_effort) | .body.reasoning_effort' "$tmp/requests.log" | tail -n1)"
 
 # Replies.
 ask reply '{"mode": "reply", "text": "tu viens ce soir ?", "lang": "fr"}'
@@ -86,7 +91,7 @@ expect_eq "reply: no deltas" "" "$(event reply delta .text)"
 # A server without the effort settings.
 ask noeffort '{"mode": "summarize", "text": "NOEFFORT long text", "lang": "en"}'
 expect_eq "no effort: answered on the second try" '"Hello world"' "$(event noeffort answer .text)"
-expect_eq "no effort: asked again without them" "null" "$(jq -c 'select(.body.messages[0].content[0].text // "" | tostring | contains("NOEFFORT")) | .body.output_config' "$tmp/requests.log" | tail -n1)"
+expect_eq "no effort: asked again without them" "null" "$(jq -c 'select(.body.reasoning_effort == null and (.body.messages | tostring | contains("NOEFFORT"))) | .body.output_config' "$tmp/requests.log" | tail -n1)"
 
 # The privacy mask.
 ask private '{"mode": "explain", "text": "PRIVATE Julien wrote this", "lang": "en"}'

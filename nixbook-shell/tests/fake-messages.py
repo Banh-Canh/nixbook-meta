@@ -20,7 +20,7 @@ count = 0
 
 
 def text_of(body):
-    out = [body.get("system", "")]
+    out = [body.get("system", "") if isinstance(body.get("system"), str) else ""]
     for m in body.get("messages", []):
         c = m.get("content")
         if isinstance(c, str):
@@ -52,6 +52,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer test-key":
             return self.send(401, {"error": {"message": "bad key"}})
         text = text_of(body)
+        if self.path.startswith("/v1/chat/completions"):
+            # The OpenAI-style endpoint: only for CHATOK requests (else the
+            # server has none, as Anthropic-compatible ones often).
+            if "CHATOK" not in text:
+                return self.send(404, {"error": {"message": "not found"}})
+            return self.send(200, {"choices": [{"message": {"role": "assistant", "content": "Fast answer"}}],
+                                   "effort": body.get("reasoning_effort")})
         if "FAIL500" in text:
             return self.send(500, {"error": {"message": "boom"}})
         if "NOEFFORT" in text and "output_config" in body:

@@ -215,8 +215,8 @@ Singleton {
                     property string bigModel: "" // in place of Opus (meta: muse-wonder-1.0)
                 }
                 // Quick AI (services/QuickAi.qml, scripts/quick-ai.py): the
-                // card answering in a couple of seconds about a selection
-                // (Mod+S), the screen (Mod+Shift+S), the launcher's "!" and a
+                // card answering in a couple of seconds about the voice (Mod+T),
+                // the screenshot app's Ask AI, the launcher's "!" and a
                 // notification. The provider's API called directly (no agent).
                 property JsonObject quick: JsonObject {
                     property bool enable: true
@@ -237,7 +237,11 @@ Singleton {
                 // sent to the Quick AI card.
                 property JsonObject voice: JsonObject {
                     property bool enable: true
-                    property string language: "auto" // auto, or a two-letter code (en, fr, de, vi…)
+                    // auto: Meta's Muse Voice Transcribe when Meta is the model
+                    // provider (streamed, nothing heavy here), else this computer
+                    // (whisper.cpp); meta; local.
+                    property string engine: "auto"
+                    property string language: "auto" // auto (the interface's + English), or codes: "fr,en"
                     property string model: "small" // small (multilingual, ~1.2 s) or base (~0.6 s, English mostly)
                     property real silenceSeconds: 1.2 // quiet after speaking that ends the recording
                 }

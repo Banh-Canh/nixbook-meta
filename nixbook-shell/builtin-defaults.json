@@ -34,6 +34,7 @@
     },
     "voice": {
       "enable": true,
+      "engine": "auto",
       "language": "auto",
       "model": "small",
       "silenceSeconds": 1.2
