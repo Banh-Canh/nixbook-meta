@@ -28,6 +28,8 @@ import QtQuick
  */
 Singleton {
     id: root
+    // Referenced at startup (shell.qml): its IPC target exists from the start.
+    function load() {}
 
     readonly property bool available: Config.ready && (Config.options.ai.quick?.enable ?? true)
         && Config.options.policies.ai === 1
