@@ -72,7 +72,7 @@ Scope {
         GlobalStates.regionSelectorOpen = true
     }
 
-    // Ask AI (Quick AI, the toolbar button or A): the region drawn, then the card.
+    // Ask AI (Quick AI, the toolbar button or A): the region drawn, then the speech bubble.
     function askAi() {
         if (!QuickAi.available) return QuickAi.refuse();
         if (Persistent.states.record.enable) return;
@@ -89,7 +89,7 @@ Scope {
     function askAiCrop(source, x, y, width, height) {
         const out = `${Directories.runtimeTemp}/quick-ai/screen-${Date.now()}.png`;
         askAiProc.out = out;
-        // Crops over an hour old go (the card shows only the latest).
+        // Crops over an hour old go (the bubble asks about the latest).
         askAiProc.command = ["bash", "-c", 'mkdir -p -m 700 "$(dirname "$5")" && '
             + 'find "$(dirname "$5")" -maxdepth 1 -name "screen-*.png" -mmin +60 -delete; '
             + 'magick "$6" -crop "$3x$4+$1+$2" +repage -resize "1800x1800>" "$5"; rc=$?; rm -f "$6"; exit $rc',
@@ -154,7 +154,7 @@ Scope {
         function ocr() {
             root.ocr()
         }
-        // The region drawn goes to the Quick AI card.
+        // The region drawn goes to Quick AI, in the speech bubble.
         function askAi() {
             root.askAi()
         }

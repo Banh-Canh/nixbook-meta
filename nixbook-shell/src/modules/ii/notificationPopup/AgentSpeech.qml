@@ -37,7 +37,9 @@ Scope {
     readonly property var item: Initiative.speaking
     readonly property var chat: Initiative.chat
     readonly property bool conversing: Initiative.conversing
-    readonly property bool responding: root.chat?.responding ?? false
+    // Claude Code answering, or Quick AI (services/QuickAi.qml) in this chat.
+    readonly property bool quick: QuickAi.owns(root.chat)
+    readonly property bool responding: (root.chat?.responding ?? false) || (root.quick && QuickAi.busy)
     readonly property string style: Persona.enabled ? "persona" : Chiikawa.enabled ? "chiikawa"
         : Cyberpunk.enabled ? "cyberpunk" : Ghibli.enabled ? "ghibli" : "material"
 
@@ -109,6 +111,8 @@ Scope {
     readonly property bool asks: /[?？]\s*$/.test(root.item?.text ?? "")
     // Quick answers under what it said: {label, main, run}.
     readonly property var chips: {
+        // Quick AI's: Allow / No, the replies, a region's modes, Copy.
+        if (root.quick && QuickAi.chips.length > 0) return QuickAi.chips
         const it = root.item
         if (!it || root.conversing) return []
         const out = []
@@ -179,6 +183,14 @@ Scope {
                 window.grab = true
                 focusLater.restart()
             }
+        }
+        // The voice's words in the field while they are recognised; the field
+        // emptied once they are sent (Voice.deliver → Initiative.reply).
+        Connections {
+            target: Voice
+            function onPartialChanged() { if (Voice.partial.length > 0) input.text = Voice.partial }
+            function onDelivered() { input.text = "" }
+            function onListeningChanged() { if (Voice.listening) input.text = "" }
         }
         Timer {
             id: focusLater
@@ -677,6 +689,31 @@ Scope {
                                     extraVisibleCondition: attachMouse.containsMouse
                                 }
                             }
+                            // Talk (Mod+T, services/Voice.qml): the words show in
+                                // the field as they are recognised, sent when done.
+                                MaterialSymbol {
+                                    visible: Voice.available
+                                    Layout.alignment: Qt.AlignVCenter
+                                    text: Voice.listening ? "mic" : Voice.transcribing ? "graphic_eq" : "mic_none"
+                                    fill: Voice.listening ? 1 : 0
+                                    iconSize: Appearance.font.pixelSize.larger
+                                    color: Voice.listening ? Appearance.m3colors.m3error : root.fg
+                                    opacity: Voice.listening || Voice.transcribing || micMouse.containsMouse ? 1 : 0.6
+                                    scale: Voice.listening ? 1 + 0.25 * Voice.level : 1
+                                    Behavior on scale { NumberAnimation { duration: 80 } }
+                                    MouseArea {
+                                        id: micMouse
+                                        anchors.fill: parent
+                                        anchors.margins: -4
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: Voice.toggle()
+                                    }
+                                    StyledToolTip {
+                                        text: Translation.tr("Talk (Mod+T)")
+                                        extraVisibleCondition: micMouse.containsMouse
+                                    }
+                                }
                             ScrollView {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
@@ -688,7 +725,9 @@ Scope {
                                     color: root.fg
                                     placeholderTextColor: Qt.alpha(root.fg, 0.5)
                                     font.family: root.font
-                                    placeholderText: window.grab ? Translation.tr("Message Claude… (Esc: put away, /new: start over)")
+                                    placeholderText: Voice.listening ? Translation.tr("Listening… speak now")
+                                        : Voice.transcribing ? Translation.tr("Understanding…")
+                                        : window.grab ? Translation.tr("Message Claude… (Esc: put away, /new: start over)")
                                         : root.conversing || Initiative.isAsk(root.item) ? Translation.tr("Message Claude…")
                                         : Translation.tr("Answer Claude…")
                                     onActiveFocusChanged: {
@@ -705,6 +744,10 @@ Scope {
                                             root.send()
                                         } else if (event.key === Qt.Key_V && event.modifiers === Qt.ControlModifier && attacher.paste(input)) {
                                             event.accepted = true
+                                        } else if (event.key === Qt.Key_Escape && (Voice.listening || Voice.transcribing)) {
+                                            event.accepted = true
+                                            Voice.cancel()
+                                            input.text = ""
                                         } else if (event.key === Qt.Key_Escape) {
                                             event.accepted = true
                                             window.grab = false
@@ -728,7 +771,7 @@ Scope {
                                     anchors.fill: parent
                                     anchors.margins: -4
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: parent.stop ? root.chat?.stopResponse() : root.send()
+                                    onClicked: parent.stop ? (root.quick && QuickAi.busy ? QuickAi.stop() : root.chat?.stopResponse()) : root.send()
                                 }
                             }
                         }
@@ -742,6 +785,7 @@ Scope {
                     // What it just did for a command: a glance, then gone.
                     interval: root.conversing ? 90000 : root.item?.kind === "quick" ? 5000 : root.item?.kind === "react" ? 15000 : 25000
                     running: root.item !== null && window.visible && !hover.hovered && !root.responding
+                        && !Voice.listening && !Voice.transcribing
                         && !(Initiative.typing && (root.item?.kind !== "quick" || input.text.length > 0))
                     && !MakeWay.active
                     onTriggered: Initiative.hush("wait")
