@@ -22,7 +22,7 @@ Singleton {
     // The side panel's chat to the front (services/Initiative.qml: a reply).
     signal aiChatRequested()
     // The region selector in its Ask AI action (services/QuickAi.qml's
-    // askScreen, Mod+Shift+S): the region drawn goes to the Quick AI card.
+    // askScreen, the screenshot app's Ask AI): the region drawn goes to the Quick AI card.
     signal regionAskAiRequested()
     property bool sidebarRightOpen: false
     // Opened by hovering its edge handle (sidebarHandles): the sidebar closes

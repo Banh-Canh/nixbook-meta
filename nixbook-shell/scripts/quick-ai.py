@@ -50,9 +50,11 @@ MODES = {
              'only JSON: {{"replies": ["…", "…", "…"]}}.',
     "screen": "The image is part of the user's screen they selected. {question}",
     "do": "The user tells you what to do on their desktop, or asks something. Do it with the tools.",
+    "extract": "Write out all the text below exactly as it is, keeping its lines and order. Output only that "
+               "text, nothing before or after it.",
 }
 # The modes whose answer replaces the selection: the text alone.
-TEXT_ONLY = {"translate", "rewrite", "fix"}
+TEXT_ONLY = {"translate", "rewrite", "fix", "extract"}
 
 SYSTEM = (
     "You are the instant assistant built into the user's desktop (nixbook, a NixOS desktop). The user "
@@ -115,6 +117,10 @@ def build(req):
     task = MODES[mode].format(target=target, question=question or
                               "Say what this is and what matters in it, briefly; if it shows an error or a "
                               "problem, how to fix it.")
+    if req.get("image") and not text:
+        # A region of the screen (the screenshot app's Ask AI): its text is
+        # in the image.
+        task = task.replace("the text below", "the text in the image").replace("The text below", "The text in the image")
     parts = [f"Task: {task}"]
     where = " — ".join(str(ctx[k]) for k in ("app", "title") if ctx.get(k))
     if where:
@@ -169,6 +175,12 @@ def call_api(req, system, messages, on_delta):
     key = os.environ["ANTHROPIC_AUTH_TOKEN"]
     model = model_for(req)
     effort = str(req.get("effort") or "low")
+    # The OpenAI-style chat endpoint first (Meta's): it takes reasoning_effort
+    # "minimal", about 2 s faster than the Messages API's lowest thinking.
+    text = chat_answer(req, base, key, model, system, messages, effort)
+    if text is not None:
+        on_delta(text)
+        return model, text
     body = {"model": model, "max_tokens": 4000, "stream": True, "system": system, "messages": messages}
     tuned = {**body, "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
     for attempt in (tuned, body):
@@ -189,6 +201,53 @@ def call_api(req, system, messages, on_delta):
                 continue
             raise RuntimeError(f"HTTP {e.code}: {str(detail)[:300]}")
     raise RuntimeError("the server refused the request")
+
+
+def chat_messages(system, messages):
+    """Messages API messages in the OpenAI chat shape (text and base64
+    images)."""
+    out = [{"role": "system", "content": system}]
+    for m in messages:
+        c = m["content"]
+        if isinstance(c, str):
+            out.append({"role": m["role"], "content": c})
+            continue
+        parts = []
+        for b in c:
+            if b.get("type") == "text":
+                parts.append({"type": "text", "text": b["text"]})
+            elif b.get("type") == "image":
+                src = b["source"]
+                parts.append({"type": "image_url", "image_url": {"url": f"data:{src['media_type']};base64,{src['data']}"}})
+        out.append({"role": m["role"], "content": parts})
+    return out
+
+
+def chat_answer(req, base, key, model, system, messages, effort):
+    """The answer through /v1/chat/completions, or None when the server has
+    no such endpoint (then the Messages API answers)."""
+    global CHAT_OK
+    if CHAT_OK is False or effort not in ("low", "minimal"):
+        return None
+    body = {"model": model, "max_completion_tokens": 4000, "reasoning_effort": "minimal",
+            "messages": chat_messages(system, messages)}
+    r = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
+                               headers={"Authorization": f"Bearer {key}", "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(r, timeout=90) as resp:
+            d = json.loads(resp.read().decode())
+        text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content")
+        if not isinstance(text, str):
+            raise ValueError("no choices")
+        CHAT_OK = True
+        return text
+    except urllib.error.HTTPError as e:
+        if e.code not in (400, 404, 405, 422):
+            raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:300]}")
+    except (ValueError, KeyError, IndexError, AttributeError):
+        pass
+    CHAT_OK = False
+    return None
 
 
 def read_stream(resp, on_delta):
@@ -499,24 +558,61 @@ def ask(path):
     emit("done", ms=int((time.monotonic() - started) * 1000))
     return 0
 
-# ── Kiroshi scan (services/Kiroshi.qml): the focused screen read at once —
-# a screenshot (and the focused window's accessibility text, best effort)
-# labelled with what matters on it, each with an action or two the desktop
-# agent (mode "do") can run. Answer: {"type": "scan", width, height,
-# summary, items: [{label, kind, box: [x, y, w, h] in the image's pixels,
-# detail, actions}]}.
-SCAN_KINDS = {"window", "notification", "error", "button", "field", "text", "media", "link", "other"}
-SCAN_PROMPT = (
-    "This is a {w}x{h} screenshot of the user's desktop (nixbook: NixOS, the niri compositor). Like a cyberpunk "
-    "Kiroshi optics scan, label the 4 to 8 things on it that matter most right now: an error, a message waiting "
-    "for an answer, a notification, a form to fill, the main window and what it is doing, a link, the media "
-    "playing. For each: a short label (2-5 words), its kind ({kinds}), its box [x, y, width, height] in pixels "
-    "of this image (tight around it), one short detail line (what it says or means), and 1 or 2 actions the "
-    "user's desktop agent could do about it, each a short imperative command it can run with its tools "
-    "(\"Reply to Julien: I'm on my way\", \"Open the link in Firefox\", \"Close this window\", \"Pause the "
-    "music\"). Then one summary line of the whole screen. Answer in {lang}. Output only JSON: "
-    '{{"summary": "…", "items": [{{"label": "…", "kind": "…", "box": [0, 0, 0, 0], "detail": "…", '
-    '"actions": ["…"]}}]}}'
+# ── Kiroshi scan (services/Kiroshi.qml): a situational brief of the focused
+# screen. A screenshot, the focused window's accessibility text and what the
+# user is doing (their recent windows and commands, the open windows, the
+# latest notifications, the next events, the time) go to the model, which
+# says what they are in the middle of, the one thing that matters now, and
+# labels the 3–8 things on screen with a substantial detail and, when the AI
+# can take it off their hands, a plan, a draft and a self-contained
+# instruction for the desktop agent (Quick AI's "do"). Everything is masked
+# by the privacy mask on the way out. Answer: {"type": "scan", width,
+# height, doing, focus, items: [{label, kind, box: [x, y, w, h] in the
+# image's pixels, urgency, detail, handle: {title, plan, draft, instruction}
+# | null}], routine: [item indexes]}.
+SCAN_KINDS = {"window", "notification", "error", "message", "button", "field", "text", "media", "link", "event",
+              "other"}
+SCAN_URGENCY = ("now", "soon", "later", "noise")
+SCAN_INTRO = (
+    "You are the user's Kiroshi optics: a glance at their screen should leave them knowing what matters and "
+    "having handed off the busywork, so they think less. The image is a {w}x{h} screenshot of their focused "
+    "screen (nixbook: NixOS, the niri compositor). What they are doing is below."
+)
+# Pass 1, fast: what is on screen and what matters (the overlay shows it at once).
+SCAN_FAST = (
+    "Label the 3 to 8 things on the screen that matter (an error, a message waiting for an answer, a meeting "
+    "coming, a form, the work in the main window, a notification…), most important first. For each: label (2-5 "
+    "words), kind ({kinds}), box [x, y, width, height] in pixels of the image, tight around it, urgency (now: "
+    "needs them now, soon, later, noise: can be dismissed or ignored), gist (one line, at most 14 words, the "
+    "key fact). Then routine = the indexes (from 0) of the items an assistant with desktop tools could handle "
+    "entirely without the user's judgment (noise to dismiss, an acknowledgement, a task to file). Write in "
+    "{lang}. Output only JSON: "
+    '{{"items": [{{"label": "…", "kind": "…", "box": [0, 0, 0, 0], "urgency": "now", "gist": "…"}}], '
+    '"routine": []}}'
+)
+# Pass 0, alongside pass 1: the brief's two lines, in a few seconds.
+SCAN_BRIEF = (
+    "From the screen and what the user is doing, say in {lang}: doing = one line on what they "
+    "are in the middle of; focus = the one thing that matters most right now (a meeting about to start, a "
+    "message waiting, a failure), or \"\" if nothing is pressing. Output only JSON: "
+    '{{"doing": "…", "focus": "…"}}'
+)
+# Pass 2, one per item, in parallel: the substance and what the agent can do.
+SCAN_ITEM = (
+    "On this screen you labelled:\n{listing}\n\nNow only item {n} (\"{label}\").{routine} Give:\n"
+    "- detail: 2-3 sentences of real substance from what is visible and the context: the key facts, numbers, "
+    "dates, who asks what, what an error means and its likely cause. Never just restate the label.\n"
+    "- handle: what the user's desktop agent can take off their hands, or null when only the user can decide. "
+    "The agent has tools for windows and apps, typing and keys, the clipboard, notifications, calendar, tasks, "
+    "contacts, reminders and the shell, and can read the screen and the apps' accessibility trees. Prefer "
+    "multi-step work that saves real effort (reply with the right context, gather information from several "
+    "places, file a task with the details, set a reminder before the meeting, look up an error and propose the "
+    "fix) over a single click the user could do as fast. handle = {{\"title\": a short verb phrase, \"plan\": 2 "
+    "to 5 concrete steps, \"draft\": the exact text it would send or type if it writes something (a reply, a "
+    "message, a commit message, a search) else \"\", \"instruction\": the complete self-contained instruction "
+    "for the agent, naming the app, the window, the person, and including the draft}}.\n"
+    "Write in {lang}; a draft in the language of the conversation it answers. Output only JSON: "
+    '{{"detail": "…", "handle": {{"title": "…", "plan": ["…"], "draft": "", "instruction": "…"}}}}'
 )
 
 
@@ -545,8 +641,8 @@ def image_size(path):
     return 0, 0
 
 
-def ui_text():
-    """The focused window's accessibility tree as text, if it comes fast."""
+def quick_call(args, timeout):
+    """nixbook-desktop-mcp ARGS, its stdout if it answers in time, else ""."""
     exe = shutil.which("nixbook-desktop-mcp")
     if not exe:
         return ""
@@ -554,13 +650,48 @@ def ui_text():
     for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         env.pop(k, None)
     try:
-        p = subprocess.run([exe, "call", "ui_read", "{}"], capture_output=True, text=True, timeout=3, env=env)
+        p = subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired):
         return ""
-    return (p.stdout or "").strip()[:3000] if p.returncode == 0 else ""
+    return (p.stdout or "").strip() if p.returncode == 0 else ""
 
 
-def scan_items(text, w, h):
+def scan_context(req):
+    """What the user is doing, as text for the prompt (masked later with it).
+    The accessibility tree and the recent-activity filter run in parallel."""
+    import concurrent.futures
+    ctx = req.get("context") or {}
+    recent = req.get("recent") or []
+    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+        ui = pool.submit(quick_call, ["call", "ui_read", "{}"], 3)
+        filtered = pool.submit(quick_call, ["context", json.dumps({"now": int(time.time()), "events": recent[-40:]})], 3) \
+            if recent else None
+        ui_text, recent_text = ui.result()[:2500], (filtered.result()[:1500] if filtered else "")
+    parts = [f"Now: {ctx.get('now') or time.strftime('%a %d %b %Y %H:%M')}"]
+    where = " — ".join(str(ctx[k]) for k in ("app", "title") if ctx.get(k))
+    if where:
+        parts.append(f"Focused window: {where}")
+    wins = [f"- {w.get('app', '')} — {str(w.get('title', ''))[:90]}" for w in (req.get("windows") or [])[:10]]
+    if wins:
+        parts.append("Open windows (last used first):\n" + "\n".join(wins))
+    if recent_text:
+        parts.append(f"What they did the last minutes:\n{recent_text}")
+    notes = []
+    for n in (req.get("notifications") or [])[:8]:
+        body = " ".join(str(n.get("body") or "").split())[:220]
+        notes.append(f"- [{n.get('time', '')}] {n.get('app', '')} · {n.get('summary', '')}: {body}")
+    if notes:
+        parts.append("Latest notifications (newest first):\n" + "\n".join(notes))
+    events = [f"- {e.get('when', '')}: {e.get('summary', '')}" + (f" @ {e['location']}" if e.get("location") else "")
+              + (" (video call)" if e.get("meeting") else "") for e in (req.get("events") or [])[:4]]
+    if events:
+        parts.append("Next calendar events:\n" + "\n".join(events))
+    if ui_text:
+        parts.append(f"The focused window's accessibility tree (what a screen reader sees):\n<<<\n{ui_text}\n>>>")
+    return "\n\n".join(parts)
+
+
+def scan_json(text):
     s = text.strip()
     if s.startswith("```"):
         s = s.strip("`").split("\n", 1)[-1]
@@ -568,7 +699,15 @@ def scan_items(text, w, h):
     try:
         d = json.loads(s[start:end + 1])
     except ValueError:
-        return "", []
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def scan_brief(text, w, h):
+    """Pass 1's JSON, checked: {doing, focus, items, routine}; None if unusable."""
+    d = scan_json(text)
+    if d is None:
+        return None
     items = []
     for it in d.get("items") or []:
         if not isinstance(it, dict):
@@ -583,59 +722,154 @@ def scan_items(text, w, h):
         x, y = max(0.0, min(x, w - 1)), max(0.0, min(y, h - 1))
         bw, bh = max(8.0, min(bw, w - x)), max(8.0, min(bh, h - y))
         kind = str(it.get("kind") or "other").lower()
-        actions = [str(a).strip() for a in (it.get("actions") or []) if str(a).strip()][:2]
+        urgency = str(it.get("urgency") or "later").lower()
         items.append({"label": str(it.get("label") or "?")[:60], "kind": kind if kind in SCAN_KINDS else "other",
-                      "box": [round(x), round(y), round(bw), round(bh)], "detail": str(it.get("detail") or "")[:160],
-                      "actions": [a[:100] for a in actions]})
-    return str(d.get("summary") or "")[:200], items[:8]
+                      "box": [round(x), round(y), round(bw), round(bh)],
+                      "urgency": urgency if urgency in SCAN_URGENCY else "later",
+                      "gist": str(it.get("gist") or "")[:160]})
+    items = items[:8]
+    routine = sorted({i for i in (d.get("routine") or []) if isinstance(i, int) and 0 <= i < len(items)})
+    return {"items": items, "routine": routine}
+
+
+def scan_handle(d):
+    """Pass 2's JSON: {detail, handle | None}."""
+    if d is None:
+        return {"detail": "", "handle": None}
+    handle = d.get("handle")
+    if isinstance(handle, dict) and str(handle.get("instruction") or "").strip():
+        handle = {"title": str(handle.get("title") or "Handle it")[:60],
+                  "plan": [str(p).strip()[:160] for p in (handle.get("plan") or []) if str(p).strip()][:5],
+                  "draft": str(handle.get("draft") or "")[:2000],
+                  "instruction": str(handle["instruction"]).strip()[:2000]}
+    else:
+        handle = None
+    return {"detail": str(d.get("detail") or "")[:700], "handle": handle}
+
+
+def complete(req, system, image_block, image_url, parts, max_tokens):
+    """One answer from the provider, as fast as it goes: its OpenAI-style
+    chat endpoint first when it has one (Meta's takes reasoning_effort
+    "minimal", which the Messages API can't ask for: half the thinking),
+    else the Messages API. Returns (text, usage)."""
+    global CHAT_OK
+    base = os.environ["ANTHROPIC_BASE_URL"].rstrip("/")
+    key = os.environ["ANTHROPIC_AUTH_TOKEN"]
+    model = model_for(req)
+    if CHAT_OK is not False and str(req.get("scanEffort") or "minimal") == "minimal":
+        content = ([{"type": "image_url", "image_url": {"url": image_url}}] if image_url else []) + \
+            [{"type": "text", "text": t} for t in parts]
+        body = {"model": model, "max_completion_tokens": max_tokens, "reasoning_effort": "minimal",
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
+        r = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
+                                   headers={"Authorization": f"Bearer {key}", "content-type": "application/json"})
+        try:
+            with urllib.request.urlopen(r, timeout=120) as resp:
+                d = json.loads(resp.read().decode())
+            CHAT_OK = True
+            return str(((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""), d.get("usage") or {}
+        except urllib.error.HTTPError as e:
+            if CHAT_OK or e.code not in (400, 404, 405, 422):
+                raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:300]}")
+            CHAT_OK = False
+        except (ValueError, KeyError, IndexError):
+            CHAT_OK = False
+    content = ([image_block] if image_block else []) + [{"type": "text", "text": t} for t in parts]
+    d = post(req, {"model": model, "max_tokens": max_tokens, "system": system,
+                   "messages": [{"role": "user", "content": content}]})
+    return "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text"), d.get("usage") or {}
+
+
+CHAT_OK = None
 
 
 def scan(req, started, api, provider):
+    """Three kinds of passes, the first two at once: the brief's two lines
+    (emitted as "brief" in ~3 s), what is on the screen
+    (the image: "scan", with boxes, urgency and a gist), then every item's
+    detail and handle in parallel ("item", each as it comes). The image and
+    the context come first in every request: the passes share that prefix
+    (the provider's prompt cache)."""
+    import concurrent.futures
+    ms = lambda: int((time.monotonic() - started) * 1000)  # noqa: E731
     image = req.get("image") or ""
     w, h = image_size(image)
     if not w:
         emit("error", error="no screenshot to scan")
-        emit("done", ms=int((time.monotonic() - started) * 1000))
+        emit("done", ms=ms())
         return 1
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
-    prompt = SCAN_PROMPT.format(w=w, h=h, kinds="|".join(sorted(SCAN_KINDS)), lang=lang)
-    ctx = req.get("context") or {}
-    where = " — ".join(str(ctx[k]) for k in ("app", "title") if ctx.get(k))
-    if where:
-        prompt += f"\n\nThe focused window: {where}"
-    ui = ui_text()
-    if ui:
-        prompt += f"\n\nIts accessibility tree (what a screen reader sees):\n<<<\n{ui}\n>>>"
-    prompt = mask(prompt)
+    shared = mask(SCAN_INTRO.format(w=w, h=h) + "\n\n" + scan_context(req))
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
     model = model_for(req) if api else "haiku"
-    try:
-        emit("start", provider=provider, model=model)
-        desktop_mcp("sent", "note", "Kiroshi scan (screen)", prompt, (f"{provider.lower()}:" if api else "") + model)
-        if api:
-            with open(image, "rb") as f:
-                raw = f.read(IMAGE_MAX + 1)
-            if len(raw) > IMAGE_MAX:
-                raise ValueError("the screenshot is too big")
-            media = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
-            content = [{"type": "image", "source": {"type": "base64", "media_type": media,
-                                                    "data": base64.b64encode(raw).decode()}},
-                       {"type": "text", "text": prompt}]
-            d = post(req, {"model": model, "max_tokens": 8000, "system": system,
-                           "messages": [{"role": "user", "content": content}]})
-            text = "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text")
-        else:
-            _, text = call_claude(req, system, prompt)
-    except Exception as e:  # noqa: BLE001 — the overlay shows it
-        emit("error", error=str(e) or e.__class__.__name__)
-        emit("done", ms=int((time.monotonic() - started) * 1000))
-        return 1
-    summary, items = scan_items(unmask(text), w, h)
-    if not items:
-        emit("error", error="the model's answer had no labels")
-    emit("scan", width=w, height=h, summary=summary, items=items)
-    emit("done", ms=int((time.monotonic() - started) * 1000))
-    return 0 if items else 1
+    fast = SCAN_FAST.format(kinds="|".join(sorted(SCAN_KINDS)), lang=lang)
+    emit("start", provider=provider, model=model, contextMs=ms())
+    desktop_mcp("sent", "note", "Kiroshi scan (screen)", shared + "\n\n" + fast,
+                (f"{provider.lower()}:" if api else "") + model)
+    image_block = image_url = None
+    if api:
+        with open(image, "rb") as f:
+            raw = f.read(IMAGE_MAX + 1)
+        if len(raw) > IMAGE_MAX:
+            emit("error", error="the screenshot is too big")
+            emit("done", ms=ms())
+            return 1
+        media = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
+        data = base64.b64encode(raw).decode()
+        image_block = {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
+        image_url = f"data:{media};base64,{data}"
+
+    def ask_model(task, with_image=True, max_tokens=6000):
+        if not api:
+            return call_claude(req if with_image else {**req, "image": ""}, system, shared + "\n\n" + task)[1]
+        text, usage = complete(req, system, image_block if with_image else None, image_url if with_image else None,
+                               [shared, task], max_tokens)
+        emit("usage", usage=usage, ms=ms())
+        return text
+
+    def brief_pass():
+        try:
+            d = scan_json(unmask(ask_model(SCAN_BRIEF.format(lang=lang), max_tokens=3000))) or {}
+            emit("brief", doing=str(d.get("doing") or "")[:240], focus=str(d.get("focus") or "")[:300], ms=ms())
+        except Exception as e:  # noqa: BLE001 — the labels still come
+            emit("brief", doing="", focus="", ms=ms(), error=str(e))
+
+    with concurrent.futures.ThreadPoolExecutor(8) as pool:
+        brief_job = pool.submit(brief_pass)
+        try:
+            found = scan_brief(unmask(ask_model(fast)), w, h)
+        except Exception as e:  # noqa: BLE001 — the overlay shows it
+            brief_job.result()
+            emit("error", error=str(e) or e.__class__.__name__)
+            emit("done", ms=ms())
+            return 1
+        if not found or not found["items"]:
+            brief_job.result()
+            emit("error", error="the model's answer had no labels")
+            emit("scan", width=w, height=h, items=[], routine=[], ms=ms())
+            emit("done", ms=ms())
+            return 1
+        emit("scan", width=w, height=h, ms=ms(), **found)
+        listing = mask("\n".join(f"{i}. {it['label']} ({it['kind']}, {it['urgency']}, box {it['box']}): {it['gist']}"
+                                 for i, it in enumerate(found["items"])))
+
+        def detail(i):
+            it = found["items"][i]
+            hint = (" You judged it routine: the agent handles it entirely (dismiss the notification, acknowledge, "
+                    "file the task…), so give a handle, never null.") if i in found["routine"] else ""
+            task = SCAN_ITEM.format(listing=listing, n=i, label=mask(it["label"]), lang=lang, routine=hint)
+            try:
+                return i, scan_handle(scan_json(unmask(ask_model(task)))), ""
+            except Exception as e:  # noqa: BLE001
+                return i, {"detail": "", "handle": None}, str(e) or e.__class__.__name__
+
+        jobs = [pool.submit(detail, i) for i in range(len(found["items"]))]
+        for fut in concurrent.futures.as_completed(jobs):
+            i, got, err = fut.result()
+            emit("item", index=i, ms=ms(), error=err, **got)
+        brief_job.result()
+    emit("done", ms=ms())
+    return 0
 
 
 def main(argv):

@@ -938,17 +938,6 @@ in
                   "desktopControl"
                   "toggle"
                 ];
-                # Quick AI (the model provider's small model, answering in
-                # a couple of seconds): about the selection (else the
-                # clipboard), or a region of the screen drawn first.
-                "Mod+S" = [
-                  "quickAi"
-                  "selection"
-                ];
-                "Mod+Shift+S" = [
-                  "quickAi"
-                  "screen"
-                ];
                 # Push to talk: listen, transcribe on this computer
                 # (whisper.cpp), then the Quick AI card answers or does it;
                 # stops by itself after a pause (or press again).
