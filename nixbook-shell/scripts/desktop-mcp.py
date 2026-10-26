@@ -10420,9 +10420,12 @@ BIDI_MARKS = dict.fromkeys(map(ord, "⁦⁧⁨⁩‎‏"))
     "messages (Vesktop: \"sender (#channel, server): message\", or just the "
     "sender for a DM), mail, reminders… Cheaper than a screenshot to see "
     "whether someone answered. Filter by `app` (e.g. vesktop), `contains` "
-    "(in the title or text) and `since_minutes`.",
+    "(in the title or text) and `since_minutes`. `on_screen`: only those "
+    "still in the notification centre (or popped up), with their ids for "
+    "dismiss_notifications.",
     obj(
         {
+            "on_screen": {"type": "boolean", "description": "Only those still in the notification centre, with their ids"},
             "app": {"type": "string", "description": "App name, case-insensitive substring (e.g. vesktop)"},
             "contains": {"type": "string", "description": "Only those whose title or text contains this"},
             "since_minutes": {"type": "integer", "description": "Only those from the last N minutes"},
@@ -10440,6 +10443,8 @@ def t_notifications(ctx, args):
         raise ToolError("`count` must be a positive integer")
     if since is not None and (not isinstance(since, int) or isinstance(since, bool) or since < 1):
         raise ToolError("`since_minutes` must be a positive integer")
+    if args.get("on_screen") is True:
+        return live_notifications(app, contains, since, count)
     try:
         with open(notification_history_path(), encoding="utf-8") as f:
             history = json.load(f)
@@ -10467,6 +10472,205 @@ def t_notifications(ctx, args):
     if not lines:
         return [text("no notifications match")]
     return [text("\n".join(lines[-min(count, 100):]))]
+
+
+def shell_notifications(fn, *args):
+    """The shell's `notifications` IPC target: its JSON answer."""
+    p = qs_ipc("call", "notifications", fn, *args)
+    try:
+        out = json.loads((p.stdout or "").strip() or "null")
+    except ValueError:
+        out = None
+    if p.returncode != 0 or out is None:
+        raise ToolError(f"the shell didn't answer ({short((p.stderr or p.stdout or '').strip(), 200) or 'is it running?'})")
+    if isinstance(out, dict) and out.get("error"):
+        raise ToolError(str(out["error"]))
+    return out
+
+
+def notification_line(n):
+    stamp = time.strftime("%H:%M", time.localtime((n.get("time") or 0) / 1000))
+    flags = "".join(f" ({f})" for f in ("popup", "unread") if n.get(f))
+    if n.get("canReply"):
+        flags += " (can reply)"
+    actions = [str(a) for a in n.get("actions") or [] if a][:6]
+    if actions:
+        flags += " actions: " + ", ".join(actions)
+    summary = str(n.get("summary") or "").translate(BIDI_MARKS)
+    body = str(n.get("body") or "").translate(BIDI_MARKS)
+    return f"#{n.get('id')} {stamp} [{n.get('app') or ''}] {summary}: {body}{flags}"[:600]
+
+
+def live_notifications(app, contains, since, count):
+    cutoff = (time.time() - since * 60) * 1000 if since else 0
+    shown = [n for n in shell_notifications("list") if isinstance(n, dict)
+             and (not app or app in str(n.get("app") or "").lower())
+             and (not contains or contains in f"{n.get('summary') or ''}\n{n.get('body') or ''}".lower())
+             and (n.get("time") or 0) >= cutoff]
+    if not shown:
+        return [text("the notification centre is empty" if not (app or contains or since) else "no notification on screen matches")]
+    return [text("\n".join(notification_line(n) for n in shown[-min(count, 100):]))]
+
+
+@tool(
+    "dismiss_notifications",
+    "shell",
+    "Dismiss notifications from the notification centre and their popups, as "
+    "the user's × would (the app is told; they stay in the notification "
+    "history, which `notifications` reads): by `ids` (from notifications "
+    "with on_screen), by `app` and/or `contains` (in the title or text), or "
+    "`all`. Use it to clear noise the user doesn't need, or what they asked "
+    "to clear; not a message they haven't seen and would want.",
+    obj(
+        {
+            "ids": {"type": "array", "items": {"type": "integer"}, "description": "Their ids (notifications on_screen)"},
+            "app": {"type": "string", "description": "Those of this app (case-insensitive part of its name)"},
+            "contains": {"type": "string", "description": "Those with this in their title or text"},
+            "all": {"type": "boolean", "description": "Every one in the centre"},
+        }
+    ),
+)
+def t_dismiss_notifications(ctx, args):
+    ids = args.get("ids")
+    app = (as_str(args, "app", max_len=128, required=False) or "").strip()
+    contains = (as_str(args, "contains", max_len=256, required=False) or "").strip()
+    everything = args.get("all") is True
+    if ids is not None and (not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+        raise ToolError("`ids` must be a list of integers")
+    if not ids and not app and not contains and not everything:
+        raise ToolError("say which: `ids`, `app`, `contains` or `all`")
+    ctx.guard.check_rate()
+    if ids:
+        out = shell_notifications("dismiss", ",".join(str(i) for i in ids[:200]))
+    elif everything and not app and not contains:
+        out = shell_notifications("dismissAll")
+    else:
+        out = shell_notifications("dismissMatching", app, contains)
+    gone = [n for n in out.get("dismissed") or [] if isinstance(n, dict)]
+    lines = [f"dismissed {len(gone)}" + (f", {out.get('left')} left in the centre" if isinstance(out.get("left"), int) else "")]
+    lines += [notification_line(n) for n in gone[:20]]
+    if out.get("missing"):
+        lines.append("not in the centre (already gone?): " + ", ".join(f"#{i}" for i in out["missing"]))
+    return [text("\n".join(lines))]
+
+
+def notification_id(args):
+    nid = args.get("id")
+    if not isinstance(nid, int) or isinstance(nid, bool):
+        raise ToolError("`id` must be a notification's id (notifications on_screen)")
+    return nid
+
+
+@tool(
+    "notification_action",
+    "shell",
+    "Act on a notification still in the centre: click one of its buttons "
+    "(`action`: its label or identifier, as notifications on_screen lists "
+    "them, e.g. \"Mark as read\", \"Join\") or send a typed reply "
+    "(`reply`, for those marked \"can reply\": the app sends it as the "
+    "user's message). Sending or clicking for the user: say what you'll do.",
+    obj(
+        {
+            "id": {"type": "integer", "description": "The notification's id (notifications on_screen)"},
+            "action": {"type": "string", "description": "A button's label or identifier"},
+            "reply": {"type": "string", "description": "The reply to send"},
+        },
+        ["id"],
+    ),
+    destructive=True,
+)
+def t_notification_action(ctx, args):
+    nid = notification_id(args)
+    action = (as_str(args, "action", max_len=128, required=False) or "").strip()
+    reply = as_str(args, "reply", max_len=4000, required=False)
+    if bool(action) == bool(reply):
+        raise ToolError("give either `action` (a button) or `reply` (a message)")
+    ctx.guard.check_rate()
+    if reply:
+        ctx.guard.check_text(reply)
+        out = shell_notifications("reply", str(nid), reply)
+        return [text(f"replied to {notification_line(out.get('notification') or {})}: {reply}")]
+    out = shell_notifications("invoke", str(nid), action)
+    return [text(f"clicked \"{out.get('invoked')}\" on {notification_line(out.get('notification') or {})}")]
+
+
+@tool(
+    "snooze_notification",
+    "shell",
+    "Put a notification away for a while: dismissed now, shown again (as a "
+    "new notification, its buttons gone) in `minutes` (1 to 1440; kept until "
+    "the shell restarts).",
+    obj(
+        {
+            "id": {"type": "integer", "description": "The notification's id (notifications on_screen)"},
+            "minutes": {"type": "integer", "description": "When to show it again"},
+        },
+        ["id", "minutes"],
+    ),
+)
+def t_snooze_notification(ctx, args):
+    nid = notification_id(args)
+    minutes = args.get("minutes")
+    if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 1440:
+        raise ToolError("`minutes` must be 1 to 1440")
+    ctx.guard.check_rate()
+    out = shell_notifications("snooze", str(nid), str(minutes))
+    return [text(f"snoozed for {out.get('minutes')} min: {notification_line(out.get('notification') or {})}")]
+
+
+@tool(
+    "do_not_disturb",
+    "shell",
+    "The shell's Do Not Disturb (no popups, no sounds; notifications still "
+    "go to the centre): `state` on, off or status, or `minutes` to turn it "
+    "on for that long.",
+    obj(
+        {
+            "state": {"type": "string", "enum": ["on", "off", "status"]},
+            "minutes": {"type": "integer", "description": "On for this long (1 to 1440), then off"},
+        }
+    ),
+)
+def t_do_not_disturb(ctx, args):
+    minutes = args.get("minutes")
+    state = args.get("state")
+    if minutes is not None:
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 1440:
+            raise ToolError("`minutes` must be 1 to 1440")
+        arg = str(minutes)
+    elif state in ("on", "off", "status"):
+        arg = state
+    else:
+        raise ToolError("give `state` (on, off, status) or `minutes`")
+    if arg != "status":
+        ctx.guard.check_rate()
+    out = shell_notifications("dnd", arg)
+    if not out.get("silent"):
+        return [text("Do Not Disturb is off")]
+    until = out.get("until") or 0
+    return [text("Do Not Disturb is on" + (time.strftime(" until %H:%M", time.localtime(until / 1000)) if until else ""))]
+
+
+@tool(
+    "clear_notification_history",
+    "shell",
+    "Delete the notification history for good (what `notifications` reads; "
+    "the centre is dismiss_notifications): all of it, or only what is older "
+    "than `older_than_days`. Only when the user asks.",
+    obj({"older_than_days": {"type": "integer", "description": "Keep the last N days"}}),
+    destructive=True,
+)
+def t_clear_notification_history(ctx, args):
+    days = args.get("older_than_days")
+    if days is not None and (not isinstance(days, int) or isinstance(days, bool) or days < 1):
+        raise ToolError("`older_than_days` must be a positive integer")
+    ctx.guard.check_rate()
+    before = qs_ipc("call", "notificationHistory", "count").stdout.strip()
+    p = qs_ipc("call", "notificationHistory", *(["deleteOlderThan", str(days)] if days else ["clear"]))
+    if p.returncode != 0:
+        raise ToolError(f"the shell didn't answer ({short((p.stderr or '').strip(), 200) or 'is it running?'})")
+    after = qs_ipc("call", "notificationHistory", "count").stdout.strip()
+    return [text(f"notification history: {before or '?'} → {after or '?'} entries")]
 
 
 @tool(
