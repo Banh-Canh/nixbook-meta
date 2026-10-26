@@ -11,6 +11,9 @@ let
     src = sources.ds4drv;
   });
   inherit (pkgs.customPkgs) ginx;
+  # Hackathon fork: osupdate follows Banh-Canh/nixbook-meta, not didactiklabs/nixbook.
+  # Point it back at https://github.com/didactiklabs/nixbook to return to nixbook.
+  repo = "https://github.com/Banh-Canh/nixbook-meta";
   osupdate = pkgs.writeShellScriptBin "osupdate" ''
     set -euo pipefail
     # colmena evaluates the hive with nix (not on a systemd unit's PATH: its
@@ -34,12 +37,12 @@ let
       fi
     ''}
 
-    target="$(git ls-remote https://github.com/didactiklabs/nixbook refs/heads/main | awk '{print $1}')"
+    target="$(git ls-remote ${repo} refs/heads/main | awk '{print $1}')"
     echo last applied revision: $(${pkgs.jq}/bin/jq -r .rev /etc/nixos/version)
     echo applying revision: "$target"...
 
     echo Running ginx...
-    ${ginx}/bin/ginx --source https://github.com/didactiklabs/nixbook -b main --now -- /run/wrappers/bin/sudo ${pkgs.colmena}/bin/colmena apply-local
+    ${ginx}/bin/ginx --source ${repo} -b main --now -- /run/wrappers/bin/sudo ${pkgs.colmena}/bin/colmena apply-local
     # ginx exits 0 even when its command fails: check the result.
     applied="$(${pkgs.jq}/bin/jq -r .rev /etc/nixos/version)"
     if [ "$applied" != "$target" ]; then

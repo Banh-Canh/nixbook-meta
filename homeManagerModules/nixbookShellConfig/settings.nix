@@ -131,8 +131,8 @@
     secondPrecision = true;
   };
   # The bar's update indicator (UpdatesCount) compares /etc/nixos/version
-  # with this repository's main branch.
+  # with this repository's main branch (the hackathon fork, like osupdate).
   updates = {
-    repoUrl = "https://github.com/didactiklabs/nixbook";
+    repoUrl = "https://github.com/Banh-Canh/nixbook-meta";
   };
 }
