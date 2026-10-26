@@ -22,6 +22,8 @@ import QtQuick
  */
 Singleton {
     id: root
+    // Referenced at startup (shell.qml): its IPC target exists from the start.
+    function load() {}
 
     property bool open: false
     property bool scanning: false
