@@ -226,6 +226,12 @@ ContentPage {
                     onClicked: QuickAi.askQuestion("", "empty")
                 }
                 SmallButton {
+                    materialIcon: "smart_toy"
+                    mainText: Translation.tr("Full AI mode (Mod+Shift+T)")
+                    enabled: QuickAi.available
+                    onClicked: FullAi.enter()
+                }
+                SmallButton {
                     materialIcon: "forum"
                     mainText: Translation.tr("Set up my desktop by talking")
                     enabled: QuickAi.available
