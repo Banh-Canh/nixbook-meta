@@ -9,6 +9,8 @@ records; no model runs on it.
 Run through `nixbook-model-provider run nixbook-voice-stream [--lang L]
 [--file WAV]` (the key and the server from the Meta provider). One JSON
 object per line on stdout:
+  {"type": "source", "name"}        the microphone recorded (the echo-
+                                    cancelled one when it exists)
   {"type": "ready"}                 the server took the session
   {"type": "level", "db"}           the microphone's level, every 80 ms
   {"type": "speech"}                speech started
@@ -150,6 +152,27 @@ class WebSocket:
             pass
 
 
+# The voice's microphone without the computer's own sound (the PipeWire
+# echo canceller of programs.nixbook-shell.voice.echoCancel), else the
+# default one. NIXBOOK_VOICE_SOURCE forces one.
+ECHO_CANCEL_SOURCE = "nixbook-echo-cancel-source"
+
+
+def microphone():
+    forced = os.environ.get("NIXBOOK_VOICE_SOURCE")
+    if forced:
+        return forced
+    pactl = shutil.which("pactl")
+    if pactl:
+        try:
+            out = subprocess.run([pactl, "list", "short", "sources"], capture_output=True, text=True, timeout=3).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        if any(line.split("\t")[1:2] == [ECHO_CANCEL_SOURCE] for line in out.splitlines()):
+            return ECHO_CANCEL_SOURCE
+    return "default"
+
+
 def audio_source(path):
     """The microphone (ffmpeg from PipeWire's default source), or a WAV
     paced at real time: a file-like object of raw 16 kHz mono PCM."""
@@ -167,7 +190,9 @@ def audio_source(path):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg isn't installed")
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "pulse", "-i", "default",
+    source = microphone()
+    emit("source", name=source)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "pulse", "-i", source,
            "-ac", "1", "-ar", str(RATE), "-f", "s16le", "-"]
     setpriv = shutil.which("setpriv")
     if setpriv:  # never outlives this script

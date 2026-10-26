@@ -155,6 +155,29 @@ expect_eq "allow: run once allowed" 'close_window {"id": 7}' "$(cat "$tmp/calls.
 ask never '{"mode": "do", "question": "CLOSE the window", "lang": "en", "confirm": "never"}'
 expect_eq "confirm never: not asked" "" "$(event never approve .tool)"
 
+# Full AI mode's reactions: ask by default, act alone only when told or
+# after the user agreed twice; their answers kept and given back.
+export XDG_STATE_HOME="$tmp/state"
+ask react1 '{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Ana", "text": "dinner?"}}'
+expect_eq "react: asks by default" '"ask"' "$(event react1 react .action)"
+ask react2 '{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Bo", "text": "TOLDIT ping"}}'
+expect_eq "react: does what it was told" '"do"' "$(event react2 react .action)"
+ask react3 '{"mode": "react", "event": {"event": "notification", "app": "Mail", "title": "x", "text": "GUESSDO spam"}}'
+expect_eq "react: never acts on a guess" '"ask"' "$(event react3 react .action)"
+ev='{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Ana", "text": "LEARNED dinner?"}}'
+ask react4 "$ev"
+expect_eq "react: learned, but not agreed twice yet: asks" '"ask"' "$(event react4 react .action)"
+for i in 1 2; do python3 -I "$script" learn '{"event": {"event": "notification", "app": "Chat", "title": "Ana"}, "decision": "ask", "outcome": "agreed", "said": "yes"}'; done
+ask react5 "$ev"
+expect_eq "react: agreed twice: acts alone" '"do"' "$(event react5 react .action)"
+expect_contains_ "react: the past answers go along" "$(grep LEARNED "$tmp/requests.log" | tail -n1)" "the user agreed: yes"
+expect_eq "react: what it learned is said" '"answer yes to Ana"' "$(event react5 react .learn)"
+python3 -I "$script" learn '{"pref": "Ana is my sister"}'
+expect_eq "learn: a preference kept" '"Ana is my sister"' "$(python3 -I "$script" learned | jq -c '.prefs[-1].text')"
+python3 -I "$script" learn '{"forget": true}'
+expect_eq "learn: forgotten" '{}' "$(python3 -I "$script" learned)"
+unset XDG_STATE_HOME
+
 # Failures.
 python3 -I "$script" ask "$tmp/none.json" >"$tmp/none.out" 2>/dev/null || true
 expect_eq "no request: an error" '"error"' "$(jq -c '.type' "$tmp/none.out" | head -n1)"

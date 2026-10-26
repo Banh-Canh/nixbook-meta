@@ -139,6 +139,14 @@ ContentPage {
                     onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.conversation = checked
                 }
                 ConfigSwitch {
+                    configKey: "ai.fullAi.react"
+                    enabled: !nixManaged && Config.options.ai.quick.enable
+                    buttonIcon: "notifications_active"
+                    text: Translation.tr("Full AI reacts to what happens (notifications, downloads, battery…) and learns from my answers")
+                    checked: Config.options.ai.fullAi?.react ?? true
+                    onCheckedChanged: if (Config.options.ai.fullAi) Config.options.ai.fullAi.react = checked
+                }
+                ConfigSwitch {
                     configKey: "ai.quick.launcher"
                     enabled: !nixManaged && Config.options.ai.quick.enable
                     buttonIcon: "search"
@@ -173,18 +181,6 @@ ContentPage {
                 color: Appearance.colors.colSubtext
                 font.pixelSize: Appearance.font.pixelSize.small
                 text: Translation.tr("Meta: your voice is streamed to Muse Voice Transcribe while you speak, the words show as they come and it knows when you've finished; nothing heavy runs here. This computer: whisper.cpp, nothing leaves it, but it needs a decent GPU or CPU. Auto: Meta when it is the model provider (now: %1).").arg(Voice.engine === "meta" ? Translation.tr("Meta") : Translation.tr("this computer"))
-            }
-            ConfigSelectionArray {
-                configKey: "ai.voice.speak"
-                text: Translation.tr("Read the answers out")
-                icon: "volume_up"
-                currentValue: Config.options.ai.voice?.speak ?? "voice"
-                onSelected: newValue => { if (Config.options.ai.voice) Config.options.ai.voice.speak = newValue }
-                options: [
-                    { displayName: Translation.tr("When I talk"), icon: "record_voice_over", value: "voice" },
-                    { displayName: Translation.tr("Always"), icon: "volume_up", value: "always" },
-                    { displayName: Translation.tr("Never"), icon: "volume_off", value: "never" }
-                ]
             }
             ConfigSelectionArray {
                 configKey: "ai.quick.confirm"
@@ -230,6 +226,11 @@ ContentPage {
                     mainText: Translation.tr("Full AI mode (Mod+Shift+T)")
                     enabled: QuickAi.available
                     onClicked: FullAi.enter()
+                }
+                SmallButton {
+                    materialIcon: "delete_sweep"
+                    mainText: Translation.tr("Forget what Full AI learned")
+                    onClicked: Quickshell.execDetached(["nixbook-quick-ai", "learn", "{\"forget\": true}"])
                 }
                 SmallButton {
                     materialIcon: "forum"

@@ -235,6 +235,12 @@ Singleton {
                 // Talking to the desktop (services/Voice.qml): push to talk
                 // (Mod+T), transcribed by Meta or on this computer, then sent
                 // in Claude's speech bubble.
+                // Full AI mode (services/FullAi.qml): reacting on its own to what
+                // happens (notifications, downloads, the battery…), learning
+                // from the user's answers.
+                property JsonObject fullAi: JsonObject {
+                    property bool react: true
+                }
                 property JsonObject voice: JsonObject {
                     property bool enable: true
                     // auto: Meta's Muse Voice Transcribe when Meta is the model
@@ -250,9 +256,6 @@ Singleton {
                     // A conversation: the microphone opens again after each answer
                     // until "that's all", Escape or a silence.
                     property bool conversation: true
-                    // Its answers read out (Piper, on this computer): "voice" (to
-                    // what was said), "always", "never".
-                    property string speak: "voice"
                 }
                 // Claude through Claude Code (`claude -p`, the user's own
                 // Claude login): the "Claude" model, with the desktop tools

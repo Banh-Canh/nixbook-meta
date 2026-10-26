@@ -25,6 +25,7 @@ recorded in the desktop-mcp sent log, like every other AI pass.
 """
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -318,7 +319,8 @@ AGENT_TOOLS = [
     "read_screen", "clipboard_get", "clipboard_set", "notifications", "dismiss_notifications", "notification_action",
     "snooze_notification", "do_not_disturb", "clear_notification_history", "type_text", "press_keys", "run_steps",
     "shell_ipc", "shell_ipc_list", "list_themes", "set_theme", "set_wallpaper", "widget", "equalizer", "calendar",
-    "tasks", "contacts", "notify", "ui_read", "ui_act", "remind", "recall", "screen_capture",
+    "tasks", "contacts", "notify", "ui_read", "ui_act", "remind", "recall", "remember", "routine",
+    "recall_about_user", "remember_about_user", "screen_capture", "conversation", "delete_conversations",
 ]
 AGENT_SYSTEM = (
     "You run the user's desktop for them (nixbook: NixOS, the niri scrolling compositor, its own shell). They "
@@ -333,7 +335,9 @@ AGENT_SYSTEM = (
     "comes with the request (time, weather, battery, next events, music): answer from it directly, no tool. Never "
     "open panels, take screenshots or poke around to find information: use the tool made for it, or say you can't "
     "tell. Media and volume: shell_ipc (target mpris: playPause, next, previous; target audio or brightness when "
-    "listed by shell_ipc_list). You only have the tools listed to you (the server's instructions below may name "
+    "listed by shell_ipc_list). Keep learning: when the user states a lasting preference or a standing order "
+    "(\"always…\", \"never…\", \"when X happens, do Y\"), save it at once (a routine for \"when X, do Y\", "
+    "remember_about_user for what they like and who matters to them) and say you will. You only have the tools listed to you (the server's instructions below may name "
     "others): you can't see images, so read the screen with read_screen. Answer in the language the user writes "
     "or speaks in ({lang} when it isn't clear)."
 )
@@ -364,7 +368,7 @@ def agent_tools():
 # The tools that both read and write (calendar, tasks, contacts, widget,
 # equalizer, layouts…) say which with their `action`: these only read.
 READ_ACTIONS = {"list", "lists", "upcoming", "get", "search", "find", "show", "status", "layout", "day", "events",
-                "read", "next", "agenda", "info", "count", "check"}
+                "read", "next", "agenda", "info", "count", "check", "history"}
 
 
 def reads_only(name, args, meta):
@@ -622,6 +626,153 @@ def clean(mode, text):
     return s.strip()
 
 
+# ── Full AI mode's reactions (services/FullAi.qml): something happened on
+# the computer (a notification, a download, the battery, a screen…); the
+# model decides: ignore it, tell the user, ask them what to do, or do it.
+# It acts on its own only on what the user told it (this session, a rule,
+# a note) or did twice before for the same kind of thing; else it asks.
+# What the user answered is kept (learned.json) and given back next time.
+REACT_SYSTEM = (
+    "You run the user's desktop in Full AI mode: they talk to you, you are the one watching the computer. "
+    "Something just happened. Decide, and answer with JSON only: {{\"action\": \"ignore\"|\"tell\"|\"ask\"|\"do\", "
+    "\"say\": \"what you say out loud, one or two short spoken sentences\", \"instruction\": \"for do: the complete "
+    "instruction for the desktop agent (it has the desktop tools)\", \"basis\": \"told\"|\"learned\"|\"guess\", "
+    "\"learn\": \"a lasting preference this shows, or empty\"}}. "
+    "ignore: noise, ads, your own actions, what the user already sees and doesn't need. tell: worth knowing, nothing "
+    "to decide. ask: it needs a decision (a message to answer, a file to open, a meeting about to start): say what "
+    "happened in a few words and ask what to do, offering the likely answer (\"Julien asks if you come tonight. "
+    "Shall I say yes?\"). do: only when the user told you to (this session or a saved note/rule: basis \"told\") or "
+    "always chose the same before (basis \"learned\"); never send a message or delete anything on a guess. "
+    "Speak naturally, like a helpful assistant, in the language the user talks to you in (the conversation "
+    "below; else the message's language when it is theirs, else {lang}), never read out codes or long "
+    "texts; private details stay as the placeholders they are."
+)
+
+
+def learned_path():
+    return os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+                        "nixbook-shell", "full-ai-learned.json")
+
+
+def read_learned():
+    try:
+        with open(learned_path(), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_learned(d):
+    path = learned_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def event_sig(ev):
+    """What makes two events "the same kind": the event, the app, and for a
+    notification its title (a chat's sender)."""
+    kind = str(ev.get("event") or "")
+    app = str(ev.get("app") or "").lower()
+    title = str(ev.get("title") or "").lower()[:60] if kind == "notification" else ""
+    return "|".join(x for x in (kind, app, title) if x)
+
+
+def learned_for(ev, d):
+    """The past reactions to this kind of event, and the preferences."""
+    sig = event_sig(ev)
+    app_sig = "|".join(sig.split("|")[:2])
+    past = [r for r in d.get("reactions") or [] if r.get("sig") == sig or r.get("sig", "").startswith(app_sig)][-12:]
+    return past, (d.get("prefs") or [])[-30:]
+
+
+def learn_command(raw):
+    """`learn JSON`: {sig?, event?, decision, outcome, said?} a reaction and
+    the user's answer; {pref: text} a preference; {forget: true} all gone."""
+    try:
+        item = json.loads(raw)
+    except ValueError:
+        print("learn: JSON expected", file=sys.stderr)
+        return 2
+    d = read_learned()
+    if item.get("forget") is True:
+        write_learned({})
+        return 0
+    if item.get("pref"):
+        prefs = [p for p in d.get("prefs") or [] if p.get("text") != item["pref"]]
+        prefs.append({"text": str(item["pref"])[:300], "t": int(time.time())})
+        d["prefs"] = prefs[-60:]
+    if item.get("decision"):
+        sig = item.get("sig") or event_sig(item.get("event") or {})
+        rec = {"sig": sig, "t": int(time.time()), "decision": item["decision"], "outcome": item.get("outcome", ""),
+               "said": str(item.get("said") or "")[:200]}
+        d["reactions"] = ((d.get("reactions") or []) + [rec])[-400:]
+    write_learned(d)
+    return 0
+
+
+def react(req, started, api, provider):
+    ev = req.get("event") or {}
+    lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
+    d = read_learned()
+    past, prefs = learned_for(ev, d)
+    parts = ["What happened: " + json.dumps({k: v for k, v in ev.items() if v not in ("", None)}, ensure_ascii=False)]
+    if req.get("facts"):
+        parts.append("What the desktop knows right now:\n" + str(req["facts"])[:1500])
+    if req.get("recent"):
+        parts.append("The conversation with the user so far (what they told you):\n" + str(req["recent"])[-2500:])
+    if past:
+        parts.append("Your past reactions to the same kind of thing and what the user answered:\n" + "\n".join(
+            f"- {time.strftime('%d %b', time.localtime(r.get('t', 0)))}: you {r.get('decision')}, "
+            f"the user {r.get('outcome') or 'said nothing'}{': ' + r['said'] if r.get('said') else ''}" for r in past))
+    if prefs:
+        parts.append("What the user prefers (learned):\n" + "\n".join("- " + p.get("text", "") for p in prefs))
+    told = tool_instructions({"question": f"{ev.get('app', '')} {ev.get('title', '')} {ev.get('text', '')}"})
+    if told:
+        parts.append("Notes from the desktop memory:\n" + told[-3000:])
+    prompt = mask("\n\n".join(parts))
+    system = REACT_SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
+    emit("start", provider=provider, model=model_for(req) if api else "haiku")
+    desktop_mcp("sent", "note", "Full AI: a reaction", prompt, (f"{provider.lower()}:" if api else "") +
+                (model_for(req) if api else "haiku"))
+    try:
+        if api:
+            base, key = os.environ["ANTHROPIC_BASE_URL"].rstrip("/"), os.environ["ANTHROPIC_AUTH_TOKEN"]
+            messages = [{"role": "user", "content": prompt}]
+            text = chat_answer(req, base, key, model_for(req), system, messages, "low")
+            if text is None:
+                d2 = post(req, {"model": model_for(req), "max_tokens": 2000, "system": system, "messages": messages})
+                text = "".join(b.get("text", "") for b in d2.get("content") or [] if b.get("type") == "text")
+        else:
+            _, text = call_claude(req, system, prompt)
+    except Exception as e:  # noqa: BLE001
+        emit("error", error=str(e))
+        emit("done", ms=int((time.monotonic() - started) * 1000))
+        return 1
+    m = re.search(r"\{.*\}", unmask(text), re.S)
+    try:
+        decision = json.loads(m.group(0)) if m else {}
+    except ValueError:
+        decision = {}
+    action = decision.get("action") if decision.get("action") in ("ignore", "tell", "ask", "do") else "ignore"
+    basis = decision.get("basis") if decision.get("basis") in ("told", "learned", "guess") else "guess"
+    # Acting alone: only on what it was told, or what the user chose at
+    # least twice before for this kind of thing; else it asks.
+    if action == "do":
+        agreed = sum(1 for r in past if r.get("outcome") in ("agreed", "did it") and r.get("decision") in ("ask", "do"))
+        if basis == "guess" or (basis == "learned" and agreed < 2) or not str(decision.get("instruction") or "").strip():
+            action = "ask"
+    emit("react", action=action, say=str(decision.get("say") or "").strip()[:400],
+         instruction=str(decision.get("instruction") or "").strip()[:2000], basis=basis,
+         learn=str(decision.get("learn") or "").strip()[:300], sig=event_sig(ev))
+    emit("done", ms=int((time.monotonic() - started) * 1000))
+    return 0
+
+
 def ask(path):
     started = time.monotonic()
     try:
@@ -635,6 +786,8 @@ def ask(path):
                                                             "API" if api else "Claude")
     if req.get("mode") == "scan":
         return scan(req, started, api, provider)
+    if req.get("mode") == "react":
+        return react(req, started, api, provider)
     try:
         mode, system, messages, prompt = build(req)
         emit("start", provider=provider, model=model_for(req) if api else "haiku")
@@ -987,10 +1140,15 @@ def scan(req, started, api, provider):
 def main(argv):
     if len(argv) == 3 and argv[1] == "ask":
         return ask(argv[2])
+    if len(argv) == 3 and argv[1] == "learn":
+        return learn_command(argv[2])
+    if len(argv) == 2 and argv[1] == "learned":
+        print(json.dumps(read_learned(), ensure_ascii=False))
+        return 0
     if len(argv) == 2 and argv[1] == "modes":
         print(json.dumps(sorted(MODES)))
         return 0
-    print("usage: nixbook-quick-ai ask REQUEST.json | modes", file=sys.stderr)
+    print("usage: nixbook-quick-ai ask REQUEST.json | learn JSON | learned | modes", file=sys.stderr)
     return 2
 
 
