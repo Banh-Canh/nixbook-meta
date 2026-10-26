@@ -278,6 +278,32 @@ Singleton {
         chat.addMessage(String(label || convo.question || ""), "user");
         root.request();
     }
+    // Something Full AI mode reacted to (services/FullAi.qml): said in the
+    // bubble as its message, and what the user answers is about it (the
+    // event goes along as the conversation's text).
+    function adopt(eventText, said) {
+        if (!root.available) return;
+        if (!Initiative.speaking) Initiative.summon();
+        Initiative.prepare();
+        const chat = Initiative.chat;
+        if (!chat) return;
+        if (root.busy) root.stop();
+        root.chat = chat;
+        root.clear();
+        root.convo = { mode: "do", question: "", text: String(eventText ?? ""), context: root.focusedApp(),
+                       start: chat.messageIDs.length };
+        if (said) chat.addMessage(said, "assistant");
+    }
+    // The bubble's last messages as text (Full AI mode's reactions read what
+    // the user told it this session).
+    function recentText(count = 10) {
+        const chat = Initiative.chat;
+        if (!chat) return "";
+        return chat.messageIDs.slice(-count).map(id => chat.messageByID[id])
+            .filter(m => m && (m.role === "user" || m.role === "assistant") && (m.content ?? "").length > 0)
+            .map(m => `${m.role === "user" ? "user" : "you"}: ${String(m.content).slice(0, 400)}`).join("\n");
+    }
+
     // The same subject, another mode (a chip).
     function run(mode) {
         if (!root.chat || !root.modeInfo[mode]) return;

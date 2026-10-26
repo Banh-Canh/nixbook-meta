@@ -67,7 +67,7 @@ the last answer; the stop button stops it.
 mode**) hands the desktop over to the AI: you talk, it does. A little mascot
 shows up and moves around the screen like a host: it shows what it hears, what it
 is doing (it darts off when the agent starts a step), and what it answers, which
-is also said out loud; it jumps for joy when a task is done and wobbles when
+it jumps for joy when a task is done and wobbles when
 something failed. A soft glow around the screens says the AI is in charge.
 
 - **Your keyboard and mouse are taken**: clicks and keys no longer reach your
@@ -75,10 +75,29 @@ something failed. A soft glow around the screens says the AI is in charge.
   (so does `Mod+Shift+T` again, or locking the screen). The compositor's own
   shortcuts (niri's `Mod+…`) keep working: a Wayland shell can't take those.
 - **The microphone stays open**, also while the agent works: give the next order
-  whenever you like, it takes over. It only closes while the mascot speaks (it
-  never hears itself). **`Mod+T` turns the microphone off or on.**
-- Steps that need your OK are asked out loud: say "yes" or "no".
+  whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
+- Steps that need your OK are asked in its balloon: say "yes" or "no".
 - The conversation is still in the speech bubble, with its reports.
+
+**It reacts to what happens** (_Full AI reacts to what happens_, on by default):
+a notification, a download, the battery running low, a screen or audio output
+plugged in, the network lost, you coming back. For each, it decides in a couple
+of seconds whether to **ignore** it (ads, its own doings, what you don't need),
+**tell** you, **ask** you what to do ("Julien asks if you're coming tonight.
+Shall I say yes?"), or **do** it. It reads what you told it this session ("if
+Mathieu writes, tell him I'm in a meeting"), your desktop memory and routines,
+and what you answered before for the same kind of thing.
+
+It only acts alone on what you told it, or what you agreed to at least twice
+before; otherwise it asks. It never interrupts an order you gave, and waits
+until it has finished speaking.
+
+**It keeps learning**: every reaction and your answer (yes, no, something else)
+is kept, and the next time the same kind of thing happens it is handled the way
+you chose. When you state a lasting preference ("always ignore Spotify", "when
+my sister writes, tell me at once"), it saves it, as a routine or in its memory
+of you. Settings > Desktop agents > Talk to your desktop > **Forget what Full AI
+learned** clears its learned reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
 
 ## Set up the desktop by talking
 
@@ -132,15 +151,14 @@ Talk as you would to someone: a pause in the middle of a sentence is fine; what
 you say ends after a longer pause (`ai.voice.pauseSeconds`, 1.8 s) and can last
 up to 2 minutes (`ai.voice.maxSeconds`).
 
-**It answers out loud** (_Read the answers out_: _When I talk_ by default,
-_Always_ or _Never_): the answer to what you said is read by a voice on this
-computer (Piper: English, French, German or Vietnamese, picked from the answer's
-language; Meta's Model API has no speech synthesis). After acting, it says the
-report's outcome and what needs you; when a step waits for your OK, it asks
-"May I …?". `Mod+T` or `Esc` cuts it short.
+**It doesn't hear the computer**: the voice records from a microphone with the
+computer's own sound taken out (a PipeWire echo canceller,
+`programs.nixbook-shell.voice.echoCancel.enable`, on by default), so music or a
+video playing isn't taken for what you say. After the first deploy with it,
+restart PipeWire once: `systemctl --user restart pipewire pipewire-pulse wireplumber`.
 
 **A conversation** (_Talk back and forth_, on by default): after `Mod+T`, once the
-answer has been said, the microphone opens again by itself, so you just go on
+answer is there, the microphone opens again by itself, so you just go on
 talking. When a step waits for your OK, say "yes" / "oui" or "no" / "non". It ends
 when you say "that's all", "thanks", "c'est tout", "merci"…, press `Esc`, put the
 bubble away, or say nothing for 8 seconds.

@@ -11,14 +11,22 @@ import QtQuick
  * Full AI mode (Mod+Shift+T, `fullAi toggle`): the AI runs the desktop and
  * the user talks to it. A cute mascot (modules/ii/fullAi) moves around the
  * screen as the MC: it shows what it hears, what it is doing and what it
- * answers (also said out loud). The user's keyboard and mouse are taken by
+ * answers. The user's keyboard and mouse are taken by
  * a transparent layer over every screen (FullAiOverlay.qml): only Escape
  * (leave), and the compositor's own shortcuts — Mod+T mutes or unmutes the
  * microphone, Mod+Shift+T leaves — still work. The agent's own clicks and
  * keys go through (MakeWay, as for the shell's other overlays).
  * The microphone stays open the whole time, also while the agent works: a
  * new order takes over (Quick AI's agent, in Claude's speech bubble, which
- * keeps the conversation). It only closes while the voice speaks.
+ * keeps the conversation).
+ * It reacts to what happens (ai.fullAi.react): a notification, a download,
+ * the battery, a screen or an audio output plugged in, the network lost,
+ * the user back: the model (`nixbook-quick-ai` react mode) ignores it,
+ * tells it, asks what to do ("Julien asks if you come tonight. Shall I say
+ * yes?") or does it — alone only on what the user told it (this session,
+ * a note, a routine) or chose twice before. Every reaction and the user's
+ * answer is kept (`nixbook-quick-ai learn`, full-ai-learned.json) and given
+ * back the next time: it keeps learning what the user wants.
  */
 Singleton {
     id: root
@@ -37,7 +45,8 @@ Singleton {
     readonly property string mood: {
         if (!root.active) return "idle";
         if (root.flash) return root.flash;
-        if (Voice.speaking) return "speaking";
+        if (root.reacting) return "thinking";
+        if (talk.running) return "speaking";
         if (QuickAi.busy) return QuickAi.steps.some(s => s.status === "run") ? "acting" : "thinking";
         if (!root.micOn) return "muted";
         if (Voice.listening && Voice.heard) return "listening";
@@ -46,6 +55,7 @@ Singleton {
     // The mascot's balloon: the words heard, the step under way, the answer.
     readonly property string line: {
         if (!root.active) return "";
+        if (root.reacting) return root.reactingLine;
         if (Voice.listening && Voice.partial.length > 0) return `“${Voice.partial}”`;
         if (QuickAi.pending)
             return Translation.tr("May I %1? Say yes or no.").arg(QuickAi.pending.tool.replace(/_/g, " "));
@@ -60,6 +70,17 @@ Singleton {
     }
     readonly property string hint: Translation.tr("Esc: leave Full AI · Mod+T: mic %1").arg(root.micOn ? Translation.tr("off") : Translation.tr("on"))
 
+    // A new line in the balloon: the mascot "talks" a moment (its mouth),
+    // silently: the agent has no voice.
+    function say(text) {
+        root.said = String(text ?? "");
+        saidOff.restart();
+        talk.restart();
+    }
+    Timer {
+        id: talk
+        interval: 2600
+    }
     function enter() {
         if (root.active) return;
         if (!QuickAi.available) return QuickAi.refuse();
@@ -69,14 +90,16 @@ Singleton {
         root.active = true;
         Voice.session = true;
         QuickAi.askQuestion("", "voice");
-        Voice.speak(Translation.tr("I've got it from here. Tell me what to do."));
+        root.say(Translation.tr("I've got it from here. Tell me what to do."));
     }
     function exit() {
         if (!root.active) return;
         root.active = false;
+        root.queue = [];
+        root.reacting = false;
+        root.asked = null;
         root.flash = "";
         Voice.cancel();
-        Voice.stopSpeaking();
     }
     function toggle() {
         if (root.active) root.exit();
@@ -95,6 +118,137 @@ Singleton {
         }
     }
 
+    // ── Reacting to what happens ──
+    readonly property bool reactOn: Config.options.ai.fullAi?.react ?? true
+    property var queue: []
+    property bool reacting: false
+    property string reactingLine: ""
+    // The question it asked, waiting for the user's answer: {sig, at}.
+    property var asked: null
+    // What it just did on its own: the user saying no undoes the learning.
+    property var didAlone: null
+    // Its own words and the shell's: not events.
+    readonly property var ownApps: ["quick ai", "desktop agent", "snoozed", "nixbook", "nixbook-shell", "quickshell"]
+    readonly property var reactEvents: ["download", "battery_low", "monitor_connected", "monitor_disconnected",
+        "audio_output", "wifi_disconnected", "back", "day_start"]
+    function event(ev) {
+        if (!root.active || !root.reactOn) return;
+        if (ev.event === "back" && (ev.away ?? 0) < 10) return;
+        // A burst from one app: only its latest.
+        root.queue = root.queue.filter(q => !(q.event === ev.event && q.app && q.app === ev.app)).concat([ev]).slice(-6);
+        pump.restart();
+    }
+    Connections {
+        target: Notifications
+        function onNotify(n) {
+            if (!root.active || !root.reactOn || n.isTransient) return;
+            if (root.ownApps.includes(String(n.appName ?? "").toLowerCase())) return;
+            root.event({ event: "notification", app: n.appName ?? "", title: n.summary ?? "",
+                         text: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 600),
+                         urgency: String(n.urgency ?? ""), id: n.notificationId });
+        }
+    }
+    Connections {
+        target: Routines
+        function onHappened(ev) {
+            if (root.reactEvents.includes(ev.event)) root.event(ev);
+        }
+    }
+    // One at a time, a moment after the last (a burst read as one), never
+    // over an order of the user's being done or the mascot speaking.
+    Timer {
+        id: pump
+        interval: 1200
+        onTriggered: {
+            if (!root.active || root.reacting || root.queue.length === 0) return;
+            if (QuickAi.busy || QuickAi.pending) { pump.restart(); return; }
+            const ev = root.queue[0];
+            root.queue = root.queue.slice(1);
+            root.react(ev);
+        }
+    }
+    function describe(ev) {
+        if (ev.event === "notification") return `${ev.app}${ev.title ? " · " + ev.title : ""}${ev.text ? ": " + ev.text : ""}`;
+        return [ev.event.replace(/_/g, " "), ev.name, ev.app, ev.percent !== undefined ? ev.percent + "%" : ""].filter(x => x).join(" · ");
+    }
+    function react(ev) {
+        root.reacting = true;
+        root.reactingLine = "🔔 " + root.describe(ev).slice(0, 160);
+        reactor.ev = ev;
+        reactor.out = "";
+        reactor.requestJson = JSON.stringify({ mode: "react", event: ev, lang: ConfigAssistant.uiLang(),
+            facts: QuickAi.facts(), recent: QuickAi.recentText(12),
+            model: Config.options.ai.quick?.model ?? "small", claude: Ai.claudeCodePath });
+        reactor.running = true;
+    }
+    function decided(ev, d) {
+        root.reacting = false;
+        if (!d || !root.active) return;
+        const said = d.say || "";
+        if (d.learn) Quickshell.execDetached(["nixbook-quick-ai", "learn", JSON.stringify({ pref: d.learn })]);
+        if (d.action === "ignore") {
+            pump.restart();
+            return;
+        }
+        root.said = said;
+        saidOff.restart();
+        if (d.action === "tell") {
+            QuickAi.adopt(root.describe(ev), said);
+            if (said) root.say(said);
+            root.remember(d.sig, "tell", "");
+        } else if (d.action === "ask") {
+            QuickAi.adopt(`Something happened: ${root.describe(ev)}. You asked the user: ${said}`, said);
+            root.asked = { sig: d.sig, at: Date.now() };
+            if (said) root.say(said);
+        } else if (d.action === "do") {
+            root.didAlone = { sig: d.sig, at: Date.now() };
+            if (said) root.say(said);
+            QuickAi.command(d.instruction, "react", said || root.describe(ev));
+            root.remember(d.sig, "do", "did it");
+        }
+        pump.restart();
+    }
+    function remember(sig, decision, outcome, words = "") {
+        Quickshell.execDetached(["nixbook-quick-ai", "learn",
+            JSON.stringify({ sig: sig, decision: decision, outcome: outcome, said: words })]);
+    }
+    // What the user said next (Voice.deliver): the answer to its question,
+    // or a no to what it just did alone; it learns from both.
+    readonly property var yes: /^(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|please|oui|ouais|vas-?y|d'?accord|ja|klar|mach|c[oó]|[dđ][uư][oợ]c)\b/i
+    readonly property var no: /^(no|nope|don'?t|stop|cancel|non|nein|kh[oô]ng|annule|laisse)\b/i
+    function userSaid(text) {
+        const t = String(text ?? "").trim();
+        if (root.asked && Date.now() - root.asked.at < 120000) {
+            root.remember(root.asked.sig, "ask", root.no.test(t) ? "declined" : root.yes.test(t) ? "agreed" : "answered", t);
+            root.asked = null;
+        } else if (root.didAlone && Date.now() - root.didAlone.at < 45000 && root.no.test(t)) {
+            root.remember(root.didAlone.sig, "do", "undone", t);
+            root.didAlone = null;
+            if (QuickAi.busy) QuickAi.stop();
+        }
+    }
+    Process {
+        id: reactor
+        property var ev: ({})
+        property string out: ""
+        property string requestJson: "{}"
+        command: ["bash", "-c", 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
+            + 'f="$dir/react-$$.json"; printf "%s" "$1" > "$f"; '
+            + 'nixbook-model-provider run nixbook-quick-ai ask "$f"; rc=$?; rm -f "$f"; exit $rc', "_", reactor.requestJson]
+        stdout: SplitParser {
+            onRead: (line) => {
+                let ev;
+                try { ev = JSON.parse(line); } catch (e) { return; }
+                if (ev.type === "react") reactor.out = line;
+            }
+        }
+        onExited: {
+            let d = null;
+            try { d = reactor.out ? JSON.parse(reactor.out) : null; } catch (e) {}
+            root.decided(reactor.ev, d);
+        }
+    }
+
     // A task done: a happy jump, or a wobble when something failed; the
     // answer's outcome stays in the balloon a while.
     Connections {
@@ -108,6 +262,7 @@ Singleton {
             root.said = String(text ?? "").replace(/\n[\s\S]*/, "").slice(0, 220);
             flashOff.restart();
             saidOff.restart();
+            talk.restart();
         }
     }
     Timer {
@@ -133,7 +288,12 @@ Singleton {
         function toggle(): void { root.toggle(); }
         function mic(): void { if (root.active) root.toggleMic(); }
         function status(): string {
-            return JSON.stringify({ active: root.active, micOn: root.micOn, mood: root.mood, line: root.line, screen: root.screenName });
+            return JSON.stringify({ active: root.active, micOn: root.micOn, mood: root.mood, line: root.line, screen: root.screenName,
+                react: root.reactOn, queued: root.queue.length, reacting: root.reacting });
+        }
+        // An event as if it had happened (tests): {event, app, title, text…}.
+        function simulate(json: string): void {
+            try { root.event(JSON.parse(json)); } catch (e) {}
         }
     }
 }

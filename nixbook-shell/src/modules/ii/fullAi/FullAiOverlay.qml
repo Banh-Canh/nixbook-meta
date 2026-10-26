@@ -136,7 +136,7 @@ Scope {
                         line: FullAi.line
                         hint: FullAi.hint
                         level: Voice.level
-                        talking: Voice.speaking
+                        talking: FullAi.mood === "speaking"
                     }
                 }
                 Connections {

@@ -52,13 +52,28 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer test-key":
             return self.send(401, {"error": {"message": "bad key"}})
         text = text_of(body)
-        if self.path.startswith("/v1/chat/completions"):
+        if self.path.startswith("/v1/chat/completions") and "Something just happened" not in text:
             # The OpenAI-style endpoint: only for CHATOK requests (else the
             # server has none, as Anthropic-compatible ones often).
             if "CHATOK" not in text:
                 return self.send(404, {"error": {"message": "not found"}})
             return self.send(200, {"choices": [{"message": {"role": "assistant", "content": "Fast answer"}}],
                                    "effort": body.get("reasoning_effort")})
+        if "Something just happened" in text:
+            # Full AI mode's reactions: what the event says it should do.
+            if "TOLDIT" in text:
+                d = {"action": "do", "say": "Done as you said.", "instruction": "Reply OK", "basis": "told"}
+            elif "GUESSDO" in text:
+                d = {"action": "do", "say": "I'll handle it.", "instruction": "Delete it", "basis": "guess"}
+            elif "LEARNED" in text:
+                d = {"action": "do", "say": "As usual.", "instruction": "Reply yes", "basis": "learned",
+                     "learn": "answer yes to Ana"}
+            else:
+                d = {"action": "ask", "say": "Shall I?", "basis": "guess"}
+            content = json.dumps(d)
+            if self.path.startswith("/v1/chat/completions"):
+                return self.send(200, {"choices": [{"message": {"role": "assistant", "content": content}}]})
+            return self.send(200, {"content": [{"type": "text", "text": content}]})
         if "FAIL500" in text:
             return self.send(500, {"error": {"message": "boom"}})
         if "NOEFFORT" in text and "output_config" in body:
