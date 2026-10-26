@@ -112,6 +112,37 @@ Singleton {
         return "explain";
     }
 
+    // What the shell already knows, sent along: the model answers "what's the
+    // weather?", "what time is it?", "what's next today?" from it at once,
+    // without a tool (it used to go looking on the screen).
+    function facts() {
+        const out = [];
+        const now = new Date();
+        out.push(`Now: ${now.toLocaleString(Qt.locale("en_US"), "dddd d MMMM yyyy, HH:mm")}`);
+        try {
+            const w = Weather.data;
+            if (w && w.temp && w.city && w.city !== "City")
+                out.push(`Weather in ${w.city}${w.country ? ", " + w.country : ""}: ${w.description || "?"}, ${w.temp}`
+                    + `${w.tempFeelsLike ? " (feels like " + w.tempFeelsLike + ")" : ""}, humidity ${w.humidity}, wind ${w.wind}`
+                    + `${w.sunrise && w.sunrise !== "0" ? ", sunrise " + w.sunrise + ", sunset " + w.sunset : ""}`);
+        } catch (e) {}
+        try {
+            if (Battery.available)
+                out.push(`Battery: ${Math.round(Battery.percentage * 100)}%${Battery.isCharging ? ", charging" : ""}`);
+        } catch (e) {}
+        try {
+            const next = CalendarEvents.upcoming(3, now);
+            if (next.length > 0)
+                out.push("Next events: " + next.map(e => `${e.title} (${CalendarEvents.whenText(e, now)})`).join("; "));
+        } catch (e) {}
+        try {
+            const p = MprisController.activePlayer;
+            if (p && p.trackTitle)
+                out.push(`Music: ${p.isPlaying ? "playing" : "paused"} "${p.trackTitle}"${p.trackArtist ? " by " + p.trackArtist : ""}`);
+        } catch (e) {}
+        return out.join("\n");
+    }
+
     function focusedApp() {
         const top = ToplevelManager.activeToplevel;
         return { app: top?.appId ?? "", title: top?.title ?? "" };
@@ -287,6 +318,7 @@ Singleton {
             lang: ConfigAssistant.uiLang(), target: Config.options.ai.quick?.translateTo || "",
             model: Config.options.ai.quick?.model ?? "small", effort: Config.options.ai.quick?.effort ?? "low",
             claude: Ai.claudeCodePath, confirm: Config.options.ai.quick?.confirm ?? "destructive",
+            facts: root.facts(),
         };
         // Modes about a text or an image ask nothing themselves.
         if (!c.question && c.mode !== "do" && !followUp) req.question = "";
