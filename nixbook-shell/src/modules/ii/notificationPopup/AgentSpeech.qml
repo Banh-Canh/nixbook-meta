@@ -511,7 +511,9 @@ Scope {
                                         width: Math.min(implicitWidth, line.mine ? parent.width * 0.85 - 20 : parent.width)
                                         wrapMode: Text.Wrap
                                         textFormat: Text.PlainText
-                                        text: root.plain(line.modelData.rawContent || line.modelData.content)
+                                        // Quick AI's report: its summary here, the brief below.
+                                        text: QuickAi.report && QuickAi.reportMsg === line.modelData ? QuickAi.report.summary
+                                            : root.plain(line.modelData.rawContent || line.modelData.content)
                                         font.family: root.font
                                         font.pixelSize: line.mine ? Appearance.font.pixelSize.small : Appearance.font.pixelSize.normal
                                         color: root.fg
@@ -538,6 +540,90 @@ Scope {
                                             NumberAnimation { from: 0.25; to: 1; duration: 320 }
                                             NumberAnimation { from: 1; to: 0.25; duration: 320 }
                                             PauseAnimation { duration: (2 - dot.index) * 160 }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Quick AI's report after acting, as Kiroshi's brief: what
+                    // it did, what failed, what is left for the user, and the
+                    // steps counted from what really ran.
+                    ColumnLayout {
+                        id: report
+                        Layout.fillWidth: true
+                        readonly property var r: QuickAi.report
+                        // Fixed meanings whatever the theme (a theme's alert or
+                        // accent colour can be yellow or red).
+                        readonly property color yellow: "#d99a00"
+                        readonly property color red: "#e5484d"
+                        visible: root.quick && r !== null && !root.responding && QuickAi.reportMsg === root.lines[root.lines.length - 1]
+                        spacing: 4
+                        RowLayout {
+                            spacing: 6
+                            Rectangle {
+                                implicitWidth: reportTag.implicitWidth + 12
+                                implicitHeight: reportTag.implicitHeight + 4
+                                color: root.accent
+                                radius: root.square ? 0 : 4
+                                StyledText {
+                                    id: reportTag
+                                    anchors.centerIn: parent
+                                    text: Translation.tr("REPORT")
+                                    font.family: root.font
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                    font.weight: Font.Bold
+                                    font.letterSpacing: 1.5
+                                    color: root.bg
+                                }
+                            }
+                            StyledText {
+                                text: report.r ? Translation.tr("%1 steps · %2 ✓%3").arg(report.r.steps).arg(report.r.ok)
+                                    .arg(report.r.ko > 0 ? ` · ${report.r.ko} ✗` : "") : ""
+                                font.family: root.font
+                                font.pixelSize: Appearance.font.pixelSize.smaller
+                                color: Qt.alpha(root.fg, 0.65)
+                            }
+                        }
+                        Repeater {
+                            model: report.r ? [
+                                { tag: Translation.tr("DONE"), items: report.r.done ?? [], col: root.accent, mark: "✓" },
+                                { tag: Translation.tr("FAILED"), items: report.r.failed ?? [], col: report.red, mark: "✗" },
+                                { tag: Translation.tr("NEEDS YOU"), items: report.r.needsYou ?? [], col: report.yellow, mark: "!" },
+                            ].filter(sec => sec.items.length > 0) : []
+                            delegate: ColumnLayout {
+                                id: section
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: 2
+                                StyledText {
+                                    text: section.modelData.tag
+                                    font.family: root.font
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                    font.weight: Font.Bold
+                                    font.letterSpacing: 1.5
+                                    color: section.modelData.col
+                                }
+                                Repeater {
+                                    model: section.modelData.items
+                                    delegate: RowLayout {
+                                        id: entry
+                                        required property string modelData
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Rectangle {
+                                            Layout.fillHeight: true
+                                            implicitWidth: 3
+                                            color: section.modelData.col
+                                        }
+                                        StyledText {
+                                            Layout.fillWidth: true
+                                            text: `${section.modelData.mark} ${entry.modelData}`
+                                            wrapMode: Text.Wrap
+                                            font.family: root.font
+                                            font.pixelSize: Appearance.font.pixelSize.small
+                                            color: root.fg
                                         }
                                     }
                                 }
@@ -725,7 +811,8 @@ Scope {
                                     color: root.fg
                                     placeholderTextColor: Qt.alpha(root.fg, 0.5)
                                     font.family: root.font
-                                    placeholderText: Voice.listening ? Translation.tr("Listening… speak now")
+                                    placeholderText: Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")
+                                            : Translation.tr("Listening… speak now"))
                                         : Voice.transcribing ? Translation.tr("Understanding…")
                                         : window.grab ? Translation.tr("Message Claude… (Esc: put away, /new: start over)")
                                         : root.conversing || Initiative.isAsk(root.item) ? Translation.tr("Message Claude…")

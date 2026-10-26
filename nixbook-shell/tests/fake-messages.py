@@ -69,6 +69,9 @@ class Handler(BaseHTTPRequestHandler):
             if done:
                 denied = any(b.get("is_error") for b in last["content"] if b.get("type") == "tool_result")
                 answer = "Not done." if denied else ("Closed." if "CLOSE" in text else "Firefox is open.")
+                if "REPORTME" in text:
+                    answer = ('Opened it.<report>{"summary": "Firefox is ready", "done": ["Opened Firefox"], '
+                              '"failed": [], "needs_you": ["Sign in to your account"]}</report>')
                 return self.send(200, {"content": [{"type": "text", "text": answer}], "stop_reason": "end_turn"})
             call = ({"name": "close_window", "input": {"id": 7}} if "CLOSE" in text
                     else {"name": "launch_app", "input": {"app": "firefox"}})

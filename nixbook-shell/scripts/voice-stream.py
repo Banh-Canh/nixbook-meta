@@ -39,7 +39,10 @@ import urllib.parse
 RATE = 16000
 CHUNK = RATE * 2 * 80 // 1000  # 80 ms of 16-bit mono
 NOTHING_AFTER = 8.0
-MAX_SECONDS = 30.0
+# A sentence can take a pause: the server ends a turn at each, the user's
+# message ends only once no new speech starts within `pause` seconds.
+PAUSE_SECONDS = 1.8
+MAX_SECONDS = 120.0
 LANGS = {"en": "English", "fr": "French", "de": "German", "vi": "Vietnamese", "es": "Spanish",
          "it": "Italian", "ja": "Japanese", "zh": "Chinese", "pt": "Portuguese", "nl": "Dutch",
          "ko": "Korean", "ru": "Russian", "ar": "Arabic", "hi": "Hindi"}
@@ -184,9 +187,16 @@ def level_db(chunk):
 
 def main(argv):
     langs, path = [], None
+    pause, longest = PAUSE_SECONDS, MAX_SECONDS
     args = list(argv[1:])
     while args:
         a = args.pop(0)
+        if a == "--pause" and args:
+            pause = max(0.5, min(10.0, float(args.pop(0))))
+            continue
+        if a == "--max" and args:
+            longest = max(5.0, min(600.0, float(args.pop(0))))
+            continue
         if a == "--lang" and args:
             # A hint, not a constraint: "fr,en" (the interface's, then English).
             langs = [LANGS[c.strip()[:2].lower()] for c in args.pop(0).split(",") if c.strip()[:2].lower() in LANGS]
@@ -243,7 +253,8 @@ def main(argv):
         return 1
     emit("ready")
 
-    state = {"done": False, "ending": False, "heard": False, "parts": [], "partial": "", "error": None}
+    state = {"done": False, "ending": False, "heard": False, "parts": [], "partial": "", "error": None,
+             "speaking": False, "lastEnd": 0.0}
     done = threading.Event()
 
     def reader():
@@ -259,6 +270,7 @@ def main(argv):
                 kind = ev.get("type")
                 if kind == "speechStart":
                     state["heard"] = True
+                    state["speaking"] = True
                     emit("speech")
                 elif kind == "transcript":
                     state["partial"] = ev.get("transcript", "")
@@ -266,13 +278,16 @@ def main(argv):
                     if whole:
                         state["heard"] = True
                         emit("partial", text=whole)
+                elif kind == "speechEnd":
+                    state["speaking"] = False
+                    state["lastEnd"] = time.monotonic()
                 elif kind == "speechComplete":
                     said = (ev.get("transcript") or state["partial"]).strip()
                     if said:
                         state["parts"].append(said)
                     state["partial"] = ""
-                    # One utterance is one order: done once it ends.
-                    break
+                    state["speaking"] = False
+                    state["lastEnd"] = time.monotonic()
                 elif kind == "error":
                     state["error"] = ev.get("message") or "error"
                     break
@@ -304,10 +319,14 @@ def main(argv):
             if chunk is None:
                 break
             ws.send_binary(chunk)
-            elapsed = time.monotonic() - started
+            now = time.monotonic()
+            elapsed = now - started
             if not state["heard"] and elapsed > NOTHING_AFTER:
                 break
-            if elapsed > MAX_SECONDS:
+            if elapsed > longest:
+                break
+            # The user has finished: words said, then a long enough pause.
+            if state["parts"] and not state["speaking"] and not state["partial"] and now - state["lastEnd"] > pause:
                 break
     except (OSError, ConnectionError):
         pass

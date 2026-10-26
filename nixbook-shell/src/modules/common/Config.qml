@@ -243,7 +243,13 @@ Singleton {
                     property string engine: "auto"
                     property string language: "auto" // auto (the interface's + English), or codes: "fr,en"
                     property string model: "small" // small (multilingual, ~1.2 s) or base (~0.6 s, English mostly)
-                    property real silenceSeconds: 1.2 // quiet after speaking that ends the recording
+                    // The pause that ends what is said (shorter ones are part of
+                    // it), and how long one turn may last.
+                    property real pauseSeconds: 1.8
+                    property real maxSeconds: 120
+                    // A conversation: the microphone opens again after each answer
+                    // until "that's all", Escape or a silence.
+                    property bool conversation: true
                 }
                 // Claude through Claude Code (`claude -p`, the user's own
                 // Claude login): the "Claude" model, with the desktop tools

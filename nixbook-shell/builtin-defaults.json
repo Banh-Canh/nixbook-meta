@@ -36,7 +36,9 @@
       "engine": "auto",
       "language": "auto",
       "model": "small",
-      "silenceSeconds": 1.2
+      "pauseSeconds": 1.8,
+      "maxSeconds": 120,
+      "conversation": true
     },
     "claudeCode": {
       "allowedTools": ["WebSearch", "WebFetch"],

@@ -45,6 +45,15 @@ or password managers, and every step goes to the audit log. While it acts, the
 bubble lets clicks and keys through to the apps and hides from the agent's
 screenshots.
 
+**When it has changed something, it reports**, as a brief under its answer (in
+the style of a Kiroshi scan): a one-line outcome, then **DONE** (what it did,
+with each result), **FAILED** (what didn't work, and why) and **NEEDS YOU** (what
+only you can do or decide), and how many steps really ran (`7 steps · 6 ✓ · 1 ✗`,
+counted from the tool calls, not from what the model says; a failed step it
+leaves out is added). If you put the bubble away while it worked, it comes back
+with the report (or the bar's bubble lights up while you are busy). Expanded to
+the side panel, the report is in the message.
+
 Follow-ups typed (or said) in the bubble keep the conversation; **Copy** copies
 the last answer; the stop button stops it.
 
@@ -96,6 +105,16 @@ for everything); `Esc` closes an item, then the scan.
 ## Voice
 
 `Mod+T` listens; `Mod+T` again (or the bubble's mic) stops early, `Esc` cancels.
+Talk as you would to someone: a pause in the middle of a sentence is fine; what
+you say ends after a longer pause (`ai.voice.pauseSeconds`, 1.8 s) and can last
+up to 2 minutes (`ai.voice.maxSeconds`).
+
+**A conversation** (_Talk back and forth_, on by default): after `Mod+T`, once the
+answer is there, the microphone opens again by itself, so you just go on
+talking. When a step waits for your OK, say "yes" / "oui" or "no" / "non". It ends
+when you say "that's all", "thanks", "c'est tout", "merci"…, press `Esc`, put the
+bubble away, or say nothing for 8 seconds.
+
 Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 
 - **Meta (streamed)**: the microphone is streamed to Meta's Muse Voice
