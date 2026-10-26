@@ -55,6 +55,7 @@ ShellRoot {
         Voice.load()
         Kiroshi.load()
         NixOnboarding.load()
+        FullAi.load()
     }
     
     PanelFamilyLoader {

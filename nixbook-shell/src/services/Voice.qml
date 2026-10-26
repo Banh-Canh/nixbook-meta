@@ -78,6 +78,12 @@ Singleton {
         id: relisten
         interval: 700
         onTriggered: {
+            // Full AI mode: always listening (orders keep coming while the
+            // agent works), unless muted or speaking.
+            if (FullAi.active) {
+                if (FullAi.micOn && !root.listening && !root.transcribing && !root.speaking) root.start();
+                return;
+            }
             if (!root.session || root.listening || root.transcribing || root.speaking || !Initiative.speaking) return;
             if (Initiative.thinking && !QuickAi.pending) return;
             root.start();
@@ -92,7 +98,7 @@ Singleton {
             else if (root.session) relisten.restart();
         }
         function onSpeakingChanged() {
-            if (!Initiative.speaking) {
+            if (!Initiative.speaking && !FullAi.active) {
                 root.endSession();
                 root.stopSpeaking();
             }
@@ -142,6 +148,8 @@ Singleton {
     function speak(text) {
         if (root.speakMode === "never" || !String(text ?? "").trim()) return false;
         root.stopSpeaking();
+        // Never listening to itself: the microphone closes while it speaks.
+        if (root.listening) root.pauseListening();
         speaker.text = String(text);
         speaker.wanted = true;
         root.speaking = true;
@@ -163,11 +171,16 @@ Singleton {
             "auto", speaker.text]
         onExited: {
             root.speaking = false;
-            // Said: the user's turn (a conversation).
-            if (speaker.wanted && root.session) relisten.restart();
+            // Said: the user's turn (a conversation, Full AI mode).
+            if (speaker.wanted && (root.session || FullAi.active)) relisten.restart();
         }
     }
     function toggle() {
+        // Full AI mode: Mod+T mutes or unmutes the always-open microphone.
+        if (FullAi.active) {
+            FullAi.toggleMic();
+            return;
+        }
         if (root.listening) root.stop();
         else {
             // Talking over it: it stops.
@@ -223,6 +236,22 @@ Singleton {
         if (rec.running) rec.signal(2); // SIGINT: ffmpeg finishes the file
     }
     // Stops without sending anything.
+    // The microphone closed without sending, the session kept (it speaks).
+    function pauseListening() {
+        if (stream.running) {
+            stream.wanted = false;
+            stream.write("cancel\n");
+            stream.signal(15);
+        }
+        if (rec.running) {
+            rec.wanted = false;
+            rec.signal(2);
+        }
+        root.listening = false;
+        root.partial = "";
+        root.level = 0;
+        root.delivered();
+    }
     function cancel() {
         root.endSession();
         root.stopSpeaking();
@@ -261,8 +290,9 @@ Singleton {
     function deliver(text) {
         root.lastText = text;
         root.delivered();
-        // "That's all": the conversation ends, nothing sent.
-        if (root.session && root.endWords.test(text.trim())) {
+        // "That's all": the conversation ends, nothing sent (not Full AI
+        // mode: only Escape leaves it).
+        if (root.session && !FullAi.active && root.endWords.test(text.trim())) {
             root.endSession();
             return;
         }
@@ -280,6 +310,9 @@ Singleton {
         root.voiceTurn = true;
         if (Initiative.speaking) Initiative.reply(text);
         else QuickAi.askQuestion(text, "voice");
+        // Full AI mode: listening again at once (the next order can come
+        // while this one is done).
+        if (FullAi.active) relisten.restart();
         // A plain command done at once (QuickIntent): what it did, said.
         if (Initiative.speaking?.kind === "quick" && !Initiative.thinking) {
             root.voiceTurn = false;
@@ -352,7 +385,8 @@ Singleton {
             root.level = 0;
             maxTimer.stop();
             if (!rec.wanted || !root.heard) {
-                if (rec.wanted && root.session) root.endSession();
+                if (rec.wanted && FullAi.active) relisten.restart();
+                else if (rec.wanted && root.session) root.endSession();
                 else if (rec.wanted) root.error = Translation.tr("I didn't hear anything");
                 Quickshell.execDetached(["rm", "-f", rec.file]);
                 return;
@@ -405,8 +439,10 @@ Singleton {
                     if ((ev.text ?? "").trim().length > 0) root.deliver(ev.text.trim());
                     break;
                 case "nothing":
-                    // Silence in a conversation: it ends, quietly.
-                    if (root.session) root.endSession();
+                    // Silence in a conversation: it ends, quietly; in Full AI
+                    // mode it listens on.
+                    if (FullAi.active) relisten.restart();
+                    else if (root.session) root.endSession();
                     else root.error = Translation.tr("I didn't hear anything");
                     break;
                 case "error":

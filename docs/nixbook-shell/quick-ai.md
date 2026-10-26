@@ -61,6 +61,25 @@ the side panel, the report is in the message.
 Follow-ups typed (or said) in the bubble keep the conversation; **Copy** copies
 the last answer; the stop button stops it.
 
+## Full AI mode
+
+`Mod+Shift+T` (or Settings > Desktop agents > Talk to your desktop > **Full AI
+mode**) hands the desktop over to the AI: you talk, it does. A little mascot
+shows up and moves around the screen like a host: it shows what it hears, what it
+is doing (it darts off when the agent starts a step), and what it answers, which
+is also said out loud; it jumps for joy when a task is done and wobbles when
+something failed. A soft glow around the screens says the AI is in charge.
+
+- **Your keyboard and mouse are taken**: clicks and keys no longer reach your
+  apps (the agent's own still do, while it acts). **`Escape` leaves** the mode
+  (so does `Mod+Shift+T` again, or locking the screen). The compositor's own
+  shortcuts (niri's `Mod+…`) keep working: a Wayland shell can't take those.
+- **The microphone stays open**, also while the agent works: give the next order
+  whenever you like, it takes over. It only closes while the mascot speaks (it
+  never hears itself). **`Mod+T` turns the microphone off or on.**
+- Steps that need your OK are asked out loud: say "yes" or "no".
+- The conversation is still in the speech bubble, with its reports.
+
 ## Set up the desktop by talking
 
 Settings > Desktop agents > Talk to your desktop > **Set up my desktop by
