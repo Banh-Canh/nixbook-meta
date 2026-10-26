@@ -23,6 +23,7 @@ Toolbar {
     // Signals
     signal dismiss()
     signal selectionModeSelected(var mode)
+    signal askAiToggled()
 
     // Tab index = RegionSelection.SelectionMode value
     ToolbarTabBar {
@@ -37,6 +38,17 @@ Toolbar {
         onCurrentIndexChanged: {
             if (currentIndex !== root.selectionMode)
                 root.selectionModeSelected(currentIndex);
+        }
+    }
+
+    // Ask AI (Quick AI): the region goes to the AI card instead (A).
+    IconToolbarButton {
+        visible: QuickAi.available
+        text: "auto_awesome"
+        toggled: root.action === RegionSelection.SnipAction.AskAi
+        onClicked: root.askAiToggled()
+        StyledToolTip {
+            text: Translation.tr("Ask AI about the selection (A)")
         }
     }
 }

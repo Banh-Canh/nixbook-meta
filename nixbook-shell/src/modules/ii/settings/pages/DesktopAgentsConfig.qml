@@ -100,6 +100,108 @@ ContentPage {
             }
         }
 
+        // Quick AI (services/QuickAi.qml): the card answering and acting in a
+        // couple of seconds, on a key, the voice, the launcher, notifications.
+        ContentSection {
+            icon: "bolt"
+            title: Translation.tr("Talk to your desktop")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Quick AI answers and acts in a couple of seconds, without starting an agent: the model provider's small model is called directly (Meta: Muse Spark). Mod+T: talk: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step shown. Mod+S: about the selected text (else the clipboard): explain, summarize, translate, rewrite, fix, then Replace types it back. Mod+Shift+S: about a region of the screen. Mod+K: Kiroshi scan, what matters on screen with one-click actions. Also \"!\" in the launcher and the AI buttons on notifications.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.quick.enable"
+                    enabled: !nixManaged
+                    buttonIcon: "bolt"
+                    text: Translation.tr("Quick AI")
+                    checked: Config.options.ai.quick.enable
+                    onCheckedChanged: Config.options.ai.quick.enable = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.voice.enable"
+                    enabled: !nixManaged && Config.options.ai.quick.enable
+                    buttonIcon: "mic"
+                    text: Translation.tr("Voice (Mod+T, transcribed on this computer)")
+                    checked: Config.options.ai.voice?.enable ?? true
+                    onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.enable = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.quick.launcher"
+                    enabled: !nixManaged && Config.options.ai.quick.enable
+                    buttonIcon: "search"
+                    text: Translation.tr("In the launcher (\"!\" and the Ask AI row)")
+                    checked: Config.options.ai.quick.launcher
+                    onCheckedChanged: Config.options.ai.quick.launcher = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.quick.notifications"
+                    enabled: !nixManaged && Config.options.ai.quick.enable
+                    buttonIcon: "quickreply"
+                    text: Translation.tr("On notifications (Summarize, Suggest replies)")
+                    checked: Config.options.ai.quick.notifications
+                    onCheckedChanged: Config.options.ai.quick.notifications = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.quick.typewriter"
+                    enabled: !nixManaged && Config.options.ai.quick.enable
+                    buttonIcon: "keyboard"
+                    text: Translation.tr("Type the answers out")
+                    checked: Config.options.ai.quick.typewriter
+                    onCheckedChanged: Config.options.ai.quick.typewriter = checked
+                }
+            }
+            ConfigSelectionArray {
+                configKey: "ai.quick.confirm"
+                text: Translation.tr("Ask me before")
+                icon: "shield_question"
+                currentValue: Config.options.ai.quick.confirm
+                onSelected: newValue => { Config.options.ai.quick.confirm = newValue }
+                options: [
+                    { displayName: Translation.tr("Destructive steps"), icon: "delete", value: "destructive" },
+                    { displayName: Translation.tr("Every action"), icon: "touch_app", value: "actions" },
+                    { displayName: Translation.tr("Never"), icon: "bolt", value: "never" }
+                ]
+            }
+            ConfigSelectionArray {
+                configKey: "ai.quick.model"
+                text: Translation.tr("Model")
+                icon: "speed"
+                currentValue: Config.options.ai.quick.model
+                onSelected: newValue => { Config.options.ai.quick.model = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big"), icon: "psychology", value: "big" }
+                ]
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Acting goes through the desktop tools' own rules: paused with Mod+Shift+Escape, never in terminals or password managers, every step in the audit log. Text is sent with the private details hidden (the privacy mask below). With Anthropic as the provider, Claude Code (Haiku) answers instead, a little slower.")
+            }
+            RowLayout {
+                spacing: 8
+                SmallButton {
+                    materialIcon: "bolt"
+                    mainText: Translation.tr("Try it")
+                    enabled: QuickAi.available
+                    onClicked: QuickAi.askQuestion("", "empty")
+                }
+                SmallButton {
+                    materialIcon: "forum"
+                    mainText: Translation.tr("Set up my desktop by talking")
+                    enabled: QuickAi.available
+                    onClicked: NixOnboarding.openWindow()
+                }
+            }
+        }
+
         // The privacy mask (desktop-mcp.py, "Privacy mask"): what models read
         // has placeholders, swapped back on this computer.
         ContentSection {

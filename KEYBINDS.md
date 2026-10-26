@@ -55,6 +55,10 @@ Niri is column/scroll based; it has no numbered workspaces (workspaces stack ver
 | `Mod+C`            | — (Center column)                                        | Ask Claude in its speech bubble (again: put it away)       |
 | `Mod+Shift+A`      | —                                                        | AI agents: own desktop (nested niri) / yours               |
 | `Mod+Ctrl+A`       | —                                                        | Take over / give back the agents' desktop                  |
+| `Mod+S`            | —                                                        | Quick AI on the selection (else the clipboard)             |
+| `Mod+Shift+S`      | —                                                        | Quick AI about a region of the screen (draw it first)      |
+| `Mod+T`            | —                                                        | Talk: push to talk to Quick AI (again: stop and send)      |
+| `Mod+K`            | —                                                        | Kiroshi scan: what matters on screen, with actions         |
 | `Ctrl+Space`       | Toggle fcitx5 input method (when `fcitx5Config` enabled) | same                                                       |
 
 nixbook-shell binds all spawn `nixbook-shell ipc call <target> <function>`.
@@ -143,7 +147,10 @@ nixbook-shell binds all spawn `nixbook-shell ipc call <target> <function>`.
 | Right click       | Annotate the selection (swappy / satty)                                                       |
 | `W`               | Window selection: hovering a window selects it, a click takes it whole (`W` again: rectangle) |
 | `S`               | Screen selection: hovering a screen selects it, a click takes it (`S` again: rectangle)       |
+| `A`               | Ask AI: the selection goes to the Quick AI card instead of the clipboard (`A` again: copy)    |
 | `Esc`             | Cancel                                                                                        |
+
+`Mod+Shift+S` opens it in Ask AI directly: what you select is sent, as an image, to the Quick AI card.
 
 The same selector opens to record the screen (`Shift+Print`, the bar's record button, or `nixbook-shell ipc call region recordWithSound`): a rectangle, `W` a window (the area it is shown in when clicked) or `S` a whole screen, recorded with the desktop audio. `Shift+Print` or the record button again stops it; the video is then copied to the clipboard as a file.
 

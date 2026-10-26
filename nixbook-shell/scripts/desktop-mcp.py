@@ -89,8 +89,10 @@ DEFAULT_CONFIG = {
     # power off/log out; nixManaged reloads the settings).
     # desktopControl: the bar widget's pause/resume; layouts: the user's
     # window layouts, which don't honour the pause (agents have their own
-    # layout tools). Only the user may use them.
-    "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay"],
+    # layout tools). Only the user may use them. quickAi: its approve would
+    # OK another agent's step; voice: the user's microphone.
+    "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay", "quickAi",
+                            "voice"],
     "allowSuperKey": False,
     "maxTextLength": 4000,
     # A note written into the notes widget (it goes through a file, not the
@@ -14502,8 +14504,10 @@ def main(argv):
         if sub == "show":
             print(json.dumps(list(reversed(sent_read())), ensure_ascii=False))
             return 0
-        if sub == "note" and len(argv) == 4:
-            sent_note(clean_text(argv[2], 40), provider_model("claude (chat)"), argv[3])
+        if sub == "note" and len(argv) in (4, 5):
+            # A 5th argument: the model it went to as is (nixbook-quick-ai
+            # calls the provider's API itself, provider-prefixed already).
+            sent_note(clean_text(argv[2], 40), argv[4] if len(argv) == 5 else provider_model("claude (chat)"), argv[3])
             return 0
         if sub == "clear":
             with contextlib.suppress(FileNotFoundError):

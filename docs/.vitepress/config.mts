@@ -160,6 +160,7 @@ export default defineConfig({
           { text: 'Window layouts', link: '/nixbook-shell/window-layouts' },
           { text: 'Lock & login screens', link: '/nixbook-shell/lock-and-login' },
           { text: 'AI chat & config assistant', link: '/nixbook-shell/ai-assistant' },
+          { text: 'Talk to your desktop (Quick AI)', link: '/nixbook-shell/quick-ai' },
           { text: 'Desktop control for AI agents', link: '/nixbook-shell/desktop-agents' },
           { text: "The agents' own desktop", link: '/nixbook-shell/agent-desktop' },
           { text: 'Fixes it makes itself', link: '/nixbook-shell/self-improve' },
