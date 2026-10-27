@@ -858,6 +858,157 @@ on with a trial (said each run until 3 runs undone by nobody).
 
 Routine events added (Routines.qml): `music_silent` (no music for `minutes` while present, once a silence, held after the user's own stop until music plays, a break or an hour), `music_repeating` (the same song `times` in a row, a loop seen as the position jumping back to the start, or the same artist for `minutes` of play, a track with no artist counting none; once a streak, which a 5-minute stop ends; the agent run is told why it fired, and that it has no listening history to read; track_changed routines about a repeat, from before it, moved to it: memory version 4), `app_focused`, `day_start` (once a day: `routine_run`), `away`, `long_session`, `fullscreen_started|ended`, `dnd_on|off`, `charged`, `bluetooth_connected|disconnected`, `phone_connected|disconnected` (KDE Connect), `drive_connected|disconnected` (/run/media), `disk_low`, `rain` (OpenWeather 2xx–6xx), `screenshot`. `music_ended` waits 20 s. Routine ideas (`routine_idea`, `IDEA_SYSTEM`, daily, `initiative ideas`): personal entries (people by name only, contacts redacted), habits, music, cue names, routines, events and actions → one routine added off and offered with why (`routine_ask(r, why)`); declined ones in `ideasDeclined`. Curiosity reads every 5 h with 4 new titles and may `offer` help with what is in front ("now").
 
+**Autonomy** (`ai.autonomy` = `{ orders; trust; journal; tasks; maxTasks; }`,
+all on, `maxTasks` 3; Settings → Desktop agents → Autonomy, the only place
+`trust set` is called besides the "Stop asking" chip; `services/Autonomy.qml`,
+`modules/common/widgets/AutonomyNotes.qml` under an answer in the bubble and
+the side panel). Nothing of it runs with `policies.ai` 0 or while paused, and
+nothing lets an agent widen its own permissions: turning on, promoting and
+undoing are the user's clicks or command line (see the guardrails below).
+
+- **Standing orders**: "from now on, when I join a meeting, mute the music",
+  "every evening at 6, a digest of my Slack mentions". The `standing_order`
+  tool (group `memory`; `order add TEXT` on the command line) runs
+  `order_compile`: the decisions model (`ai.routing.decisions`) writes a
+  routine in the usual when/do format, validated by the routine rules (one
+  retry with the refusal), saved off with `proposal: true`, `origin: "order"`,
+  `order: <their words>` →
+  `{id, summary ("When …, I'll …", plain code when the model gave none), routine, questions}`.
+  The card (STANDING ORDER) has Turn on (`order accept ID`), Edit (Settings →
+  Routines), No (`order decline ID`); `order list`. Two new routine
+  capabilities: the cue `schedule` (`{at: "HH:MM", days}`, every day by
+  default, or `{every: MINUTES}`, 15 to a week), listed by `routine due` (the
+  shell's minute tick in Routines.qml fires them as event `schedule`; one
+  missed by up to an hour still runs, `SCHEDULE_GRACE`), and the action
+  `digest`
+  (`{digest: {collect: {event: "notification", apps, words}, title}}`):
+  `routine collect EVENT-JSON` (every notification and cue the shell gives
+  Routines) appends what matches to the routine's `buffer` (200 at most, 300
+  chars each); when it fires, one model pass sums it up as a bar word, then
+  the buffer empties.
+- **Trust ladder**: `nixbook_ai.action_class(name, args, app)` is the tool,
+  `:<action>` for multi-purpose tools and `@<app desktop id>` for input and
+  window tools (`media_control:pause`, `close_window@firefox`,
+  `calendar:add`). Levels in `$XDG_STATE_HOME/nixbook-shell/trust.json`: `ask`
+  (default for `is_risky`), `tell` (other acting classes), `silent`
+  (`reads_only`). `trust check CLASS [--risky 0|1]` →
+  `{level, why, suggestPromote, set}`;
+  `trust record CLASS allowed|denied|undone`: `suggestPromote` once after 3
+  allows within 30 days with nothing denied or undone since, a denial or an
+  undo a step down (silent → tell → ask) and the streak reset;
+  `trust set CLASS ask|tell|silent` (user only); `trust list`. Classes that
+  send, sms, reply, pay, buy, purchase, delete, credentials, merge or purge
+  (`TRUST_NEVER`, also as the action) never go past `ask`, whatever the file
+  says, and `set` refuses them. meta-agent's `--trust`: the level per class
+  (cached per turn); `ask` → an `approval_request` (with its `class`; refused
+  under `-p`), the answer recorded, then
+  `{"type": "trust_suggest", class, summary}` when the record says so (the
+  "Stop asking before …?" chip: Yes = `trust set CLASS tell`); `tell` → run,
+  `{"type": "told", class, summary, journal, undo}` (the "Did: …" line with
+  Undo) and journaled; `silent` → run and journaled (reads never are).
+  `--confirm destructive` stays the floor: a risky call is asked unless the
+  user `set` its class. The shell passes `--trust` to the bubble and the side
+  panel (`ai.autonomy.trust`); the side panel shows an Allow / No bar above
+  its input for an `approval_request`.
+- **Journal** (`$XDG_STATE_HOME/nixbook-shell/journal.json`, 30 days):
+  everything done without the user approving that very step (routines,
+  standing orders, digests, reactions, `tell`/`silent` steps, background
+  tasks). `journal add JSON`
+  (`{source: routine|order|reaction|task|agent, class, summary, tool, args (masked, short), undo?, session?, task?}`
+  → `{id}`), `journal list [--day YYYY-MM-DD] [--since TS]`, `journal undo ID`
+  (the undo through `call_tool`, so pause and groups apply; marked undone,
+  `trust record CLASS undone`; `{error: "can't be undone"}` without one).
+  desktop-mcp journals its own runs; meta-agent's `--journal-source SRC` says
+  whose a session's steps are (`--task ID` for a background task). `call_tool`
+  adds `_meta.undo` `{tool, args}` to the replies of reversible calls
+  (`undo_hint`): a window moved to a workspace (back), `window_action` toggles
+  (floating, fullscreen, maximize, wider/narrower), `launch_app` (close the
+  new window), `set_theme`, `do_not_disturb`, `equalizer` (the previous
+  value), mpris play/pause, a `calendar` or `tasks` create (delete), a notes
+  or todo widget add (remove), `restore_layout` (a hidden `_before-undo`
+  layout saved just before). UI: the side panel's Muse tab ("What Muse did",
+  by day, Undo), the bubble's line about yesterday at `day_start`; IPC
+  `journal list|undo` (denied to agents).
+- **Background tasks**: `nixbook-muse-task` (`scripts/muse-task.py`,
+  `passthru.museTask`, on the shell's and desktop-mcp's PATH):
+  `start TEXT [--from-session ID]` → `{id}` (a `systemd-run --user` unit
+  `nixbook-muse-task-<id>-<run>`, a plain background process without it or
+  with `NIXBOOK_MUSE_TASK_SPAWN=plain`; at most `ai.autonomy.maxTasks`
+  running, more → `{error}`; nothing unless `policies.ai` is 1 and
+  `ai.autonomy.tasks` is on), `run ID` (meta-agent with stream-json in and
+  out,
+  `--context-for chat --trust --confirm destructive --report --verify --learn --lazy-mcp 12 --max-turns 80 --journal-source task --task ID`,
+  the desktop and assistant servers as the side panel, no Bash/Edit/Write;
+  `--resume` its session, or `--resume FROM --fork-session` for one started
+  from the bubble's conversation; an hour of wall clock), `list`, `show ID`,
+  `approve ID APPROVALID yes|no`, `answer ID TEXT` (resumes it when its runner
+  is gone), `stop ID`, `resume ID` (after a crash or reboot), `clear`
+  (finished ones older than 7 days). State in
+  `$XDG_STATE_HOME/nixbook-shell/tasks/<id>.json` (0600, atomic, under a
+  `flock`):
+  `{id, text, status running|waiting|done|failed|stopped, started, updated, steps, approval?, question?, report?, answer?, sessionId, error?, told, trustSuggest}`;
+  control socket `$XDG_RUNTIME_DIR/nixbook-shell/tasks/<id>.sock` (0600,
+  `SO_PEERCRED`), JSON lines `approval` / `answer` / `stop` / `status`. An
+  approval or a clarifying question (or a final answer ending in "?") →
+  `waiting` and `notify-send -a Muse` "Muse needs you: …"; done → a
+  notification with the summary. Its notifications carry the hint
+  `x-nixbook-task` (their Open opens the Tasks list; the Reactor and the
+  triage never react to them). desktop-mcp's `background_task` {text} (group
+  `shell`: when the user asks or agrees, not for quick actions) and
+  `background_tasks` {action: list|show|stop, id} (`tasks` is the to-do tool);
+  a task or a routine's run can't start another. `services/MuseTasks.qml` (IPC
+  `museTasks list|stop`; approve and answer are the shell's only), the side
+  panel's Muse tab (`sidebarLeft/MuseActivity.qml`: status, steps, Allow / No,
+  an answer field, Open, Stop, Resume), the bar's tasks count in
+  `DesktopControl` (breathing while one waits), and the bubble's "Do it in the
+  background" chip (`QuickAi.canBackground`: a long order, or three steps in).
+  Tests: `tests/muse-task.sh`.
+
+**Reactivity** (`ai.reactivity` = `{ triage; triggers; }`, `triggers` =
+`{ commandFailedAgain; errorCopied; returningWindow; meetingSoon; errorDialog; }`,
+all on; Settings → Desktop agents → Reactivity, with "Offer them again" and
+the latest triage verdicts).
+
+- **Instant triage**: `triage score EVENT-JSON` (a helper command, no model,
+  ~2 ms) → `{verdict: drop|direct|model, score, why, text?}`. Drop: the
+  shell's own and tasks' notifications, secrets (`NOTICE_SECRET`), low
+  urgency, muted kinds and `mute:` preferences, boring signatures, an app
+  dismissed ≥10 times and almost never acted on, the same words within 10
+  minutes, Do Not Disturb (not critical). Scored up: critical urgency, urgency
+  words (`TRIAGE_URGENT`, four languages), an important person (personal
+  `person` entries, importance ≥ 3) as sender or subject, corrections and
+  important topics, the app's acted/dismissed rate per hour (from
+  `initiative notices`); down: a meeting or fullscreen. Direct (≥ 0.75, or a
+  calendar reminder / low battery cue) comes with its text from `TRIAGE_TEXT`
+  in the event's `lang` ("Thomas wrote: …"). Each verdict is logged with its
+  outcome. `Reactor.react` calls it first for notifications and cue events:
+  drop → nothing more (Routines' fixed actions and digests had it already),
+  direct → `Initiative.direct` at once (no 45 s batch, no model; 20 an hour,
+  `Reactor.directPerHour`, past that the model's path), model → today's path.
+  Offers skip it.
+- **Context triggers** (`services/ContextTriggers.qml`, needs the initiative
+  on and `policies.ai` 1; never while locked or while an agent acts):
+  `command_failed_again` {command, cwd, error} (RecentContext's shell hook,
+  which now also writes while this trigger is on), `error_copied` {text} (≥2
+  lines with Error/Exception/Traceback/panic/failed or `at …:line`),
+  `returning_window` {app, title, times} (the same title focused ≥4 times in
+  30 min), `meeting_soon` {title, start, link} (a linked event within 5 min,
+  once per event), `error_dialog` {app, title} (an error-looking title still
+  in front after 20 s); each with its switch and a 30 min cooldown, sent to
+  the Reactor. `initiative consider` handles them as offers (`OFFER_KINDS`,
+  `offer_item`): a template in four languages (`OFFER_TEXT`) gives
+  `offer: {say, order}` (the small model names a copied error when the
+  template has nothing to quote), gated by `deliver()`'s budget and quiet
+  rules and `offerCooldowns`. The bubble's chips: Yes (the order to the bubble
+  session), Not now, Never for this (a `prefs add` muted line, the kind
+  resting 30 days; the shell mutes that command or window, or the whole kind
+  for copied errors and meetings, in `triggers.json`). Offers replace the
+  older Explain it offers of `ai.initiative` for failing commands and copied
+  errors while their trigger is on.
+
+The six how-tos (`standingOrders`, `trustLadder`, `journalUndo`,
+`backgroundTasks`, `instantTriage`, `contextTriggers`) are in `hm-module.nix`.
+
 **Personal memory**, so a conversation knows what the user told agents
 before: life events (past or planned, with dates), plans, people close to
 them, preferences, interests. Agents are told to save the meaningful part
@@ -1105,7 +1256,11 @@ with two readings or more, the turn's answer is the question, result
 `clarify: true`, no tool run; else an `<intent>` line; not right after a
 question of its own) and `--verify` (after a turn that acted, a `[verify]`
 round with read-only tools only, schema {met, note}, one fix round of 4
-turns at most when not met; a `verify` event, result `verified`). Other
+turns at most when not met; a `verify` event, result `verified`), `--trust`
+(the trust ladder, see **Autonomy**), `--journal-source SRC` and `--task ID`
+(whose its journaled steps are) and `--fork-session` (with `--resume`: that
+conversation goes on under a session of its own). Every process it starts
+(Bash, MCP servers) has `NIXBOOK_META_AGENT_CHILD=1`. Other
 Claude Code flags are accepted and ignored. Events are stream-json lines of
 the usual shapes: `system`/`init` (session id, model, tools),
 `stream_event` deltas, `assistant`, `user` (tool results) and `result`
@@ -1137,7 +1292,9 @@ event queue, for every AI feature.
   `$XDG_RUNTIME_DIR/nixbook-desktop-mcp/helper.sock` (dir 0700, socket 0600,
   same uid by `SO_PEERCRED`): JSON lines `{id, argv, stdin}` →
   `{id, code, stdout}`, several per connection, each on a thread, the helper commands
-  only (127 for others), so a request no longer starts cold desktop-mcp
+  only (127 for others; 126 for the user's own answers,
+  `order accept|decline`, `journal undo`, `trust set`, `routine on`, which
+  only the stdin helper takes), so a request no longer starts cold desktop-mcp
   processes.
 - The context broker, `nixbook-desktop-mcp context build --for SURFACE`
   (`chat`, `bubble`, `react`, `triage`, `scan`, `text`, `routine`, `pair`;
@@ -1181,8 +1338,9 @@ event queue, for every AI feature.
 - `services/Reactor.qml`: the one queue for notifications and Routines'
   events (Routines' fixed actions first, then at most one model decision:
   `register(name, priority, {wants, take})`, the first that wants it within
-  its budget takes it; Full AI's `ai.fullAi.reactPerHour`, 30, 0 no limit);
-  IPC `reactor status|simulate`.
+  its budget takes it; Full AI's `ai.fullAi.reactPerHour`, 30, 0 no limit),
+  the instant triage in front of it (see **Reactivity**); IPC
+  `reactor status|simulate` (denied to agents).
 - Routing (`ai.routing`, Settings → Desktop agents → Accuracy and models):
   `quick` (the bubble's agent, `small`), `decisions` (`big`) with
   `decisionsEffort` (`low`) for what decides on the user's behalf: the
@@ -1293,6 +1451,18 @@ Guardrails, whatever the transport:
   `NIXBOOK_DESKTOP_MCP_GROUPS` (`observe,windows,shell`), and doesn't run while
   locked; person entries reach the contacts only from the user's chats, never
   from the memory pass, curiosity or routines, nor while paused.
+- the user's own answers are never an agent's: `order accept|decline`,
+  `journal undo`, `trust set` and `routine on` are no MCP tool; on the
+  helper socket they are refused (code 126: only the shell's stdin helper or
+  the user's command line may), and the command line refuses them when
+  `NIXBOOK_MUSE_TASK_ID`, `NIXBOOK_META_AGENT_CHILD` (set by meta-agent on
+  every child process) or `NIXBOOK_DESKTOP_MCP_NO_TASKS` (a routine's run) is
+  set; `shellIpcDenyTargets` adds `journal`, `trust`, `orders` and `reactor`
+  (its `simulate*` would make up events), and `shellIpcDenyFunctions`
+  (`approve`, `deny`, `answer`, `accept`, `decline`, `undo`, `allow`,
+  `setTrust`, `trustSet`, `setLevel`, `turnOn`) are refused on any target, so
+  a background task's approval or question, a trust level, an Undo and an
+  offer taken stay the user's.
 - the bar widget, `nixbook-desktop-mcp pause` (or `toggle`) stops every
   tool (for every agent, until `resume`): bind it to a key as a panic button.
   Desktop control starts paused: agents may act only while
@@ -1742,30 +1912,31 @@ ignored.
 
 ## Layout
 
-| Path               | What                                                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `default.nix`      | entry point (`package`, `homeManagerModules.default`, `lib`)                                                                 |
-| `package.nix`      | the launcher: runtime `PATH`, QML import path, `config` CLI                                                                  |
-| `accounts.nix`     | `nixbook-accounts` (`accounts/`, Go): the accounts (Google, CalDAV/CardDAV), contacts, tasks, calendars                      |
-| `improve.nix`      | `nixbook-improve` (`improve/`, Go): the desktop agent's fixes to nixbook (inbox, confined session, checks, PR, revert)       |
-| `qml.nix`          | the QML tree as installed (store-path fixups, Persona, Chiikawa, Cyberpunk and Ghibli art and sounds, emoji list)            |
-| `fonts.nix`        | the faces `appearance.fonts` names that nixpkgs lacks (Google Sans Flex, Space Grotesk, Rajdhani, Zen Maru Gothic, Klee One) |
-| `quickshell.nix`   | Quickshell from `quickshellSrc` plus `patches/`                                                                              |
-| `lib.nix`          | typed settings options generated from `builtin-defaults.json`                                                                |
-| `hm-module.nix`    | the Home Manager module `programs.nixbook-shell`                                                                             |
-| `nixos-module.nix` | optional NixOS module: the system's toggles for the assistant                                                                |
-| `greeter.nix`      | the login screen (`nixbook-shell.greeter`, imported by it)                                                                   |
-| `toggles.nix`      | discovers the `enable` toggles from an options tree                                                                          |
-| `scripts/`         | `config` CLI, its jq library, assistant facts, the agent engine, model provider, login screen theme, emoji list, desktop MCP |
-| `npins/`           | default nixpkgs and quickshell pins                                                                                          |
-| `src/`             | the QML tree                                                                                                                 |
-| `tests/`           | script tests, lib unit tests, the self-containment check, the shell started headless (`shell-loads.sh`)                      |
+| Path               | What                                                                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default.nix`      | entry point (`package`, `homeManagerModules.default`, `lib`)                                                                                   |
+| `package.nix`      | the launcher: runtime `PATH`, QML import path, `config` CLI                                                                                    |
+| `accounts.nix`     | `nixbook-accounts` (`accounts/`, Go): the accounts (Google, CalDAV/CardDAV), contacts, tasks, calendars                                        |
+| `improve.nix`      | `nixbook-improve` (`improve/`, Go): the desktop agent's fixes to nixbook (inbox, confined session, checks, PR, revert)                         |
+| `qml.nix`          | the QML tree as installed (store-path fixups, Persona, Chiikawa, Cyberpunk and Ghibli art and sounds, emoji list)                              |
+| `fonts.nix`        | the faces `appearance.fonts` names that nixpkgs lacks (Google Sans Flex, Space Grotesk, Rajdhani, Zen Maru Gothic, Klee One)                   |
+| `quickshell.nix`   | Quickshell from `quickshellSrc` plus `patches/`                                                                                                |
+| `lib.nix`          | typed settings options generated from `builtin-defaults.json`                                                                                  |
+| `hm-module.nix`    | the Home Manager module `programs.nixbook-shell`                                                                                               |
+| `nixos-module.nix` | optional NixOS module: the system's toggles for the assistant                                                                                  |
+| `greeter.nix`      | the login screen (`nixbook-shell.greeter`, imported by it)                                                                                     |
+| `toggles.nix`      | discovers the `enable` toggles from an options tree                                                                                            |
+| `scripts/`         | `config` CLI, its jq library, assistant facts, the agent engine, background tasks, model provider, login screen theme, emoji list, desktop MCP |
+| `npins/`           | default nixpkgs and quickshell pins                                                                                                            |
+| `src/`             | the QML tree                                                                                                                                   |
+| `tests/`           | script tests, lib unit tests, the self-containment check, the shell started headless (`shell-loads.sh`)                                        |
 
 ## Tests
 
 ```sh
 bash tests/scripts.sh
 bash tests/desktop-mcp.sh    # the desktop control MCP server, against stub niri/wtype/grim… and a fake compositor
+bash tests/muse-task.sh      # background tasks (nixbook-muse-task), against the fake Messages API and a stub desktop-mcp
 nix-instantiate --eval --strict --json --expr 'import ./tests/lib.nix { }'   # []
 nix-instantiate --eval --strict --read-write-mode tests/standalone.nix \
   --arg homeManager '<home-manager checkout>'                                  # "ok"

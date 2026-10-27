@@ -15,8 +15,12 @@ Item {
     anchors.fill: parent
     property bool aiChatEnabled: Config.options.policies.ai !== 0
     property bool translatorEnabled: Config.options.sidebar.translator.enable
+    // What Muse does on its own: its background tasks and its journal
+    // (MuseActivity.qml), right after the chat.
+    property bool museEnabled: root.aiChatEnabled && ((Config.options.ai.autonomy?.tasks ?? true) || (Config.options.ai.autonomy?.journal ?? true))
     property var tabButtonList: [
         ...(root.aiChatEnabled ? [{"icon": "neurology", "name": Translation.tr("Intelligence")}] : []),
+        ...(root.museEnabled ? [{"icon": "pending_actions", "name": Translation.tr("Muse")}] : []),
         ...(root.translatorEnabled ? [{"icon": "translate", "name": Translation.tr("Translator")}] : [])
     ]
     property int tabCount: swipeView.count
@@ -52,7 +56,16 @@ Item {
             if (root.aiChatEnabled) swipeView.currentIndex = 0
             root.focusActiveItem()
         }
+        function onMuseActivityRequested(what) {
+            if (!root.museEnabled) return
+            swipeView.currentIndex = 1
+            root.museSection = what
+            const page = root.pageFor("muse", museActivity)
+            if (page.pageItem) Qt.callLater(page.pageItem.scrollToSection)
+        }
     }
+    // The section asked for before its page was built.
+    property string museSection: "tasks"
 
     Keys.onPressed: (event) => {
         if (event.modifiers === Qt.ControlModifier) {
@@ -212,6 +225,7 @@ Item {
 
                 contentChildren: [
                     ...(root.aiChatEnabled ? [root.pageFor("aiChat", aiChat)] : []),
+                    ...(root.museEnabled ? [root.pageFor("muse", museActivity)] : []),
                     ...(root.translatorEnabled ? [root.pageFor("translator", translator)] : []),
                     ...(root.tabButtonList.length === 0 ? [root.pageFor("placeholder", placeholder, true)] : []),
                 ]
@@ -293,6 +307,12 @@ Item {
         Component {
             id: translator
             Translator {}
+        }
+        Component {
+            id: museActivity
+            MuseActivity {
+                section: root.museSection
+            }
         }
         Component {
             id: placeholder

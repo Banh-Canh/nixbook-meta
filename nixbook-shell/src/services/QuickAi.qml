@@ -113,6 +113,10 @@ Singleton {
             out.push({ label: Translation.tr("No"), main: false, run: () => root.approve(false) });
             return out;
         }
+        // A long order Muse is on in the bubble: on in the background instead
+        // (nixbook-muse-task), the bubble free again.
+        if (root.canBackground)
+            out.push({ label: Translation.tr("Do it in the background"), main: false, run: () => root.toBackground() });
         if (root.busy || root.clarifying) return out;
         if (root.paused) {
             out.push({ label: Translation.tr("Allow desktop control and retry"), main: true, run: () => root.allowControl() });
@@ -129,6 +133,22 @@ Singleton {
         if (root.answer.length > 0)
             out.push({ label: Translation.tr("Copy"), main: false, run: () => root.copy() });
         return out;
+    }
+
+    // A long order: many words, or already a few steps in.
+    readonly property bool canBackground: root.agentMode && root.busy && !root.pending && MuseTasks.canStart
+        && (String(root.convo.question ?? "").length >= 100 || root.steps.length >= 3)
+    function toBackground() {
+        const chat = root.agentChat;
+        const order = String(root.convo.question ?? "").trim();
+        if (!chat || order.length === 0) return;
+        const session = chat.agentSessionId;
+        chat.stopResponse();
+        MuseTasks.start(order, session, (id, error) => {
+            chat.addMessage(error.length > 0 ? Translation.tr("⚠ Couldn't start it in the background: %1").arg(error)
+                : Translation.tr("On it in the background: I'll tell you when it's done (the side panel's Muse tab shows how it goes)."),
+                "assistant");
+        });
     }
 
     // The mode a text gets by itself (ai.quick.defaultMode "auto"): an

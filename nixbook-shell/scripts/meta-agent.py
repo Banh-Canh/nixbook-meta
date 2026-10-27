@@ -72,6 +72,23 @@ to do behind the options below (all off by default).
   --verify                   after a turn that acted: a check with read-only
                              tools ({"type": "verify", met, note}; result
                              `verified`), one fix round when it isn't done
+  --trust                    the trust ladder: each step that doesn't only
+                             read is of a class (nixbook_ai.action_class:
+                             `close_window@firefox`, `calendar:add`) the user
+                             trusts at a level (`nixbook-desktop-mcp trust
+                             check`): ask (an approval_request, its answer
+                             recorded with `trust record`; after a few yeses
+                             {"type": "trust_suggest", class, summary}), tell
+                             (run, {"type": "told", class, summary, journal,
+                             undo} out, journaled) or silent (run, journaled:
+                             `nixbook-desktop-mcp journal add`, with the undo
+                             the tool's reply offers in `_meta.undo`). The
+                             --confirm floor stays: a risky step is asked
+                             unless the user set its class themselves
+  --journal-source SRC       what the journal says did it (agent; task, routine,
+                             order, reaction); --task ID: the background task
+  --fork-session             with --resume: a copy of that conversation goes on
+                             under a session of its own (--session-id or new)
 
 Stdlib only.
 """
@@ -111,13 +128,14 @@ VALUE_FLAGS = {"--model", "--effort", "--system-prompt", "--append-system-prompt
                "--input-format", "--json-schema", "--tools", "--sandbox", "--max-turns", "--max-budget-usd",
                "--resume", "-r", "--session-id", "--setting-sources", "--settings", "--permission-mode", "--name",
                "--fallback-model", "--system-prompt-file", "--append-system-prompt-file", "--agents",
-               "--permission-prompt-tool", "--debug-file", "--context-for", "--confirm", "--lazy-mcp"}
+               "--permission-prompt-tool", "--debug-file", "--context-for", "--confirm", "--lazy-mcp",
+               "--journal-source", "--task"}
 MULTI_FLAGS = {"--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools", "--add-dir",
                "--write-dir", "--mcp-config", "--plugin-dir", "--betas"}
 BOOL_FLAGS = {"-p", "--print", "--verbose", "--include-partial-messages", "--strict-mcp-config",
               "--no-session-persistence", "--privacy", "--restricted", "--safe-mode", "--continue", "-c",
               "--dangerously-skip-permissions", "--fork-session", "--replay-user-messages", "--debug", "-d",
-              "--report", "--learn", "--resolve", "--verify"}
+              "--report", "--learn", "--resolve", "--verify", "--trust"}
 
 MAX_TOKENS = int(os.environ.get("NIXBOOK_AI_MAX_TOKENS") or 16000)
 TOOL_OUTPUT_MAX = 60000
@@ -252,8 +270,12 @@ def split_list(values):
 
 
 def child_env(extra=None):
-    """The environment of what the agent starts: never the provider's key."""
+    """The environment of what the agent starts: never the provider's key,
+    and marked as the agent's (NIXBOOK_META_AGENT_CHILD), so desktop-mcp
+    refuses the user's own answers from there (trust set, undo, turning an
+    order on), whatever a command line says."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("NIXBOOK_AI_")}
+    env["NIXBOOK_META_AGENT_CHILD"] = "1"
     if extra:
         env.update({str(k): str(v) for k, v in extra.items()})
     return env
@@ -328,6 +350,10 @@ class Options:
         self.learn = False
         self.resolve = False
         self.verify = False
+        self.trust = False
+        self.fork = False
+        self.journal_source = "agent"
+        self.task = ""
         self.prompt_args = []
         self.parse(argv)
 
@@ -447,8 +473,18 @@ class Options:
                 self.lazy_mcp = max(0, int(v))
             except ValueError:
                 raise AgentError(f"--lazy-mcp: a number, not {v}")
-        elif name in ("--report", "--learn", "--resolve", "--verify"):
+        elif name in ("--report", "--learn", "--resolve", "--verify", "--trust"):
             setattr(self, name[2:], True)
+        elif name == "--fork-session":
+            self.fork = True
+        elif name == "--journal-source":
+            if v not in ("routine", "order", "reaction", "task", "agent"):
+                raise AgentError(f"--journal-source: routine, order, reaction, task or agent, not {v}")
+            self.journal_source = v
+        elif name == "--task":
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(v)):
+                raise AgentError(f"--task: a task id, not {v}")
+            self.task = v
         # Everything else is accepted for compatibility and ignored.
 
 
@@ -785,6 +821,10 @@ class Mcp:
                                       "read_only": bool(ann.get("readOnlyHint")) or (
                                           name != DESKTOP_SERVER and bool(APP_READS.match(tname))),
                                       "destructive": bool(ann.get("destructiveHint")),
+                                      # The desktop's tool groups (observe, windows,
+                                      # input…), as its tools/list says them.
+                                      "group": str(((t.get("_meta") if isinstance(t.get("_meta"), dict) else {})
+                                                    or {}).get("nixbook/group") or ""),
                                       "spec": {"name": exposed, "description": str(t.get("description") or "")[:8000],
                                                "input_schema": schema}}
                 if lazy and name != DESKTOP_SERVER and len(found) > lazy:
@@ -812,6 +852,8 @@ class Mcp:
         return list(found)
 
     def call(self, exposed, args):
+        """(content blocks, is_error, the reply's _meta: {} or e.g. its
+        `undo`, the call that takes the step back)."""
         info = self.tools[exposed]
         result = self.servers[info["server"]].rpc("tools/call", {"name": info["tool"], "arguments": args},
                                                   MCP_CALL_TIMEOUT)
@@ -834,7 +876,8 @@ class Mcp:
             blocks.append({"type": "text", "text": cap(json.dumps(result["structuredContent"], ensure_ascii=False))})
         if not blocks:
             blocks.append({"type": "text", "text": "(no output)"})
-        return blocks, bool(result.get("isError"))
+        meta = result.get("_meta") if isinstance(result.get("_meta"), dict) else {}
+        return blocks, bool(result.get("isError")), meta
 
     def close(self, wait=2.0):
         """Their stdin closed (an MCP server's cue to exit), a moment to do
@@ -1515,14 +1558,15 @@ class Inbox:
         return self.turns.get()
 
     def approval(self, rid, timeout):
-        """The user's answer for the step RID; no after TIMEOUT or at the
+        """The user's answer for the step RID (True, False); None (a no
+        that isn't theirs: not recorded by --trust) after TIMEOUT or at the
         input's end."""
         deadline = time.monotonic() + timeout
         with self.cond:
             while str(rid) not in self.approvals:
                 left = deadline - time.monotonic()
                 if self.closed or left <= 0:
-                    return False
+                    return None
                 self.cond.wait(min(left, 1.0))
             return self.approvals.pop(str(rid))
 
@@ -1579,12 +1623,21 @@ class Agent:
         self.wrapped = bool(self.schema) and self.schema.get("type", "object") != "object"
         self.usage = {}
         self.steps = []
+        # --trust: each class's level, asked once a turn.
+        self.trust_cache = {}
         self.lock = threading.Lock()
         prune_sessions()
         self.state = {}
         if opts.resume:
-            self.session_id = opts.resume
             self.messages, self.state = load_session(opts.resume)
+            self.session_id = opts.resume
+            if opts.fork:
+                # A copy goes on under its own id (a background task started
+                # from a side panel conversation): the original stays as it
+                # was.
+                self.session_id = opts.session_id or str(uuid.uuid4())
+                if opts.persist and os.path.exists(session_path(self.session_id)):
+                    raise AgentError(f"Session ID {self.session_id} is already in use")
         else:
             self.session_id = opts.session_id or str(uuid.uuid4())
             self.messages = []
@@ -1623,7 +1676,7 @@ class Agent:
         parts += [s for s in o.append_system if s]
         if o.context_for or o.resolve:
             parts.append(CONTEXT_PROMPT)
-        if o.confirm != "never":
+        if o.confirm != "never" or o.trust:
             parts.append("Never ask \"shall I?\" in your answer: the computer asks the user itself before the risky "
                          "steps, and tells you when they say no.")
         if o.report:
@@ -1684,15 +1737,15 @@ class Agent:
         """What --confirm, --verify and --learn know of a tool: {tool (its
         own name), shown, read_only, server}."""
         if name in self.builtins.names:
-            return {"tool": name, "shown": name, "read_only": name in READ_BUILTINS, "server": ""}
+            return {"tool": name, "shown": name, "read_only": name in READ_BUILTINS, "server": "", "group": ""}
         info = self.mcp.tools.get(name)
         if info:
             shown = info["tool"] if info["server"] == DESKTOP_SERVER else f"{info['server']}: {info['tool']}"
             return {"tool": info["tool"], "shown": shown, "read_only": info.get("read_only", False),
-                    "server": info["server"]}
+                    "server": info["server"], "group": info.get("group", "")}
         if name in self.mcp.openers:
-            return {"tool": name, "shown": name, "read_only": True, "server": self.mcp.openers[name]}
-        return {"tool": name, "shown": name, "read_only": False, "server": ""}
+            return {"tool": name, "shown": name, "read_only": True, "server": self.mcp.openers[name], "group": ""}
+        return {"tool": name, "shown": name, "read_only": False, "server": "", "group": ""}
 
     def reads(self, name, args):
         m = self.meta(name)
@@ -1706,24 +1759,115 @@ class Agent:
             return True
         return nixbook_ai.is_risky(name, args, {name: self.meta(name)})
 
-    def gate(self, call, checking):
+    # ── The trust ladder (--trust) ──
+
+    def step_class(self, name, args):
+        """The call's class (nixbook_ai.action_class): an input tool acts on
+        the window in front, the app the desktop's replies last named."""
+        m = self.meta(name)
+        app = getattr(self, "focused_app", "") if m["tool"] in nixbook_ai.INPUT_TOOLS else ""
+        return nixbook_ai.action_class(m["tool"], args, app or None)
+
+    def trust_level(self, cls, risky):
+        """{level, set} for CLASS: `nixbook-desktop-mcp trust check`, once a
+        turn; when desktop-mcp can't say, the defaults (ask for a risky one,
+        tell for the others). set: the user chose that level themselves."""
+        if cls in self.trust_cache:
+            return self.trust_cache[cls]
+        code, out = nixbook_ai.dm(["trust", "check", cls, "--risky", "1" if risky else "0"], timeout=10)
+        got = None
+        if code == 0:
+            try:
+                got = json.loads(out)
+            except ValueError:
+                got = None
+        got = got if isinstance(got, dict) else {}
+        level = got.get("level") if got.get("level") in nixbook_ai.TRUST_LEVELS else ("ask" if risky else "tell")
+        why = str(got.get("why") or "")
+        info = {"level": level, "set": got.get("set") is True or why.lower().startswith("set")}
+        self.trust_cache[cls] = info
+        return info
+
+    def trust_record(self, cls, outcome, summary):
+        """The user's answer to an `ask` step, recorded; their third yes in
+        a row: {"type": "trust_suggest"} (the shell offers to stop asking)."""
+        code, out = nixbook_ai.dm(["trust", "record", cls, outcome], timeout=10)
+        # Their no changes the level: asked again next time.
+        self.trust_cache.pop(cls, None)
+        if code != 0 or outcome != "allowed":
+            return
+        try:
+            got = json.loads(out)
+        except ValueError:
+            return
+        if isinstance(got, dict) and got.get("suggestPromote") is True:
+            self.emit({"type": "trust_suggest", "class": cls, "summary": nixbook_ai.class_summary(cls),
+                       "step": summary})
+
+    def journal(self, step, args, undo):
+        """A step run without the user's OK for it, in the journal
+        (`nixbook-desktop-mcp journal add`): its id, or None."""
+        short = {}
+        for k, v in (args or {}).items():
+            if isinstance(v, str):
+                short[k] = v[:200]
+            elif len(json.dumps(v, ensure_ascii=False)) <= 300:
+                short[k] = v
+        entry = {"source": self.opts.journal_source, "class": step["class"], "summary": nixbook_ai.step_line(
+            {"tool": step["bare"], "summary": step.get("summary"), "status": "ok"}), "tool": step["bare"],
+            "args": short, "session": self.session_id}
+        if self.opts.task:
+            entry["task"] = self.opts.task
+        if isinstance(undo, dict) and undo.get("tool"):
+            entry["undo"] = {"tool": str(undo["tool"]), "args": undo.get("args") if isinstance(undo.get("args"), dict)
+                             else {}}
+        code, out = nixbook_ai.dm(["journal", "add", json.dumps(entry, ensure_ascii=False)], timeout=10)
+        if code != 0:
+            return None
+        try:
+            got = json.loads(out)
+        except ValueError:
+            return None
+        return got.get("id") if isinstance(got, dict) else None
+
+    def gate(self, call, checking, step=None):
         """None when the call may run, else why not (its tool_result)."""
         name, args = call.get("name", ""), call.get("input") or {}
-        if checking and not self.reads(name, args):
+        reads = self.reads(name, args)
+        if checking and not reads:
             return CHECK_ONLY, "refused"
-        if not self.needs_ok(name, args):
+        ask = self.needs_ok(name, args)
+        cls = ""
+        if self.opts.trust and not reads and name not in self.mcp.openers:
+            # The user's trust decides, --confirm stays the floor: what it
+            # asks about is asked unless the user set that class themselves.
+            cls = self.step_class(name, args)
+            t = self.trust_level(cls, nixbook_ai.is_risky(name, args, {name: self.meta(name)}))
+            level = "ask" if ask and not t["set"] else t["level"]
+            ask = level == "ask"
+            if step is not None:
+                step["class"], step["trust"] = cls, level
+        if not ask:
             return None, ""
         if self.inbox is None:
             return NO_ONE_TO_ASK, "error"
         shown = self.privacy.unmask_args(args)
-        self.emit({"type": "approval_request", "id": call["id"], "tool": self.meta(name)["shown"],
-                   "input": shown, "summary": nixbook_ai.step_summary(shown)})
-        if self.inbox.approval(call["id"], APPROVAL_TIMEOUT):
+        summary = nixbook_ai.step_summary(shown)
+        req = {"type": "approval_request", "id": call["id"], "tool": self.meta(name)["shown"], "input": shown,
+               "summary": summary}
+        if cls:
+            req["class"] = cls
+        self.emit(req)
+        allowed = self.inbox.approval(call["id"], APPROVAL_TIMEOUT)
+        if cls and allowed is not None:
+            self.trust_record(cls, "allowed" if allowed else "denied", summary)
+        if allowed:
             return None, ""
         return DENIED, "denied"
 
     def run_tool(self, call, step=None):
         name, args = call.get("name", ""), call.get("input") or {}
+        meta = {}
         if name in self.mcp.openers:
             server = self.mcp.openers[name]
             with self.lock:
@@ -1737,7 +1881,7 @@ class Agent:
                 if name in self.builtins.names:
                     content, err = self.builtins.run(name, args)
                 elif name in self.mcp.tools:
-                    content, err = self.mcp.call(name, args)
+                    content, err, meta = self.mcp.call(name, args)
                 else:
                     content, err = f"no such tool: {name}", True
             except AgentError as e:
@@ -1754,6 +1898,15 @@ class Agent:
             seen = FOCUSED.findall(raw)
             if seen:
                 self.focused_app = seen[-1]
+            # --trust: a step run without asking, in the journal (with the
+            # undo its reply offers); `tell` ones said to the user too.
+            if not err and step.get("trust") in ("tell", "silent"):
+                undo = meta.get("undo")
+                jid = self.journal(step, args, undo)
+                if step["trust"] == "tell":
+                    self.emit({"type": "told", "class": step["class"], "summary": nixbook_ai.step_line(
+                        {"tool": step["bare"], "summary": step.get("summary"), "status": "ok"}),
+                        "journal": jid, "undo": isinstance(undo, dict) and bool(undo.get("tool"))})
         content = self.privacy.mask_result(name, content)
         return {"type": "tool_result", "tool_use_id": call["id"], "content": content, **({"is_error": True} if err else {})}
 
@@ -1769,7 +1922,7 @@ class Agent:
                     "status": "run", "result": "", "read_only": self.reads(name, args)}
             if name not in self.mcp.openers:
                 self.steps.append(step)
-            why, status = self.gate(c, checking)
+            why, status = self.gate(c, checking, step)
             if why:
                 # denied: the user said no; error: no one to ask; refused:
                 # not now (the check round), left out of the report.
@@ -2049,6 +2202,7 @@ class Agent:
         hints = hints or {}
         self.usage = {}
         self.steps = []
+        self.trust_cache = {}
         self.focused_app = ""
         if not as_blocks(content):
             content = "(empty message)"

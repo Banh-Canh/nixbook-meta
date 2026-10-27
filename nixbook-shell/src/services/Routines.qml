@@ -27,6 +27,13 @@ import QtQuick
  *   - what a routine did and the user undid within 3 minutes (paused the
  *     music it started, closed the app it opened) is told (`routine
  *     undone`): twice, and the routine turns itself off.
+ *
+ * Standing orders ("every evening at 6, a digest of my Slack mentions") are
+ * routines too, compiled by nixbook-desktop-mcp: a `schedule` cue (at a time
+ * on some days, or every N minutes) is asked of `routine due` every minute
+ * and fired like the others; a `digest` action collects what matches between
+ * runs: every event seen here goes to `routine collect` while one is on (on
+ * the helper: no Python start), and the run says the summary.
  */
 Singleton {
     id: root
@@ -97,9 +104,19 @@ Singleton {
     // Everything it sees happen, routines or not (Initiative.qml reacts to some).
     signal happened(var ev)
 
+    // A digest on (do.digest, or a step of it): what happens is collected
+    // for it between its runs.
+    readonly property bool _collects: root.enabled && root.active.some(r => !!r.do?.digest || (r.do?.steps ?? []).some(s => !!s.digest))
+    function _collect(ev) {
+        // Not window titles (every tab and file, private, never a digest's).
+        if (!root._collects || ev.event === "window_title") return
+        DesktopHelper.run(["routine", "collect", JSON.stringify(ev)], "", () => {})
+    }
+
     // Something happened: the routines it is the cue of.
     function happen(ev) {
         root.happened(ev)
+        root._collect(ev)
         if (ev.event === "back") {
             root._sittingSince = Date.now()
             root._longFired = []
@@ -666,6 +683,44 @@ Singleton {
                 for (const n of now.filter(n => !old.has(n)))
                     root.happen({ event: "screenshot", name: n, path: `${decodeURIComponent(FileUtils.trimFileProtocol(shots.folder.toString()))}/${n}` })
             root._shots = now
+        }
+    }
+
+    // -- schedules (standing orders): asked every minute -----------------------
+    // `routine due` answers the schedule routines due now (their time on
+    // their days, or their every-N-minutes); each fired once per minute.
+    readonly property bool _scheduled: root.enabled && root.active.some(r => r.when?.event === "schedule")
+    property string _dueMinute: ""
+    Timer {
+        interval: 30000
+        repeat: true
+        running: root._scheduled
+        triggeredOnStart: true
+        onTriggered: {
+            const minute = Qt.formatDateTime(new Date(), "yyyy-MM-dd hh:mm")
+            // Locked too (a digest for when the user is back): the run's
+            // own rules (nixbook-desktop-mcp) decide what may run then.
+            if (minute === root._dueMinute) return
+            root._dueMinute = minute
+            DesktopHelper.run(["routine", "due"], "", (code, out) => root._due(code, out, minute))
+        }
+    }
+    function _due(code, out, minute) {
+        if (code !== 0) return
+        let due = []
+        try {
+            const data = JSON.parse(out)
+            due = Array.isArray(data) ? data : (data.due ?? data.routines ?? [])
+        } catch (e) {
+            return
+        }
+        const hm = minute.slice(11)
+        for (const d of due) {
+            const id = typeof d === "string" ? d : String(d?.id ?? "")
+            const r = root.active.find(x => x.id === id)
+            if (!r || r.when?.event !== "schedule") continue
+            root.note(r.text ?? r.order ?? id, Translation.tr("scheduled: %1").arg(hm))
+            root._run(r, { event: "schedule", at: hm })
         }
     }
 

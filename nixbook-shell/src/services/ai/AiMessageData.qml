@@ -42,6 +42,14 @@ QtObject {
     property string correction: ""
     // The app in front when it was asked (the feedback's app).
     property string requestApp: ""
+    // Autonomy (meta-agent --trust, the standing_order tool): the standing
+    // orders Muse compiled in this answer ({id, summary, routine,
+    // questions}: a card with Turn on / Edit / No), what it did trusted to
+    // tell after ({class, summary, id?}: "Did: … Undo"), and the classes it
+    // suggests to stop asking about ({class, summary}: a chip).
+    property var orders: []
+    property var told: []
+    property var trustSuggest: []
     property var annotations: []
     property var annotationSources: []
     property list<string> searchQueries: []

@@ -56,6 +56,11 @@ ShellRoot {
         Kiroshi.load()
         NixOnboarding.load()
         FullAi.load()
+        // Autonomy and reactivity: the journal and trust (journal IPC), the
+        // background tasks (tasks IPC), the offers before being asked.
+        Autonomy.load()
+        MuseTasks.load()
+        ContextTriggers.load()
     }
     
     PanelFamilyLoader {

@@ -614,6 +614,14 @@ Singleton {
             + (privacy ? " " + root.privacyPrompt : "")
             + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
             + (desktop ? " You can see and drive the user's desktop with the desktop tools." : "")
+            // Autonomy (ai.autonomy): standing orders and background tasks are
+            // tools of the desktop server; turning an order on is the user's click.
+            + (desktop && (Config.options.ai.autonomy?.orders ?? true)
+                ? " When the user asks for something to happen from now on, whenever something happens or on a schedule (\"from now on, when…\", \"every evening…\"), call standing_order with their words: it is proposed to them and turned on only by their click; never turn it on yourself."
+                : "")
+            + (desktop && (Config.options.ai.autonomy?.tasks ?? true)
+                ? " For a long multi-step task (finding, comparing, preparing) that the user asks to be done in the background or agrees to, use background_task; quick actions you do yourself."
+                : "")
             // Its tools are all allowed (-p can't ask): what acts on the
             // user's account waits for their yes in the chat.
             + (extraServers.linkedin
@@ -691,6 +699,11 @@ Singleton {
         args.push("--context-for", bubble ? "bubble" : "chat", "--lazy-mcp", "12", "--learn");
         if (Config.options.ai.agent.resolve ?? true) args.push("--resolve");
         if (Config.options.ai.agent.verify ?? true) args.push("--verify");
+        // The trust ladder (ai.autonomy.trust): each class of action asked
+        // about, done and told after, or done silently, as the user set it
+        // (Settings > Desktop agents > Autonomy); what it does unasked is
+        // journaled with its Undo.
+        if ((Config.options.ai.autonomy?.trust ?? true) && Config.options.policies.ai !== 0) args.push("--trust");
         if (bubble) {
             const confirm = Config.options.ai.quick?.confirm ?? "destructive";
             args.push("--confirm", ["destructive", "actions", "never"].includes(confirm) ? confirm : "destructive", "--report");

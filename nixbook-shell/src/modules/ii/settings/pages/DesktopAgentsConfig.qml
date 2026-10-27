@@ -841,7 +841,9 @@ ContentPage {
                             wrapMode: Text.WordWrap
                             font.pixelSize: Appearance.font.pixelSize.smaller
                             color: Appearance.colors.colSubtext
-                            text: [Translation.tr("ran %1 times").arg(routineRow.modelData.runs ?? 0),
+                            text: [routineRow.modelData.origin === "order" ? Translation.tr("standing order") : "",
+                                   routineRow.modelData.proposal === true && routineRow.modelData.on === false ? Translation.tr("proposed, off until you turn it on") : "",
+                                   Translation.tr("ran %1 times").arg(routineRow.modelData.runs ?? 0),
                                    routineRow.modelData.last ? page.ago(routineRow.modelData.last) : "",
                                    routineRow.modelData.lastResult ?? ""].filter(x => x).join(" · ")
                         }
@@ -856,6 +858,219 @@ ContentPage {
                         onClicked: DesktopControl.routineCommand("remove", routineRow.modelData.id)
                     }
                 }
+            }
+        }
+
+        // Autonomy (services/Autonomy.qml, ai.autonomy): standing orders, the
+        // trust ladder (the only place a class is raised: `trust set`), the
+        // journal, background tasks.
+        ContentSection {
+            icon: "verified_user"
+            title: Translation.tr("Autonomy")
+            Component.onCompleted: Autonomy.refreshTrust()
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Muse can do more on its own, always with you in charge. Standing orders: say \"from now on, when I join a meeting, mute the music\" or \"every evening at 6, a digest of my Slack mentions\": it proposes a routine, on only when you click Turn on. Trust: each kind of action is asked about first, done and told after (with Undo), or done silently; after three yeses in a row it offers to stop asking, and only you raise a kind, below. Sending, paying, deleting and passwords always ask. Journal: everything it did without your OK on that very step, 30 days, with Undo (the side panel's Muse tab). Background tasks: long tasks go on while you do something else (the side panel's Muse tab, the bar).")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.autonomy.orders"
+                    buttonIcon: "event_repeat"
+                    text: Translation.tr("Standing orders (\"from now on, when…\")")
+                    checked: Config.options.ai.autonomy.orders
+                    onCheckedChanged: Config.options.ai.autonomy.orders = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.autonomy.trust"
+                    buttonIcon: "shield_person"
+                    text: Translation.tr("Trust ladder (stop asking about what I trust it with)")
+                    checked: Config.options.ai.autonomy.trust
+                    onCheckedChanged: Config.options.ai.autonomy.trust = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.autonomy.journal"
+                    buttonIcon: "history"
+                    text: Translation.tr("Journal of what it did, with Undo")
+                    checked: Config.options.ai.autonomy.journal
+                    onCheckedChanged: Config.options.ai.autonomy.journal = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.autonomy.tasks"
+                    buttonIcon: "pending_actions"
+                    text: Translation.tr("Background tasks")
+                    checked: Config.options.ai.autonomy.tasks
+                    onCheckedChanged: Config.options.ai.autonomy.tasks = checked
+                }
+            }
+            ConfigSpinBox {
+                configKey: "ai.autonomy.maxTasks"
+                icon: "stacks"
+                text: Translation.tr("Background tasks at once")
+                value: Config.options.ai.autonomy.maxTasks
+                from: 1; to: 8; stepSize: 1
+                onValueChanged: Config.options.ai.autonomy.maxTasks = value
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                SmallButton {
+                    materialIcon: "history"
+                    mainText: Translation.tr("What Muse did")
+                    onClicked: Autonomy.openJournal()
+                }
+                SmallButton {
+                    materialIcon: "pending_actions"
+                    mainText: Translation.tr("Background tasks")
+                    onClicked: MuseTasks.openList()
+                }
+                SmallButton {
+                    materialIcon: "refresh"
+                    mainText: Translation.tr("Refresh the trust list")
+                    onClicked: Autonomy.refreshTrust()
+                }
+            }
+
+            ContentSubsection {
+                title: Translation.tr("What it may do without asking")
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    visible: Autonomy.trustList.length === 0
+                    color: Appearance.colors.colSubtext
+                    text: Autonomy.trustLoaded ? Translation.tr("Nothing yet: kinds of actions show here once Muse has done them (a tool, its action, the app it acts on).")
+                        : Translation.tr("Not loaded (nixbook-desktop-mcp's helper isn't answering).")
+                }
+                Repeater {
+                    model: Autonomy.trustList
+                    delegate: RowLayout {
+                        id: trustRow
+                        required property var modelData
+                        property string error: ""
+                        Layout.fillWidth: true
+                        spacing: 8
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            StyledText {
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                text: String(trustRow.modelData.class).replace(/_/g, " ")
+                                color: Appearance.colors.colOnLayer1
+                            }
+                            StyledText {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: Appearance.font.pixelSize.smaller
+                                color: trustRow.error ? Appearance.colors.colError : Appearance.colors.colSubtext
+                                text: trustRow.error || [trustRow.modelData.streak ? Translation.tr("%1 yeses in a row").arg(trustRow.modelData.streak) : "",
+                                    trustRow.modelData.last ? page.ago(trustRow.modelData.last) : "",
+                                    trustRow.modelData.locked || trustRow.modelData.promotable === false ? Translation.tr("always asks") : ""]
+                                    .filter(x => x).join(" · ")
+                            }
+                        }
+                        Repeater {
+                            model: [
+                                { level: "ask", label: Translation.tr("Ask"), icon: "front_hand" },
+                                { level: "tell", label: Translation.tr("Tell after"), icon: "campaign" },
+                                { level: "silent", label: Translation.tr("Silent"), icon: "do_not_disturb_on" },
+                            ]
+                            delegate: SmallButton {
+                                required property var modelData
+                                materialIcon: modelData.icon
+                                mainText: modelData.label
+                                toggled: trustRow.modelData.level === modelData.level
+                                onClicked: Autonomy.setTrust(trustRow.modelData.class, modelData.level, (ok, why) => {
+                                    trustRow.error = ok ? "" : (why || Translation.tr("Refused: this kind always asks"))
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Reactivity (services/Reactor.qml, services/ContextTriggers.qml).
+        ContentSection {
+            icon: "bolt"
+            title: Translation.tr("Reactivity")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Instant triage: each notification and event is scored on this computer first, in milliseconds and without a model: what you mute or never act on is dropped, what is clearly worth saying (someone important wrote, a reminder) is said at once, and only the rest goes to the model. Offers: Muse offers one concrete thing at the right moment, before you ask: Yes does it, Not now waits, Never for this stops that offer for 30 days. They need \"Talks to you on its own\" above.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.reactivity.triage"
+                    buttonIcon: "speed"
+                    text: Translation.tr("Instant triage before the model")
+                    checked: Config.options.ai.reactivity.triage
+                    onCheckedChanged: Config.options.ai.reactivity.triage = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.reactivity.triggers.commandFailedAgain"
+                    buttonIcon: "terminal"
+                    text: Translation.tr("Offer help when a command fails twice")
+                    checked: Config.options.ai.reactivity.triggers.commandFailedAgain
+                    onCheckedChanged: Config.options.ai.reactivity.triggers.commandFailedAgain = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.reactivity.triggers.errorCopied"
+                    buttonIcon: "content_paste"
+                    text: Translation.tr("Offer help when I copy an error")
+                    checked: Config.options.ai.reactivity.triggers.errorCopied
+                    onCheckedChanged: Config.options.ai.reactivity.triggers.errorCopied = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.reactivity.triggers.returningWindow"
+                    buttonIcon: "repeat"
+                    text: Translation.tr("Offer help when I keep going back to a window")
+                    checked: Config.options.ai.reactivity.triggers.returningWindow
+                    onCheckedChanged: Config.options.ai.reactivity.triggers.returningWindow = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.reactivity.triggers.meetingSoon"
+                    buttonIcon: "video_call"
+                    text: Translation.tr("Offer to get me ready before a meeting")
+                    checked: Config.options.ai.reactivity.triggers.meetingSoon
+                    onCheckedChanged: Config.options.ai.reactivity.triggers.meetingSoon = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.reactivity.triggers.errorDialog"
+                    buttonIcon: "report"
+                    text: Translation.tr("Offer help with an error window")
+                    checked: Config.options.ai.reactivity.triggers.errorDialog
+                    onCheckedChanged: Config.options.ai.reactivity.triggers.errorDialog = checked
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: Object.keys(ContextTriggers.muted).length > 0
+                spacing: 8
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    text: Translation.tr("%1 offers stopped with Never for this").arg(Object.keys(ContextTriggers.muted).length)
+                }
+                SmallButton {
+                    materialIcon: "restart_alt"
+                    mainText: Translation.tr("Offer them again")
+                    onClicked: ContextTriggers.unmuteAll()
+                }
+            }
+            StyledText {
+                Layout.fillWidth: true
+                visible: Reactor.verdicts.length > 0
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Triaged lately:") + "\n" + Reactor.verdicts.slice(-6).reverse().map(v =>
+                    `${Qt.formatDateTime(new Date(v.time), "hh:mm")} · ${v.app || v.event} · ${v.verdict}${v.why ? " (" + v.why + ")" : ""}`).join("\n")
             }
         }
 

@@ -23,6 +23,18 @@ import QtQuick
  * notification batch and day budget, Full AI's 1.2 s pump); Full AI gets an
  * hourly budget here too (ai.fullAi.reactPerHour, 0: no limit), spent when
  * it actually asks its model (spend()).
+ *
+ * In front of the model, the instant triage (ai.reactivity.triage):
+ * `nixbook-desktop-mcp triage score` (plain code on the helper, no model,
+ * a few milliseconds) scores each notification and event someone wants
+ * first: "drop" (muted, boring, a repeat: nothing more; Routines' fixed
+ * actions and digests still had it, they see everything themselves),
+ * "direct" (clearly worth saying and sayable as it is, "Thomas wrote: …":
+ * said at once through the initiative, no 45 s batch, no model, counted
+ * against its own hourly budget here) or "model" (the gray zone: today's
+ * path). What the shell offers before being asked (ContextTriggers.qml:
+ * a command failing again, an error copied…) skips it: the initiative
+ * decides those as offers.
  */
 Singleton {
     id: root
@@ -38,8 +50,15 @@ Singleton {
     // Model decisions made lately, by handler: {name: [times (ms)]}.
     property var spent: ({})
     function perHour(name) {
-        return name === "fullAi" ? (Config.options?.ai?.fullAi?.reactPerHour ?? 30) : 0;
+        return name === "fullAi" ? (Config.options?.ai?.fullAi?.reactPerHour ?? 30)
+            : name === "direct" ? root.directPerHour : 0;
     }
+    // What the triage says at once (no model): at most this many an hour,
+    // past it back to the model's path (which has its own budget).
+    readonly property int directPerHour: 20
+    readonly property bool triageOn: Config.options?.ai?.reactivity?.triage ?? true
+    // Offers (ContextTriggers.qml): not triaged, the initiative words them.
+    readonly property var triggerEvents: ["command_failed_again", "error_copied", "returning_window", "meeting_soon", "error_dialog"]
     function used(name) {
         const t = Date.now();
         return (root.spent[name] ?? []).filter(x => t - x < 3600000).length;
@@ -83,6 +102,54 @@ Singleton {
         root._note(ev, "");
         return "";
     }
+    // An event as it comes (a notification, what Routines saw, an offer):
+    // nobody wants it, noted; else the triage first, then dispatch().
+    function react(ev) {
+        if (!root.handlers.some(h => root._wants(h, ev) && root.withinBudget(h.name))) {
+            root._note(ev, "");
+            return "";
+        }
+        if (!root.triageOn || root.triggerEvents.includes(ev.event) || (Config.options?.policies?.ai ?? 1) === 0)
+            return root.dispatch(ev);
+        DesktopHelper.run(["triage", "score", JSON.stringify(root._triageEvent(ev))], "", (code, out) => root._triaged(ev, code, out));
+        return "triage";
+    }
+    // What the triage reads: the event, and whether the user is busy now
+    // (Do Not Disturb, a meeting, a fullscreen window), the hour, the language.
+    function _triageEvent(ev) {
+        const t = new Date();
+        const mon = WM.focusedMonitor?.name ?? "";
+        return Object.assign({}, ev, { dnd: Notifications.silent === true,
+            meeting: CalendarEvents.eventsOn(t).some(e => !e.allDay && e.start <= t && e.end > t),
+            fullscreen: mon !== "" && WM.fullscreenOnMonitor(mon), hour: t.getHours(), lang: ConfigAssistant.uiLang() });
+    }
+    // The triage's verdicts lately, newest last (the IPC status, Settings):
+    // {time, event, app, verdict, score, why}.
+    property var verdicts: []
+    function _triaged(ev, code, out) {
+        let v = null;
+        try {
+            v = code === 0 ? JSON.parse(out) : null;
+        } catch (e) {
+            v = null;
+        }
+        const verdict = ["drop", "direct", "model"].includes(v?.verdict) ? v.verdict : "model";
+        root.verdicts = [...root.verdicts, { time: Date.now(), event: ev.event, app: ev.app ?? "", verdict: verdict,
+            score: Number(v?.score ?? 0), why: String(v?.why ?? (v ? "" : "no triage: the model decides")) }].slice(-30);
+        if (verdict === "drop") {
+            root._note(ev, "dropped");
+            return;
+        }
+        // Said at once (within its budget), else the model's path.
+        if (verdict === "direct" && String(v.text ?? "").trim().length > 0 && root.withinBudget("direct")
+                && Initiative.direct(ev, String(v.text), v)) {
+            root.spend("direct");
+            root._note(ev, "direct");
+            return;
+        }
+        root.dispatch(ev);
+    }
+
     // Would a handler before `name` take this event? (The initiative's own
     // events, like the user coming back, that Full AI also gets from
     // Routines: decided once.)
@@ -102,7 +169,10 @@ Singleton {
     Connections {
         target: Notifications
         function onNotify(n) {
-            root.dispatch({ event: "notification", app: n.appName ?? "", title: n.summary ?? "", body: n.body ?? "",
+            // A background task's own notification (nixbook-muse-task: "Muse
+            // needs you", done): shown, never reacted to.
+            if (n.hints?.["x-nixbook-task"] !== undefined) return;
+            root.react({ event: "notification", app: n.appName ?? "", title: n.summary ?? "", body: n.body ?? "",
                             text: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 600),
                             urgency: root._urgency(n), id: n.notificationId, transient: n.isTransient === true });
         }
@@ -112,7 +182,7 @@ Singleton {
     Connections {
         target: Routines
         function onHappened(ev) {
-            if (ev.event !== "notification") root.dispatch(ev);
+            if (ev.event !== "notification") root.react(ev);
         }
     }
 
@@ -121,13 +191,24 @@ Singleton {
         // JSON: the handlers in order, Full AI's budget, the last events.
         function status(): string {
             return JSON.stringify({ handlers: root.handlers.map(h => h.name),
-                fullAi: { perHour: root.perHour("fullAi"), used: root.used("fullAi") }, log: root.log.slice(-10) });
+                fullAi: { perHour: root.perHour("fullAi"), used: root.used("fullAi") },
+                direct: { perHour: root.perHour("direct"), used: root.used("direct") }, triage: root.triageOn,
+                log: root.log.slice(-10), verdicts: root.verdicts.slice(-10) });
         }
         // An event as if it had happened (tests): {event, app, title, text…};
         // the handler that took it ("" for none).
         function simulate(json: string): string {
             try {
                 return root.dispatch(JSON.parse(json));
+            } catch (e) {
+                return "error: " + e;
+            }
+        }
+        // The same through the triage first: "triage" while it scores it
+        // (the verdict then in status), "" when nobody wants it.
+        function simulateTriaged(json: string): string {
+            try {
+                return root.react(JSON.parse(json));
             } catch (e) {
                 return "error: " + e;
             }

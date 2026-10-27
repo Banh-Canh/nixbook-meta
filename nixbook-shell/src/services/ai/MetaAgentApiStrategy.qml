@@ -19,6 +19,12 @@ import QtQuick
 // `report`, shown as the bubble's REPORT brief; its <report> block is
 // never shown as text). `steps`: the turn's tool calls as Quick AI's were
 // ({id, tool, summary, status: run|ok|error}), for Full AI's mascot.
+//
+// Autonomy (--trust, ai.autonomy): a step of a class the user trusts it
+// with is told after it ran ({"type":"told"}: the message's `told`, a "Did:
+// … Undo" line), three yeses in a row for one class bring a suggestion to
+// stop asking ({"type":"trust_suggest"}: `trustSuggest`, a chip), and a
+// standing_order tool result is a card to turn the order on (`orders`).
 QtObject {
     // Tool calls of the current answer, by id: "name input", shown with
     // their result in one block.
@@ -40,6 +46,7 @@ QtObject {
 
     function reset() {
         toolCalls = ({});
+        toolNames = ({});
         finished = false;
         held = "";
         steps = [];
@@ -76,6 +83,23 @@ QtObject {
     }
     function stripReport(text) {
         return String(text ?? "").replace(/<report>[\s\S]*?(<\/report>|$)/g, "").replace(/\s+$/, "");
+    }
+
+    // Tool call id -> tool name (a standing_order's result is a card).
+    property var toolNames: ({})
+    function _push(message, prop, value) {
+        message[prop] = [...(message[prop] ?? []), value];
+    }
+    function _order(message, text) {
+        let r = null;
+        try {
+            r = JSON.parse(unmask(String(text ?? "")));
+        } catch (e) {
+            return;
+        }
+        if (!r || typeof r !== "object" || r.error || (!r.id && !(r.questions ?? []).length)) return;
+        _push(message, "orders", { id: String(r.id ?? ""), summary: String(r.summary ?? ""),
+            routine: r.routine ?? null, questions: (r.questions ?? []).map(q => String(q)).slice(0, 4) });
     }
 
     function toolName(name) {
@@ -151,6 +175,7 @@ QtObject {
             for (const block of (ev.message?.content ?? [])) {
                 if (block.type !== "tool_use") continue;
                 toolCalls[block.id] = `**${toolLabel(block.name)}** ${brief(block.input, 300)}`;
+                toolNames[block.id] = toolName(block.name);
                 setStep(block.id, { tool: toolName(block.name), summary: brief(block.input, 80), status: "run" });
             }
         } else if (ev.type === "user") {
@@ -159,6 +184,7 @@ QtObject {
                 const call = toolCalls[block.tool_use_id] ?? "**tool**";
                 const text = brief(resultText(block.content), 400);
                 setStep(block.tool_use_id, { status: block.is_error ? "error" : "ok", result: brief(resultText(block.content), 120) });
+                if (!block.is_error && toolNames[block.tool_use_id] === "standing_order") _order(message, resultText(block.content));
                 append(message, `\n\n<think>\n${call}\n\n${block.is_error ? "⚠ " : "→ "}${text}\n</think>\n\n`);
             }
         } else if (ev.type === "approval_request") {
@@ -166,6 +192,14 @@ QtObject {
             out.approval = { id: String(ev.id ?? ""), tool: toolName(ev.tool), input: ev.input ?? {},
                              summary: brief(ev.summary || ev.input || "", 120) };
             setStep(String(ev.id ?? ""), { tool: toolName(ev.tool), summary: brief(ev.summary || ev.input || "", 80), status: "run" });
+        } else if (ev.type === "told") {
+            // Done without asking (trusted: tell), journaled: "Did: … Undo".
+            _push(message, "told", { class: String(ev.class ?? ""), summary: unmask(brief(ev.summary || ev.class || "", 160)),
+                                     id: String(ev.journal ?? ev.id ?? ""), undo: ev.undo !== false });
+        } else if (ev.type === "trust_suggest") {
+            // Allowed three times in a row: stop asking? (the user's click).
+            if (!(message.trustSuggest ?? []).some(x => x.class === ev.class))
+                _push(message, "trustSuggest", { class: String(ev.class ?? ""), summary: unmask(brief(ev.summary || ev.class || "", 120)) });
         } else if (ev.type === "verify") {
             // Checked after acting (--verify): met, or why not.
             message.verify = { met: ev.met === true, note: String(ev.note ?? "") };

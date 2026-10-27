@@ -162,6 +162,51 @@ lib.runTests {
       30
     ];
   };
+  # Autonomy and reactivity (standing orders, trust ladder, journal,
+  # background tasks, instant triage, offers): typed options too.
+  testAutonomySettings = {
+    expr = shellLib.pinnedSettings (evalSettings {
+      ai.autonomy.trust = false;
+      ai.autonomy.maxTasks = 2;
+      ai.reactivity.triage = false;
+      ai.reactivity.triggers.meetingSoon = false;
+    });
+    expected = {
+      ai.autonomy.trust = false;
+      ai.autonomy.maxTasks = 2;
+      ai.reactivity.triage = false;
+      ai.reactivity.triggers.meetingSoon = false;
+    };
+  };
+  testAutonomyDefaults = {
+    expr = with shellLib.builtinDefaults.ai; [
+      autonomy
+      reactivity
+    ];
+    expected = [
+      {
+        orders = true;
+        trust = true;
+        journal = true;
+        tasks = true;
+        maxTasks = 3;
+      }
+      {
+        triage = true;
+        triggers = {
+          commandFailedAgain = true;
+          errorCopied = true;
+          returningWindow = true;
+          meetingSoon = true;
+          errorDialog = true;
+        };
+      }
+    ];
+  };
+  testWronglyTypedMaxTasksFails = {
+    expr = fails (evalSettings { ai.autonomy.maxTasks = "three"; }).ai.autonomy.maxTasks;
+    expected = true;
+  };
   testWronglyTypedBudgetFails = {
     expr = fails (evalSettings { ai.fullAi.reactPerHour = "many"; }).ai.fullAi.reactPerHour;
     expected = true;

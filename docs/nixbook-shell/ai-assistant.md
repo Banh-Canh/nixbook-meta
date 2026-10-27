@@ -84,6 +84,10 @@ Each message to Muse starts with what the desktop knows for it, picked for that 
 
 The speech bubble (Mod+C) runs the same agent: expanding it opens the conversation here, in the same session, and Muse goes on without anything being replayed. Both use one memory.
 
+### Asking before it acts
+
+With the [trust ladder](./desktop-agents#trust-ladder) on (`ai.autonomy.trust`, the default), each kind of step Muse takes is asked about first, done and told after, or done silently, as you set it. A step it asks about shows a bar above the message box, **Muse asks before: …** with **Allow** and **No**. Under its answers come the **Did: …** lines (with **Undo**), the **Stop asking before …?** suggestions and the cards of [standing orders](./desktop-agents#standing-orders) it set up (**Turn on**, **Edit**, **No**), as in the bubble.
+
 ### Accuracy
 
 **Settings → Desktop agents → Accuracy and models** (all on by default):
@@ -111,8 +115,12 @@ Every conversation is saved as you chat, after each answer. The **history** butt
 
 Conversations are deleted **30 days after their last message**, unless pinned. Change that in **Settings → Services → AI** (_Keep conversations for_, `ai.history.keepDays`; `0` keeps them until you delete them), which also deletes them all but the pinned ones. They're stored in `~/.local/state/quickshell/user/ai/history/`.
 
+## Muse tab
+
+The tab after the chat (while background tasks or the journal are on, Settings → Desktop agents → Autonomy) shows what Muse does on its own: its [background tasks](./desktop-agents#background-tasks) (status and steps, **Allow** / **No** for a step waiting for your OK, a field to answer its question, **Open**, **Stop**, **Resume**) and [What Muse did](./desktop-agents#what-muse-did), by day, with **Undo**. The bar's tasks button and a task's notification (**Open**) open it.
+
 ## Translator
 
-The sidebar's second tab translates text between languages.
+The sidebar's **Translator** tab translates text between languages.
 
 The agent keeps a transcript of every session (`~/.local/state/nixbook-shell/agent-sessions/<id>.json`, readable by you only). A deleted chat's goes with it, and the agent removes those unused for a week.

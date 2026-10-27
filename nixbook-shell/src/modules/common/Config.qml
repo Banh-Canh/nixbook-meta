@@ -436,6 +436,37 @@ Singleton {
                     // "suggest" (asked first) or "auto" (strong ones on at once).
                     property string learn: "off"
                 }
+                // Muse doing things on its own, with the user in charge:
+                // `orders`, standing orders ("from now on, when…": a routine
+                // proposed, on once the user says Turn on); `trust`, the trust
+                // ladder (classes of actions it may stop asking about, raised
+                // only by the user: Settings > Desktop agents > Autonomy);
+                // `journal`, what it did without asking, each with its Undo
+                // ("What Muse did"); `tasks`, long tasks run in the background
+                // (nixbook-muse-task), at most `maxTasks` at once.
+                property JsonObject autonomy: JsonObject {
+                    property bool orders: true
+                    property bool trust: true
+                    property bool journal: true
+                    property bool tasks: true
+                    property int maxTasks: 3
+                }
+                // How fast it reacts (services/Reactor.qml): `triage`, plain
+                // code scores each notification and event first (no model):
+                // dropped, said at once, or left to the model; `triggers`,
+                // what it offers before being asked (services/ContextTriggers.qml):
+                // a command failing again, an error copied, a window gone back
+                // to again and again, a meeting about to start, an error dialog.
+                property JsonObject reactivity: JsonObject {
+                    property bool triage: true
+                    property JsonObject triggers: JsonObject {
+                        property bool commandFailedAgain: true
+                        property bool errorCopied: true
+                        property bool returningWindow: true
+                        property bool meetingSoon: true
+                        property bool errorDialog: true
+                    }
+                }
                 // The desktop agent fixing nixbook itself (services/SelfImprove.qml,
                 // nixbook-improve): fixes and polish only, each a PR with its
                 // changelog entry, merged when the user says so. Off until

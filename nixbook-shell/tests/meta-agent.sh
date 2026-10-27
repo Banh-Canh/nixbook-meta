@@ -15,7 +15,10 @@
 #   - what Quick AI's loop did, now here: approvals (--confirm, over stdin),
 #     the report (--report), big MCP servers on demand (--lazy-mcp), the
 #     broker's context (--context-for), the episode learned (--learn); and
-#     the request read first (--resolve), the result checked (--verify).
+#     the request read first (--resolve), the result checked (--verify);
+#   - the trust ladder (--trust): ask (approval, recorded, a promotion
+#     suggested), tell (told, journaled with the tool's undo), silent, the
+#     --confirm floor; a session forked (--fork-session).
 # Needs bash, python3 and jq. Run: bash tests/meta-agent.sh
 set -euo pipefail
 
@@ -71,6 +74,26 @@ context)
   done
   jq -cn --arg t "CTXBLOCK for=$s query=$q noact=$na app=$a title=$t Julien" '{sections: [{name: "facts", text: $t}], text: $t}' ;;
 episode) cat >>"$log/episode.log"; echo >>"$log/episode.log"; echo "learned" ;;
+trust)
+  # trust check CLASS --risky N: the level in trust-levels ("CLASS LEVEL
+  # [set]"), else the defaults; trust record CLASS OUTCOME: logged, and a
+  # class listed in trust-promote is suggested.
+  echo "$*" >>"$log/trust.log"
+  if [ "$2" = check ]; then
+    line=$(awk -v c="$3" '$1 == c' "$log/trust-levels" 2>/dev/null | head -n1)
+    if [ -n "$line" ]; then
+      set -- $line
+      jq -cn --arg l "$2" --arg w "${3:-}" '{level: $l, why: (if $w == "set" then "set by you" else "learned" end), suggestPromote: false}'
+    elif [ "$5" = 1 ]; then echo '{"level": "ask", "why": "risky", "suggestPromote": false}'
+    else echo '{"level": "tell", "why": "default", "suggestPromote": false}'; fi
+  elif [ "$2" = record ]; then
+    if grep -qxF "$3" "$log/trust-promote" 2>/dev/null; then p=true; else p=false; fi
+    jq -cn --argjson p "$p" '{level: "ask", suggestPromote: $p}'
+  fi ;;
+journal)
+  [ "$2" = add ] || exit 1
+  printf '%s\n' "$3" >>"$log/journal.log"
+  jq -cn --arg n "$(wc -l <"$log/journal.log" | tr -d ' ')" '{id: ("j" + $n)}' ;;
 *) exit 1 ;;
 esac
 EOF
@@ -121,7 +144,9 @@ if kind == "desktop":
              {"name": "list_windows", "description": "The windows", "inputSchema": obj(),
               "annotations": {"readOnlyHint": True}},
              {"name": "tasks", "description": "The to-do lists: list, add, delete", "inputSchema": obj(action="string", id="string"),
-              "annotations": {"readOnlyHint": False, "destructiveHint": True}}]
+              "annotations": {"readOnlyHint": False, "destructiveHint": True}},
+             {"name": "type_text", "description": "Type into the window in front", "inputSchema": obj(text="string"),
+              "annotations": {"readOnlyHint": False}, "_meta": {"nixbook/group": "input"}}]
 else:
     tools = [{"name": f"photo_{i}", "description": f"Photos {i}", "inputSchema": obj(query="string")} for i in range(13)]
 for line in sys.stdin:
@@ -142,6 +167,9 @@ for line in sys.stdin:
             res = {"content": [{"type": "text", "text": "no such app: BROKEN"}], "isError": True}
         else:
             res = {"content": [{"type": "text", "text": f"done: {p['name']}\nFocused: firefox — 'Firefox' (id 3)"}]}
+            if p["name"] == "launch_app":
+                # The step taken back (--trust: the journal's undo).
+                res["_meta"] = {"undo": {"tool": "close_window", "args": {"id": 9}}}
     else:
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "no"}}), flush=True)
         continue
@@ -289,6 +317,11 @@ expect_eq "session: saved, private" "600" "$(stat -c %a "$file" 2>/dev/null || e
 out=$(echo "and again" | agent -p --output-format json --resume "$sid")
 expect_eq "resume: the conversation goes on, same session" "two $sid" "$(jq -r '"\(.result) \(.session_id)"' <<<"$out")"
 expect_eq "resume: the earlier turn sent" '["user","assistant","user"]' "$(requests resume | tail -n1 | jq -c '[.messages[].role]')"
+orig=$(jq -c '.messages | length' "$file")
+out=$(echo "AGENTTEST:resume forked" | agent -p --output-format json --resume "$sid" --fork-session --session-id "fork-$sid")
+expect_eq "fork-session: the conversation goes on under its own id" "fork-$sid" "$(jq -r .session_id <<<"$out")"
+expect_eq "fork-session: with the earlier turns" "5" "$(requests resume | tail -n1 | jq '.messages | length')"
+expect_eq "fork-session: the original left as it was" "$orig" "$(jq -c '.messages | length' "$file")"
 before=$(find "$tmp/state/nixbook-shell/agent-sessions" -name '*.json' | wc -l)
 echo "AGENTTEST:hello" | agent -p --no-session-persistence >/dev/null
 expect_eq "no-session-persistence: nothing saved" "$before" "$(find "$tmp/state/nixbook-shell/agent-sessions" -name '*.json' | wc -l)"
@@ -428,6 +461,80 @@ out=$(turn "AGENTTEST:closing" '{"type": "approval", "id": "c1", "allow": true}'
   agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm actions)
 expect_eq "confirm actions: every acting step asked, never one that reads" '"c1"' "$(jq -c 'select(.type == "approval_request") | .id' <<<"$out")"
 expect_eq "confirm actions: both run" "close_window list_windows" "$(jq -r .name "$tmp/desk-calls.log" | sort | paste -sd' ')"
+
+# -- The trust ladder (--trust) ---------------------------------------------------------------------
+# trusted ARGS…: a turn with the desktop's tools and --trust, its approvals after it.
+trusted() { agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --trust "$@"; }
+reset_trust() {
+  : >"$tmp/trust.log"
+  : >"$tmp/journal.log"
+  : >"$tmp/desk-calls.log"
+  : >"$tmp/trust-levels"
+  : >"$tmp/trust-promote"
+}
+script trustask '[[{"type": "tool_use", "id": "a1", "name": "mcp__desktop__tasks", "input": {"action": "add", "id": "milk"}}],
+  [{"type": "text", "text": "Added."}]]'
+reset_trust
+echo "tasks:add ask" >"$tmp/trust-levels"
+echo "tasks:add" >"$tmp/trust-promote"
+out=$(turn "AGENTTEST:trustask add milk" '{"type": "approval", "id": "a1", "allow": true}' | trusted)
+expect_eq "trust: an ask class waits for the user, its class said" '"a1" "tasks:add"' \
+  "$(jq -c 'select(.type == "approval_request") | .id, .class' <<<"$out" | paste -sd' ')"
+expect_eq "trust: the level asked once, the yes recorded" "check tasks:add --risky 0|record tasks:add allowed" \
+  "$(sed 's/^trust //' "$tmp/trust.log" | paste -sd'|')"
+expect_eq "trust: allowed, run" '"tasks"' "$(jq -c .name "$tmp/desk-calls.log")"
+expect_eq "trust: a third yes in a row: the shell offers to stop asking" '{"type":"trust_suggest","class":"tasks:add","summary":"tasks: add","step":"id=milk, action=add"}' \
+  "$(jq -c 'select(.type == "trust_suggest") | del(.session_id)' <<<"$out")"
+expect_eq "trust: a step the user allowed isn't journaled" "" "$(cat "$tmp/journal.log")"
+reset_trust
+echo "tasks:add ask" >"$tmp/trust-levels"
+out=$(turn "AGENTTEST:trustask add milk" '{"type": "approval", "id": "a1", "allow": false}' | trusted)
+expect_eq "trust: a no recorded, not run, no suggestion" "record tasks:add denied||" \
+  "$(sed -n 2p "$tmp/trust.log" | sed 's/^trust //')|$(cat "$tmp/desk-calls.log")|$(jq -c 'select(.type == "trust_suggest")' <<<"$out")"
+reset_trust
+echo "tasks:add ask" >"$tmp/trust-levels"
+out=$(turn "AGENTTEST:trustask add milk" | NIXBOOK_AGENT_APPROVAL_TIMEOUT=1 trusted)
+expect_eq "trust: no answer (the input ended): not recorded as the user's no" "check tasks:add --risky 0" "$(sed 's/^trust //' "$tmp/trust.log")"
+reset_trust
+echo "tasks:add ask" >"$tmp/trust-levels"
+echo "AGENTTEST:trustask add milk" | agent -p --mcp-config "$desk_config" --trust >/dev/null
+expect_contains "trust: an ask step with -p text input: refused" "$(requests trustask | tail -n1 | jq -c '.messages[-1].content[0]')" "no one to ask"
+expect_eq "trust: nothing run, nothing recorded" "|check tasks:add --risky 0" "$(cat "$tmp/desk-calls.log")|$(sed 's/^trust //' "$tmp/trust.log")"
+
+script trusttell '[[{"type": "tool_use", "id": "b1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}},
+  {"type": "tool_use", "id": "b2", "name": "mcp__desktop__list_windows", "input": {}}],
+  [{"type": "tool_use", "id": "b3", "name": "mcp__desktop__type_text", "input": {"text": "hello"}}],
+  [{"type": "text", "text": "Typed it."}]]'
+reset_trust
+echo "type_text@firefox silent" >"$tmp/trust-levels"
+out=$(turn "AGENTTEST:trusttell open firefox and type" | trusted --journal-source task --task abc123def456)
+expect_eq "trust: tell and silent run without asking" "" "$(jq -c 'select(.type == "approval_request")' <<<"$out")"
+expect_eq "trust: a tell step said, with its journal entry and undo" '{"type":"told","class":"launch_app@firefox","summary":"launch app (app=firefox)","journal":"j1","undo":true}' \
+  "$(jq -c 'select(.type == "told") | del(.session_id)' <<<"$out")"
+expect_eq "trust: a silent one not said" "1" "$(jq -c 'select(.type == "told")' <<<"$out" | wc -l | tr -d ' ')"
+expect_eq "trust: reading steps never checked; an input step's class is the app in front" \
+  "check launch_app@firefox --risky 0|check type_text@firefox --risky 0" "$(sed 's/^trust //' "$tmp/trust.log" | paste -sd'|')"
+sid=$(jq -r 'select(.type == "result") | .session_id' <<<"$out")
+expect_eq "trust: the journal gets both, the undo from the tool's _meta.undo" \
+  "$(jq -cn --arg s "$sid" '[{source: "task", class: "launch_app@firefox", summary: "launch app (app=firefox)", tool: "launch_app", args: {app: "firefox"}, session: $s, task: "abc123def456", undo: {tool: "close_window", args: {id: 9}}}, {source: "task", class: "type_text@firefox", summary: "type text (text=hello)", tool: "type_text", args: {text: "hello"}, session: $s, task: "abc123def456"}]')" \
+  "$(jq -sc . "$tmp/journal.log")"
+
+script trustrisky '[[{"type": "tool_use", "id": "d1", "name": "mcp__desktop__tasks", "input": {"action": "delete", "id": "t1"}}],
+  [{"type": "text", "text": "Handled."}]]'
+reset_trust
+echo "tasks:delete silent" >"$tmp/trust-levels"
+out=$(turn "AGENTTEST:trustrisky delete it" '{"type": "approval", "id": "d1", "allow": true}' | trusted --confirm destructive)
+expect_eq "trust: a risky step still asked (the --confirm floor) when trust says otherwise" '"d1" "check tasks:delete --risky 1"' \
+  "$(jq -c 'select(.type == "approval_request") | .id' <<<"$out") \"$(head -n1 "$tmp/trust.log" | sed 's/^trust //')\""
+reset_trust
+echo "tasks:delete silent set" >"$tmp/trust-levels"
+out=$(turn "AGENTTEST:trustrisky delete it" | trusted --confirm destructive)
+expect_eq "trust: unless the user set its level themselves" "|1" \
+  "$(jq -c 'select(.type == "approval_request")' <<<"$out")|$(wc -l <"$tmp/journal.log" | tr -d ' ')"
+reset_trust
+out=$(turn "AGENTTEST:trustrisky delete it" '{"type": "approval", "id": "d1", "allow": true}' | trusted)
+expect_eq "trust: a risky class is ask by default, even without --confirm" '"d1"' "$(jq -c 'select(.type == "approval_request") | .id' <<<"$out")"
+rm -f "$tmp/trust-levels" "$tmp/trust-promote"
 
 # -- The report (--report) ---------------------------------------------------------------------
 script reported '[[{"type": "tool_use", "id": "r1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],

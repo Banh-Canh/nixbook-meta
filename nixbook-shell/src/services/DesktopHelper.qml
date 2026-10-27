@@ -27,10 +27,16 @@ Singleton {
         privacy: null, context: null, sent: null, pause: null, resume: null, status: null, notify: null,
         personal: ["context", "show", "forget"], habits: ["cue", "alias", "status"],
         memory: ["show", "forget", "fire"], initiative: ["show", "pending", "answer", "notices", "unmute", "consider"],
-        routine: ["list", "undone", "on", "off", "remove"],
+        routine: ["list", "undone", "on", "off", "remove", "due", "collect"],
         // The 👍 / 👎 on answers (services/AnswerFeedback.qml) and the
         // preferences of the one memory.
-        feedback: ["add", "list"], prefs: ["add", "list"]
+        feedback: ["add", "list"], prefs: ["add", "list"],
+        // Autonomy (services/Autonomy.qml): the trust ladder (`trust set`
+        // only from here and the command line: the user's own click), the
+        // journal of what Muse did and its Undo, the standing orders; the
+        // instant triage in front of the model (services/Reactor.qml).
+        trust: ["check", "record", "set", "list"], journal: ["add", "list", "undo"],
+        order: ["add", "accept", "decline", "list"], triage: ["score"]
     })
 
     function takes(argv) {
@@ -42,10 +48,18 @@ Singleton {
     function run(argv, input, done) {
         if (root.ready && root.takes(argv)) {
             const id = root._next++;
-            if (done) root._waiting[id] = done;
+            // A command this helper doesn't take (an older one: 127 and
+            // nothing said) runs as a process instead.
+            root._waiting[id] = (code, out) => {
+                if (code === 127 && String(out ?? "").length === 0) root._process(argv, input, done);
+                else if (done) done(code, out);
+            };
             helper.write(JSON.stringify({ id: id, argv: argv, stdin: input ?? "" }) + "\n");
             return;
         }
+        root._process(argv, input, done);
+    }
+    function _process(argv, input, done) {
         if (!done && !input) {
             Quickshell.execDetached(["nixbook-desktop-mcp", ...argv]);
             return;

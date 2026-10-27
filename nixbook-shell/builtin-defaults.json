@@ -87,6 +87,23 @@
       "enable": true,
       "learn": "off"
     },
+    "autonomy": {
+      "orders": true,
+      "trust": true,
+      "journal": true,
+      "tasks": true,
+      "maxTasks": 3
+    },
+    "reactivity": {
+      "triage": true,
+      "triggers": {
+        "commandFailedAgain": true,
+        "errorCopied": true,
+        "returningWindow": true,
+        "meetingSoon": true,
+        "errorDialog": true
+      }
+    },
     "improve": {
       "enable": false,
       "model": "main",

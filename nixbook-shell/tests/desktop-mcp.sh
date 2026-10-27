@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1111 # the expected answers quote with “…” and „…“
 # Tests for scripts/desktop-mcp.py (nixbook-desktop-mcp), against stub niri,
 # wtype, ydotool, grim, wl-copy, notify-send and qs that log their arguments:
 #   - the MCP protocol over stdio (initialize, tools/list, tools/call, errors);
@@ -468,7 +469,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 67 tools" 67 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 70 tools" 70 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -3800,6 +3801,7 @@ expect_eq "keys pass: saved" '["météo","wetter","thời tiết","weather"] nul
 expect_eq "keys pass: then found in Vietnamese" "Wants the weather each morning" "$(python3 "$mcp" prefs list "Thoi tiet hom nay" | jq -r '.[0].text')"
 
 # The learn passes ask for keys in four languages too.
+# shellcheck disable=SC2089 # a JSON answer for the stub, not a command line
 STUB_AGENT_ANSWER='{"structured_output": {"save": [{"topic": "badminton", "kind": "topic", "importance": 3, "text": "Plays badminton on Fridays", "keys": ["cầu lông", "Federball", "volant"]}], "forget": []}}'
 out=$(echo "User: I play badminton on Fridays" | python3 "$mcp" personal learn -)
 unset STUB_AGENT_ANSWER
@@ -4092,6 +4094,419 @@ EOF
 )
 expect_eq "helper socket: same user only (SO_PEERCRED)" "True False" "$peer"
 rm -f "$XDG_RUNTIME_DIR/nixbook-shell/"{facts.json,recent.txt} "$XDG_STATE_HOME/nixbook-shell/"{feedback,desktop-memory,full-ai-learned}.json
+python3 "$mcp" personal clear >/dev/null
+
+# -- autonomy: standing orders, schedules, digests, trust, the journal, undo, background tasks --
+
+python3 "$mcp" resume >/dev/null
+rm -f "$XDG_STATE_HOME/nixbook-shell/"{desktop-memory,initiative,trust,journal}.json "$XDG_CONFIG_HOME/nixbook-shell/config.json"
+echo '{"initiativeQuietHours":"0-0","initiativeGapMinutes":0}' >"$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
+dmem="$XDG_STATE_HOME/nixbook-shell/desktop-memory.json"
+journal="$XDG_STATE_HOME/nixbook-shell/journal.json"
+trustf="$XDG_STATE_HOME/nixbook-shell/trust.json"
+export NIXBOOK_META_AGENT="$bin/nixbook-meta-agent"
+shellcfg="$XDG_CONFIG_HOME/nixbook-shell/config.json"
+
+# B1. A standing order: the decisions model (stub) makes it a routine,
+# checked by the routine rules, saved off as a proposal.
+# shellcheck disable=SC2090 # a JSON answer for the stub, exported as is
+export STUB_AGENT_ANSWER
+STUB_AGENT_ANSWER='{"structured_output": {"text": "Slack mentions digest", "when": {"event": "schedule", "at": "18:00"}, "do": {"digest": {"collect": {"event": "notification", "apps": ["Slack"], "words": ["@khoa"]}, "title": "Slack mentions"}}, "summary": "Every evening at 18:00, I will sum up your Slack mentions.", "questions": []}}'
+rm -f "$calls.agent-prompt"
+out=$(python3 "$mcp" order add "every evening at 6 give me a digest of my Slack mentions")
+dig=$(jq -r .id <<<"$out")
+expect_eq "order add: a proposal, off" "true false order" "$(jq -r '"\(.proposal) \(.routine.on) \(.routine.origin)"' <<<"$out")"
+expect_eq "order add: the model's one-line summary" "Every evening at 18:00, I will sum up your Slack mentions." "$(jq -r .summary <<<"$out")"
+expect_eq "order add: the user's words kept" "every evening at 6 give me a digest of my Slack mentions" "$(jq -r --arg id "$dig" '.routines[] | select(.id==$id) | .order' "$dmem")"
+expect_eq "order add: a schedule cue and a digest action" 'schedule 18:00 Slack mentions ["slack"]' \
+  "$(jq -r --arg id "$dig" '.routines[] | select(.id==$id) | "\(.when.event) \(.when.at) \(.do.digest.title) \(.do.digest.collect.apps | tojson)"' "$dmem")"
+expect_contains "order add: on the decisions model" "$(cat "$calls.agent-args")" "--model
+big"
+expect_contains "order add: the order in the prompt" "$(cat "$calls.agent-prompt")" "digest of my Slack mentions"
+expect_contains "order add: the schema asks for questions" "$(cat "$calls.agent-args")" '"questions"'
+# A routine the rules refuse, twice: nothing saved, said why (the second
+# prompt tells the model what was wrong).
+STUB_AGENT_ANSWER='{"structured_output": {"when": {"event": "schedule", "every": 5}, "do": {"tool": "type_text", "args": {"text": "hi"}, "server": "desktop"}, "summary": "x"}}'
+out=$(python3 "$mcp" order add "every 5 minutes type hi" || true)
+expect_contains "order add: a schedule more often than 15 min refused" "$out" "when.every: minutes, 15 to"
+expect_contains "order add: retried with what was wrong" "$(cat "$calls.agent-prompt")" "Your last answer was refused"
+expect_eq "order add: nothing saved when it can't be made" 1 "$(jq '.routines | length' "$dmem")"
+STUB_AGENT_ANSWER='{"structured_output": {"when": {"event": "app_opened", "app": "zoom"}, "do": {"tool": "type_text", "args": {"text": "hi"}, "server": "desktop"}, "summary": "x"}}'
+expect_contains "order add: only a routine's desktop tools" "$(python3 "$mcp" order add "when zoom opens type hi" || true)" "not a desktop tool a routine can run"
+# A detail missing: its questions, nothing saved.
+STUB_AGENT_ANSWER='{"structured_output": {"summary": "", "questions": ["Which app do you join meetings with?"]}}'
+out=$(python3 "$mcp" order add "when I join a meeting mute the music")
+expect_eq "order add: a question when a detail is missing" 'null ["Which app do you join meetings with?"]' "$(jq -c '[.id, .questions]' <<<"$out" | jq -r '"\(.[0]) \(.[1] | tojson)"')"
+expect_eq "order add: nothing saved for a question" 1 "$(jq '.routines | length' "$dmem")"
+# The MCP tool: the same, the routine still off; its own `on` only asks.
+STUB_AGENT_ANSWER='{"structured_output": {"text": "Theme at night", "when": {"event": "schedule", "every": 15}, "do": {"tool": "set_theme", "args": {"theme": "persona"}, "server": "desktop"}, "summary": ""}}'
+out=$(call standing_order '{"text": "every quarter of an hour put the persona theme on"}')
+thm=$(jq -r .id <<<"$out")
+expect_contains "standing_order: proposed, off until the user turns it on" "$(jq -r .status <<<"$out")" "off until the user turns it on"
+expect_contains "standing_order: a plain summary when the model gives none" "$(jq -r .summary <<<"$out")" "When every 15 minutes, I'll set theme theme=persona."
+call routine "{\"action\": \"on\", \"id\": \"$thm\"}" >/dev/null
+expect_eq "standing_order: an agent's routine on only asks" false "$(jq --arg id "$thm" '.routines[] | select(.id==$id) | .on' "$dmem")"
+expect_eq "standing orders: order list" 2 "$(python3 "$mcp" order list | jq length)"
+# Only the user turns one on: refused in an agent's environment.
+out=$(NIXBOOK_MUSE_TASK_ID=t1 python3 "$mcp" order accept "$thm" || true)
+expect_contains "order accept: refused for an agent" "$out" "only the user"
+expect_eq "order accept: still off after the refusal" false "$(jq --arg id "$thm" '.routines[] | select(.id==$id) | .on' "$dmem")"
+out=$(python3 "$mcp" order accept "$thm")
+expect_eq "order accept: the user's yes turns it on" "true true null" "$(jq -r '"\(.ok) \(.on)"' <<<"$out") $(jq -r --arg id "$thm" '.routines[] | select(.id==$id) | .proposal' "$dmem")"
+python3 "$mcp" order accept "$dig" >/dev/null
+STUB_AGENT_ANSWER='{"structured_output": {"text": "x", "when": {"event": "unlocked"}, "do": {"tool": "set_theme", "args": {"theme": "material"}, "server": "desktop"}, "summary": "When you unlock, material."}}'
+declined=$(python3 "$mcp" order add "when I unlock use the material theme" | jq -r .id)
+python3 "$mcp" order decline "$declined" >/dev/null
+expect_eq "order decline: gone" 0 "$(jq --arg id "$declined" '[.routines[] | select(.id==$id)] | length' "$dmem")"
+unset STUB_AGENT_ANSWER
+
+# The schedule cue: `routine due` at given times.
+at() { date -d "today $1" +%s; }
+due() { python3 "$mcp" routine due --now "$1" | jq -r 'map(.id) | join(" ")'; }
+expect_eq "schedule: not due before its time" "" "$(due "$(at 17:59)")"
+expect_eq "schedule: due at its time" "$dig" "$(due "$(at 18:05)")"
+expect_eq "schedule: missed by more than the grace, not due" "" "$(due "$(at 19:30)")"
+jq --arg id "$dig" '(.routines[] | select(.id==$id) | .when.days) = ["xxx"]' "$dmem" >"$dmem.new" && mv "$dmem.new" "$dmem"
+expect_eq "schedule: not on its days" "" "$(due "$(at 18:05)")"
+jq --arg id "$dig" --arg d "$(LC_ALL=C date +%a | tr '[:upper:]' '[:lower:]' | cut -c1-3)" '(.routines[] | select(.id==$id) | .when.days) = [$d]' "$dmem" >"$dmem.new" && mv "$dmem.new" "$dmem"
+expect_eq "schedule: on its days" "$dig" "$(due "$(at 18:05)")"
+on_since=$(jq --arg id "$thm" '.routines[] | select(.id==$id) | .onSince' "$dmem")
+expect_eq "schedule every 15 min: not yet" "" "$(due $((on_since + 600)) | tr ' ' '\n' | grep -c "$thm" | sed 's/^0$//')"
+expect_contains "schedule every 15 min: due after 15 min" "$(due $((on_since + 901)))" "$thm"
+
+# The digest: matching events collected between runs, summed up when it fires.
+expect_eq "routine collect: a matching notification" "[\"$dig\"]" "$(python3 "$mcp" routine collect '{"event":"notification","app":"Slack","text":"Anna: @khoa can you review the PR?"}' | jq -c .collected)"
+python3 "$mcp" routine collect '{"event":"notification","app":"Slack","text":"Bob: @khoa lunch?"}' >/dev/null
+expect_eq "routine collect: another app, not kept" "[]" "$(python3 "$mcp" routine collect '{"event":"notification","app":"Mail","text":"@khoa newsletter"}' | jq -c .collected)"
+expect_eq "routine collect: no word of it, not kept" "[]" "$(python3 "$mcp" routine collect '{"event":"notification","app":"Slack","text":"general: deploy done"}' | jq -c .collected)"
+expect_eq "routine collect: never a code" "[]" "$(python3 "$mcp" routine collect '{"event":"notification","app":"Slack","text":"@khoa your verification code is 482913"}' | jq -c .collected)"
+expect_eq "routine collect: two kept" 2 "$(jq --arg id "$dig" '.routines[] | select(.id==$id) | .buffer | length' "$dmem")"
+STUB_AGENT_ANSWER='{"structured_output": {"text": "Anna wants a review of the PR; Bob asks about lunch."}}' \
+  python3 "$mcp" routine run "$dig" '{"event":"schedule"}' >"$tmp/digest.out"
+expect_eq "digest: summed up by one model pass" "Slack mentions (2): Anna wants a review of the PR; Bob asks about lunch." "$(jq -r .said "$tmp/digest.out")"
+expect_contains "digest: the items in the pass's prompt" "$(cat "$calls.agent-prompt")" "Anna: @khoa can you review the PR?"
+expect_eq "digest: the buffer emptied" 0 "$(jq --arg id "$dig" '.routines[] | select(.id==$id) | .buffer | length' "$dmem")"
+expect_eq "digest: delivered as a word in the bar" "badge" "$(python3 "$mcp" initiative pending | jq -r 'map(select(.text | test("Slack mentions"))) | .[0].level')"
+expect_eq "digest: journaled as the order's" "order digest" "$(jq -r '.entries[-1] | "\(.source) \(.class)"' "$journal")"
+jq --arg id "$dig" '(.routines[] | select(.id==$id) | .last) = 0' "$dmem" >"$dmem.new" && mv "$dmem.new" "$dmem"
+expect_eq "digest: nothing new, no model" "Slack mentions: nothing new since last time." "$(python3 "$mcp" routine run "$dig" '{"event":"schedule"}' | jq -r .said)"
+
+# A fixed step fired by its schedule: journaled with its undo; the Undo
+# puts the theme back, demotes its kind and counts against the routine.
+reset_calls
+out=$(python3 "$mcp" routine run "$thm" '{"event":"schedule"}')
+expect_eq "schedule routine: ran" true "$(jq .ran <<<"$out")"
+expect_contains "schedule routine: its step" "$(cat "$calls")" "theme set persona"
+entry=$(jq -c '.entries[-1]' "$journal")
+expect_eq "journal: the routine's step, its class and undo" 'order set_theme {"tool":"set_theme","args":{"theme":"material"}}' \
+  "$(jq -r '"\(.source) \(.class) \(.undo | tojson)"' <<<"$entry")"
+eid=$(jq -r .id <<<"$entry")
+expect_eq "journal list: newest first, with canUndo" "$eid true" "$(python3 "$mcp" journal list | jq -r '.[0] | "\(.id) \(.canUndo)"')"
+reset_calls
+out=$(python3 "$mcp" journal undo "$eid")
+expect_eq "journal undo: done" "true" "$(jq .ok <<<"$out")"
+expect_contains "journal undo: its summary" "$(jq -r .summary <<<"$out")" "Undid: "
+expect_contains "journal undo: the undo tool ran" "$(cat "$calls")" "theme set material"
+expect_eq "journal undo: marked undone" false "$(python3 "$mcp" journal list | jq --arg id "$eid" '.[] | select(.id==$id) | .canUndo')"
+expect_contains "journal undo: twice refused" "$(python3 "$mcp" journal undo "$eid" || true)" "already undone"
+expect_eq "journal undo: its kind a step down (tell → ask)" "ask you undid one" "$(python3 "$mcp" trust check set_theme | jq -r '"\(.level) \(.why)"')"
+expect_eq "journal undo: counts as the routine undone" 1 "$(jq --arg id "$thm" '.routines[] | select(.id==$id) | .fights' "$dmem")"
+expect_eq "journal undo: refused for an agent" "refused" "$(NIXBOOK_META_AGENT_CHILD=1 python3 "$mcp" journal undo "$eid" | jq -r '.error' | cut -d: -f1 || true)"
+
+# The journal on its own: add (one argv argument), list by day/since,
+# what can't be undone, the reversible tools only, 30 days kept, off.
+out=$(python3 "$mcp" journal add '{"source":"task","class":"close_window@firefox","summary":"Closed the Firefox window","tool":"close_window","args":{"id":1},"session":"s1","task":"t9"}')
+jid=$(jq -r .id <<<"$out")
+expect_eq "journal add: saved, task and session kept" "task t9 s1 false" "$(python3 "$mcp" journal list | jq -r --arg id "$jid" '.[] | select(.id==$id) | "\(.source) \(.task) \(.session) \(.canUndo)"')"
+expect_contains "journal undo: nothing to undo" "$(python3 "$mcp" journal undo "$jid" || true)" "can't be undone"
+out=$(python3 "$mcp" journal add '{"source":"agent","class":"type_text","summary":"Typed","tool":"type_text","undo":{"tool":"type_text","args":{"text":"x"}}}')
+expect_eq "journal add: an undo only through the reversible tools" false "$(python3 "$mcp" journal list | jq --arg id "$(jq -r .id <<<"$out")" '.[] | select(.id==$id) | .canUndo')"
+expect_eq "journal add: a bad source is the agent's" agent "$(
+  python3 "$mcp" journal add '{"source":"nope","summary":"x"}' >/dev/null
+  jq -r '.entries[-1].source' "$journal"
+)"
+expect_eq "journal list --day today" "$(jq '.entries | length' "$journal")" "$(python3 "$mcp" journal list --day "$(date +%F)" | jq length)"
+expect_eq "journal list --since the future: none" 0 "$(python3 "$mcp" journal list --since $(($(date +%s) + 100)) | jq length)"
+jq '.entries[0].time = 1000' "$journal" >"$journal.new" && mv "$journal.new" "$journal"
+python3 "$mcp" journal add '{"source":"agent","summary":"later"}' >/dev/null
+expect_eq "journal: kept 30 days" 0 "$(jq '[.entries[] | select(.time == 1000)] | length' "$journal")"
+echo '{"ai": {"autonomy": {"journal": false}}}' >"$shellcfg"
+expect_eq "journal off (ai.autonomy.journal): nothing kept" "null true" "$(python3 "$mcp" journal add '{"source":"agent","summary":"x"}' | jq -r '"\(.id) \(.off)"')"
+rm -f "$shellcfg"
+# An Undo while paused: refused, as any action.
+uid=$(python3 "$mcp" journal add '{"source":"reaction","class":"window_action","summary":"Floated it","tool":"window_action","undo":{"tool":"window_action","args":{"id":1,"action":"toggle_floating"}}}' | jq -r .id)
+python3 "$mcp" pause >/dev/null
+expect_contains "journal undo: the pause applies" "$(python3 "$mcp" journal undo "$uid" || true)" "paused"
+python3 "$mcp" resume >/dev/null
+reset_calls
+python3 "$mcp" journal undo "$uid" >/dev/null
+expect_eq "journal undo: run after resume" "niri msg action toggle-window-floating --id 1" "$(grep '^niri msg action' "$calls" | tail -n 1)"
+# A to-do item's undo: found by its words at Undo time.
+tid=$(python3 "$mcp" journal add '{"source":"agent","class":"widget:add","summary":"Added call mum","tool":"widget","undo":{"tool":"widget","args":{"widget":"todo","action":"remove","content":"call mum"}}}' | jq -r .id)
+reset_calls
+python3 "$mcp" journal undo "$tid" >/dev/null
+expect_eq "journal undo: a to-do item found by its words" "qs -c nixbook-shell ipc call -- todo remove 0" "$(last_call)"
+
+# Undo hints: each reversible tool's way back (call --meta, and MCP's _meta.undo).
+undo_of() { python3 "$mcp" call "$1" "$2" --meta | jq -c '._meta.undo'; }
+expect_eq "undo: move a window back to its workspace" '{"tool":"move_window_to_workspace","args":{"id":3,"workspace":"chat"}}' "$(undo_of move_window_to_workspace '{"id":3,"workspace":3}')"
+expect_eq "undo: floating toggled back" '{"tool":"window_action","args":{"id":1,"action":"toggle_floating"}}' "$(undo_of window_action '{"id":1,"action":"toggle_floating"}')"
+expect_eq "undo: wider is narrower" '{"tool":"window_action","args":{"id":1,"action":"narrower"}}' "$(undo_of window_action '{"id":1,"action":"wider"}')"
+expect_eq "undo: center has none" null "$(undo_of window_action '{"id":1,"action":"center"}')"
+rm -f "$calls.launched"
+expect_eq "undo: a launched app's new window closed" '{"tool":"close_window","args":{"id":6}}' "$(undo_of launch_app '{"app":"firefox"}')"
+rm -f "$calls.launched"
+expect_eq "undo: the theme before" '{"tool":"set_theme","args":{"theme":"material"}}' "$(undo_of set_theme '{"theme":"persona"}')"
+expect_eq "undo: Do Not Disturb as it was" '{"tool":"do_not_disturb","args":{"state":"on"}}' "$(undo_of do_not_disturb '{"state":"off"}')"
+expect_eq "undo: no undo for a status" null "$(undo_of do_not_disturb '{"state":"status"}')"
+expect_eq "undo: the equalizer's preset before" '{"tool":"equalizer","args":{"action":"preset","name":"Flat"}}' "$(undo_of equalizer '{"action":"preset","name":"Bass"}')"
+expect_eq "undo: the preamp before" '{"tool":"equalizer","args":{"action":"preamp","db":0}}' "$(undo_of equalizer '{"action":"preamp","db":3}')"
+expect_eq "undo: Auto as it was" '{"tool":"equalizer","args":{"action":"auto","on":true}}' "$(undo_of equalizer '{"action":"auto","on":false}')"
+expect_eq "undo: play is pause" '{"tool":"shell_ipc","args":{"target":"mpris","function":"pauseAll"}}' "$(undo_of shell_ipc '{"target":"mpris","function":"play"}')"
+expect_eq "undo: a calendar event made is deleted" '{"tool":"calendar","args":{"action":"delete","id":"google-1:ev9"}}' "$(undo_of calendar '{"action":"create","summary":"Lunch","start":"2026-11-03T12:00"}')"
+expect_eq "undo: a task made is deleted (by its title until it has an id)" '{"tool":"tasks","args":{"action":"delete","title":"Buy bread"}}' "$(undo_of tasks '{"action":"create","title":"Buy bread"}')"
+expect_eq "undo: a note added is removed" '{"tool":"widget","args":{"widget":"notes","action":"remove","id":"18-2"}}' "$(undo_of widget '{"widget":"notes","action":"add","text":"hello"}')"
+expect_eq "undo: a to-do added is removed, by its words" '{"tool":"widget","args":{"widget":"todo","action":"remove","content":"call the bank"}}' "$(undo_of widget '{"widget":"todo","action":"add","text":"call the bank"}')"
+call save_layout '{"name":"work"}' >/dev/null
+expect_eq "undo: a layout restored, the windows before saved" '{"tool":"restore_layout","args":{"name":"_before-undo","launch_missing":false}}' "$(undo_of restore_layout '{"name":"work"}')"
+expect_eq "undo: the snapshot saved" yes "$([ -e "$XDG_STATE_HOME/nixbook-shell/layouts/_before-undo.json" ] && echo yes || echo no)"
+expect_not_contains "undo: the snapshot isn't one of the user's layouts" "$(call list_layouts)" "_before-undo"
+expect_eq "undo: none for what isn't reversible" null "$(undo_of focus_window '{"id":1}')"
+expect_eq "undo: none when the tool failed" null "$(undo_of set_theme '{"theme":"gruvbox"}')"
+out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"muse"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_theme","arguments":{"theme":"chiikawa"}}}' |
+  python3 "$mcp")
+expect_eq "MCP: _meta.undo at the top of the result" '{"tool":"set_theme","args":{"theme":"material"}}' "$(jq -c 'select(.id==2).result._meta.undo' <<<"$out")"
+expect_eq "call: --json unchanged" "array" "$(python3 "$mcp" call set_theme '{"theme":"persona"}' --json | jq -r type)"
+
+# B2. The trust ladder.
+expect_eq "trust: risky steps asked by default" "ask" "$(python3 "$mcp" trust check calendar:delete | jq -r .level)"
+expect_eq "trust: reading is silent" "silent" "$(python3 "$mcp" trust check list_windows | jq -r .level)"
+expect_eq "trust: acting is told" "tell" "$(python3 "$mcp" trust check close_window@firefox | jq -r .level)"
+expect_eq "trust: --risky 1 asks" "ask" "$(python3 "$mcp" trust check close_window@firefox --risky 1 | jq -r .level)"
+expect_eq "trust: not set by the user" false "$(python3 "$mcp" trust check close_window@firefox | jq .set)"
+cls=clear_notification_history
+r1=$(python3 "$mcp" trust record $cls allowed | jq -c '[.level, .suggestPromote, .streak]')
+r2=$(python3 "$mcp" trust record $cls allowed | jq -c '[.level, .suggestPromote, .streak]')
+r3=$(python3 "$mcp" trust record $cls allowed | jq -c '[.level, .suggestPromote, .streak]')
+expect_eq "trust: three yeses in a row, then a promotion suggested" '["ask",false,1] ["ask",false,2] ["ask",true,3]' "$r1 $r2 $r3"
+expect_eq "trust: suggested once a streak" false "$(python3 "$mcp" trust record $cls allowed | jq .suggestPromote)"
+expect_eq "trust: the suggestion changes nothing by itself" ask "$(python3 "$mcp" trust check $cls | jq -r .level)"
+expect_eq "trust: a no starts over" '["ask",false,0]' "$(python3 "$mcp" trust record $cls denied | jq -c '[.level, .suggestPromote, .streak]')"
+python3 "$mcp" trust record $cls allowed >/dev/null
+jq --arg c $cls '.classes[$c].allows = [1000, 2000] + .classes[$c].allows' "$trustf" >"$trustf.new" && mv "$trustf.new" "$trustf"
+expect_eq "trust: yeses older than 30 days don't count" 2 "$(python3 "$mcp" trust record $cls allowed | jq .streak)"
+expect_eq "trust set: the user's choice" '"tell" true' "$(python3 "$mcp" trust set $cls tell | jq -c .level) $(python3 "$mcp" trust check $cls | jq .set)"
+expect_eq "trust: an Undo brings it a step down" tell "$(
+  python3 "$mcp" trust set $cls silent >/dev/null
+  python3 "$mcp" trust record $cls undone | jq -r .level
+)"
+expect_eq "trust: a no, another step" ask "$(python3 "$mcp" trust record $cls denied | jq -r .level)"
+expect_eq "trust: demoted, no longer the user's" false "$(python3 "$mcp" trust check $cls | jq .set)"
+for c in contacts:delete send_sms notification_action:reply calendar:delete merge_contacts update_credentials pay_invoice; do
+  expect_contains "trust set: never past ask ($c)" "$(python3 "$mcp" trust set "$c" tell || true)" "always asked"
+done
+expect_eq "trust set: ask is always allowed" ask "$(python3 "$mcp" trust set calendar:delete ask | jq -r .level)"
+jq '.classes["contacts:delete"] = {"level": "silent", "userSet": true}' "$trustf" >"$trustf.new" && mv "$trustf.new" "$trustf"
+expect_eq "trust: never-promote classes stay ask whatever the file says" ask "$(python3 "$mcp" trust check contacts:delete | jq -r .level)"
+expect_contains "trust set: refused for an agent" "$(NIXBOOK_MUSE_TASK_ID=t1 python3 "$mcp" trust set close_window@firefox silent || true)" "only the user"
+expect_contains "trust set: bad level" "$(python3 "$mcp" trust set close_window@firefox always || true)" "ask, tell or silent"
+expect_contains "trust: a bad class" "$(python3 "$mcp" trust check 'rm -rf /' || true)" "a class is"
+out=$(python3 "$mcp" trust list)
+expect_eq "trust list: every class seen, with level and streak" "ask 0" "$(jq -r --arg c $cls '.[] | select(.class==$c) | "\(.level) \(.streak)"' <<<"$out")"
+expect_eq "trust list: never-promote flagged (locked, not promotable)" "true true false" "$(jq -r --arg c calendar:delete '.[] | select(.class==$c) | "\(.neverPromote) \(.locked) \(.promotable)"' <<<"$out")"
+
+# B3. Background tasks: started and reported through nixbook-muse-task (a
+# stub here); approving and answering stay the user's.
+cat >"$tmp/muse-task" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_CALLS.muse"
+case "$1" in
+  start) echo '{"id": "t7"}' ;;
+  list) echo '[{"id": "t7", "text": "find flats", "status": "running", "updated": 1}]' ;;
+  show) echo '{"id": "t7", "text": "find flats", "status": "waiting", "steps": [], "approval": {"id": "a1", "tool": "send_sms"}}' ;;
+  stop) echo '{"ok": true}' ;;
+  *) echo '{"error": "no"}' ;;
+esac
+EOF
+chmod +x "$tmp/muse-task"
+export NIXBOOK_MUSE_TASK="$tmp/muse-task"
+rm -f "$calls.muse"
+out=$(call background_task '{"text": "find me three flats under 1200 € and compare them"}')
+expect_eq "background_task: started, its id" "t7 true" "$(jq -r '"\(.id) \(.started)"' <<<"$out")"
+expect_eq "background_task: through nixbook-muse-task start" "start find me three flats under 1200 € and compare them" "$(head -n 1 "$calls.muse")"
+expect_eq "background_tasks: list" running "$(call background_tasks '{"action": "list"}' | jq -r '.[0].status')"
+expect_eq "background_tasks: show" waiting "$(call background_tasks '{"action": "show", "id": "t7"}' | jq -r .status)"
+expect_eq "background_tasks: stop" true "$(call background_tasks '{"action": "stop", "id": "t7"}' | jq .ok)"
+expect_contains "background_tasks: no approving" "$(call background_tasks '{"action": "approve", "id": "t7"}')" "list, show or stop"
+expect_eq "background tasks: no tool approves or answers" "" "$(python3 "$mcp" tools | jq -r '.[].name' | grep -E 'approve|answer|accept|undo|trust' || true)"
+expect_contains "background_task: not from a task" "$(NIXBOOK_MUSE_TASK_ID=t7 call background_task '{"text": "more"}')" "can't start another"
+expect_contains "background_task: not from a routine's run" "$(NIXBOOK_DESKTOP_MCP_NO_TASKS=1 call background_task '{"text": "more"}')" "can't start another"
+echo '{"ai": {"autonomy": {"tasks": false}}}' >"$shellcfg"
+expect_contains "background_task: off in Settings" "$(call background_task '{"text": "x"}')" "background tasks are off"
+echo '{"policies": {"ai": 2}}' >"$shellcfg"
+expect_contains "background_task: not when AI is local only" "$(call background_task '{"text": "x"}')" "local only"
+echo '{"policies": {"ai": 0}}' >"$shellcfg"
+expect_contains "AI off: no standing order" "$(call standing_order '{"text": "x"}')" "turned AI features off"
+rm -f "$shellcfg"
+# A routine's Muse run is told it can't start tasks.
+STUB_AGENT_ANSWER='{"structured_output": {"text": "x", "when": {"event": "unlocked"}, "do": {"agent": "say hello"}, "summary": "When you unlock, I say hello."}}' \
+  python3 "$mcp" order add "when I unlock say hello" >"$tmp/agent-order.out"
+aid=$(jq -r .id "$tmp/agent-order.out")
+python3 "$mcp" order accept "$aid" >/dev/null
+STUB_AGENT_ANSWER='{"type": "result", "is_error": false, "result": "Said hello."}' python3 "$mcp" routine run "$aid" '{"event":"unlocked"}' >/dev/null
+expect_contains "routine run: its desktop never starts tasks" "$(cat "$calls.agent-args")" "NIXBOOK_DESKTOP_MCP_NO_TASKS"
+expect_eq "routine run: its Muse run journaled" "order routine_agent" "$(jq -r '.entries[-1] | "\(.source) \(.class)"' "$journal")"
+
+# Safety: shell_ipc can't reach the user's answers.
+expect_contains "shell_ipc: the journal target off limits" "$(call shell_ipc '{"target":"journal","function":"undo"}')" "off limits"
+expect_contains "shell_ipc: the reactor can't be made to see events" "$(call shell_ipc '{"target":"reactor","function":"simulateNotification"}')" "off limits"
+expect_contains "shell_ipc: the trust target off limits" "$(call shell_ipc '{"target":"trust","function":"set"}')" "off limits"
+expect_contains "shell_ipc: no approve on any target" "$(call shell_ipc '{"target":"backgroundTasks","function":"approve","args":["t7","a1","yes"]}')" "the user's answer"
+expect_contains "shell_ipc: no answer on any target" "$(call shell_ipc '{"target":"tasks","function":"answer"}')" "the user's answer"
+
+# The helper: the new commands on stdin and the socket; the user's own
+# answers (order accept/decline, journal undo, trust set, routine on) on
+# stdin only, refused on the socket (126: never run another way).
+fifo="$tmp/auto-helper.fifo"
+rm -f "$fifo"
+mkfifo "$fifo"
+python3 "$mcp" helper <"$fifo" >"$tmp/auto-helper.out" 2>"$tmp/auto-helper.err" &
+helper_pid=$!
+exec 7>"$fifo"
+for _ in $(seq 50); do
+  [ -S "$sock" ] && break
+  sleep 0.1
+done
+out=$(sockreq '{"id": 1, "argv": ["trust", "check", "list_windows"]}' '{"id": 2, "argv": ["journal", "list"]}' \
+  '{"id": 3, "argv": ["triage", "score", "{\"event\":\"notification\",\"app\":\"Muse\",\"summary\":\"Task done\"}"]}' \
+  '{"id": 4, "argv": ["order", "list"]}' "{\"id\": 5, \"argv\": [\"journal\", \"undo\", \"$uid\"]}" \
+  '{"id": 6, "argv": ["trust", "set", "close_window@firefox", "silent"]}' "{\"id\": 7, \"argv\": [\"order\", \"accept\", \"$declined\"]}" \
+  "{\"id\": 8, \"argv\": [\"routine\", \"on\", \"$thm\"]}" '{"id": 9, "argv": ["routine", "due"]}')
+expect_eq "helper socket: trust check" silent "$(jq -r 'select(.id==1) | .stdout | fromjson | .level' <<<"$out")"
+expect_eq "helper socket: journal list" array "$(jq -r 'select(.id==2) | .stdout | fromjson | type' <<<"$out")"
+expect_eq "helper socket: triage" drop "$(jq -r 'select(.id==3) | .stdout | fromjson | .verdict' <<<"$out")"
+expect_eq "helper socket: order list" array "$(jq -r 'select(.id==4) | .stdout | fromjson | type' <<<"$out")"
+expect_eq "helper socket: routine due" array "$(jq -r 'select(.id==9) | .stdout | fromjson | type' <<<"$out")"
+expect_eq "helper socket: the user's answers refused (126)" "126 126 126 126" "$(jq -s -r 'map(select(.id>=5 and .id<=8) | .code) | join(" ")' <<<"$out")"
+expect_eq "helper socket: trust set not done" tell "$(python3 "$mcp" trust check close_window@firefox | jq -r .level)"
+echo '{"id": 20, "argv": ["trust", "set", "close_window@firefox", "silent"]}' >&7
+for _ in $(seq 50); do
+  grep -q '"id": 20' "$tmp/auto-helper.out" && break
+  sleep 0.1
+done
+expect_eq "helper stdin: the user's trust set" silent "$(python3 "$mcp" trust check close_window@firefox | jq -r .level)"
+exec 7>&-
+wait "$helper_pid" 2>/dev/null || true
+rm -f "$fifo"
+
+# -- reactivity: the instant triage, offers before being asked ---------------------------
+
+rm -f "$XDG_STATE_HOME/nixbook-shell/initiative.json"
+python3 "$mcp" personal clear >/dev/null
+call remember_about_user '{"topic":"Thomas","kind":"person","text":"My brother, lives in Berlin"}' >/dev/null
+tri() { python3 "$mcp" triage score "$1"; }
+out=$(tri '{"event":"notification","app":"Signal","summary":"Thomas","body":"are you coming tonight?"}')
+expect_eq "triage: someone who matters, said at once" "direct Thomas wrote: are you coming tonight?" "$(jq -r '"\(.verdict) \(.text)"' <<<"$out")"
+out=$(tri '{"event":"notification","app":"WhatsApp","summary":"Thomas","body":"tu viens ce soir ?","lang":"fr"}')
+expect_eq "triage: in the user's language" "Thomas a écrit : tu viens ce soir ?" "$(jq -r .text <<<"$out")"
+for msg in "the server is down, urgent" "bitte dringend anrufen" "cần gấp báo cáo" "réponds tout de suite"; do
+  s=$(tri "$(jq -nc --arg b "$msg" '{event: "notification", app: "Mail", summary: "Work", body: $b}')" | jq .score)
+  expect_eq "triage: urgency words ($msg)" yes "$(python3 -c "print('yes' if $s >= 0.7 else 'no')")"
+done
+expect_eq "triage: nothing urgent, the model's gray zone" "model 0.4" "$(tri '{"event":"notification","app":"Mail","summary":"Newsletter","body":"October issue"}' | jq -r '"\(.verdict) \(.score)"')"
+out=$(tri '{"event":"notification","app":"Pager","summary":"Prod down","body":"urgent: API 500s","urgency":"critical"}')
+expect_eq "triage: critical and urgent, a template" "direct Urgent, from Pager: Prod down — urgent: API 500s" "$(jq -r '"\(.verdict) \(.text)"' <<<"$out")"
+expect_eq "triage: the same one again within 10 min, dropped" drop "$(tri '{"event":"notification","app":"Mail","summary":"Newsletter","body":"October issue"}' | jq -r .verdict)"
+expect_eq "triage: a code, dropped" drop "$(tri '{"event":"notification","app":"Mail","summary":"Login","body":"Your verification code is 123456"}' | jq -r .verdict)"
+expect_eq "triage: a background task's word, shown not reacted to" drop "$(tri '{"event":"notification","app":"Muse","summary":"Muse needs you","hints":{"x-nixbook-task":"t7"}}' | jq -r .verdict)"
+expect_eq "triage: Do Not Disturb, dropped" drop "$(tri '{"event":"notification","app":"Chat","summary":"Hi","body":"hello","dnd":true}' | jq -r .verdict)"
+expect_eq "triage: Do Not Disturb, critical still weighed" direct "$(tri '{"event":"notification","app":"Pager","summary":"Disk","body":"dringend: disk full","urgency":"critical","dnd":true}' | jq -r .verdict)"
+python3 "$mcp" prefs add '{"text":"No promotions from the Shop app","signature":"mute:shop","source":"initiative"}' >/dev/null
+expect_eq "triage: a muted preference, dropped" drop "$(tri '{"event":"notification","app":"Shop","summary":"Sale","body":"-50%"}' | jq -r .verdict)"
+jq '.muted += ["notice:spamapp"]' "$XDG_STATE_HOME/nixbook-shell/initiative.json" >"$tmp/i.json" && mv "$tmp/i.json" "$XDG_STATE_HOME/nixbook-shell/initiative.json"
+expect_eq "triage: an app the user silenced, dropped" drop "$(tri '{"event":"notification","app":"SpamApp","summary":"Hey","body":"x"}' | jq -r .verdict)"
+expect_eq "triage: a calendar reminder, said at once" "direct “Standup” starts in 5 min." "$(tri '{"event":"calendar_event","title":"Standup","minutes":5}' | jq -r '"\(.verdict) \(.text)"')"
+expect_eq "triage: the battery, in German" "Akku bei 9 %: bald anschließen." "$(tri '{"event":"battery_low","percent":9,"lang":"de"}' | jq -r .text)"
+expect_eq "triage: other cues, the model's" model "$(tri '{"event":"download","name":"a.pdf"}' | jq -r .verdict)"
+# What the user did with an app's notifications: the verdicts' outcomes,
+# and the app's numbers weigh in next time.
+for w in alpha beta gamma; do tri "{\"event\":\"notification\",\"app\":\"Forum\",\"summary\":\"Post $w\",\"body\":\"new reply $w\"}" >/dev/null; done
+python3 "$mcp" initiative notices '{"forum": {"acted": 0, "dismissed": 3}}'
+expect_eq "triage: outcomes logged on the verdicts" "dismissed dismissed dismissed" "$(jq -r '[.triage[] | select(.app=="forum") | .outcome] | join(" ")' "$XDG_STATE_HOME/nixbook-shell/initiative.json")"
+expect_eq "triage: per app and verdict" 3 "$(jq '.triageStats.forum.model.dismissed' "$XDG_STATE_HOME/nixbook-shell/initiative.json")"
+expect_eq "triage: per time of day" 3 "$(jq '[.apps.forum.hours[]][0].dismissed' "$XDG_STATE_HOME/nixbook-shell/initiative.json")"
+out=$(tri '{"event":"notification","app":"Forum","summary":"Post delta","body":"new reply delta"}')
+expect_contains "triage: an app whose notifications are dismissed scores lower" "$(jq -r .why <<<"$out")" "acts on"
+expect_eq "triage: lower than a fresh app's" yes "$(python3 -c "print('yes' if $(jq .score <<<"$out") < 0.4 else 'no')")"
+echo '{"ai": {"reactivity": {"triage": false}}}' >"$shellcfg"
+expect_eq "triage off: the model's, as before" model "$(tri '{"event":"notification","app":"Signal","summary":"Thomas","body":"hi"}' | jq -r .verdict)"
+echo '{"policies": {"ai": 0}}' >"$shellcfg"
+expect_eq "triage: AI off, nothing" drop "$(tri '{"event":"notification","app":"Signal","summary":"Thomas","body":"hi"}' | jq -r .verdict)"
+rm -f "$shellcfg"
+ms=$(
+  PYTHONDONTWRITEBYTECODE=1 python3 - "$mcp" <<'EOF'
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("m", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+cfg = m.load_config()
+start = time.perf_counter()
+for i in range(20):
+    m.triage_score(cfg, {"event": "notification", "app": "Signal", "summary": f"Thomas {i}", "body": "are you there?"})
+print(round((time.perf_counter() - start) * 1000 / 20, 1))
+EOF
+)
+expect_eq "triage: in process, under 20 ms ($ms ms)" yes "$(python3 -c "print('yes' if $ms < 20 else 'no')")"
+
+# R2. Offers: one concrete order per kind, in the event's language, gated
+# by deliver() and a cooldown per kind (a meeting once per event).
+cons() { python3 "$mcp" initiative consider "$1"; }
+# shellcheck disable=SC2016 # the backticks are the text, not a command
+out=$(cons '{"event":"command_failed_again","command":"cargo build","error":"error[E0425]: cannot find value `x`","cwd":"/home/u/proj"}')
+expect_eq "offer: a command failed twice, said" notify "$(jq -r .action <<<"$out")"
+expect_eq "offer: what it says" "“cargo build” failed twice — want me to look into it?" "$(jq -r .item.offer.say <<<"$out")"
+# shellcheck disable=SC2016 # the backticks are the text, not a command
+expect_eq "offer: the order it proposes" 'Look into why the command `cargo build` fails in /home/u/proj: error[E0425]: cannot find value `x`' "$(jq -r .item.offer.order <<<"$out")"
+expect_eq "offer: a cooldown per kind" "none offered a moment ago" "$(cons '{"event":"command_failed_again","command":"make","error":"failed"}' | jq -r '"\(.action) \(.why)"')"
+out=$(cons '{"event":"error_copied","text":"Traceback (most recent call last):\n  File \"a.py\", line 3\nValueError: bad value","lang":"fr"}')
+expect_eq "offer: an error copied, in French" "Tu as copié une erreur (« Traceback (most recent call last): ») — je te l'explique ?" "$(jq -r .item.offer.say <<<"$out")"
+expect_contains "offer: the error in the order" "$(jq -r .item.offer.order <<<"$out")" "ValueError: bad value"
+out=$(cons '{"event":"returning_window","app":"firefox","title":"Pull request #12 · nixbook","times":5,"lang":"de"}')
+expect_eq "offer: a window come back to, in German" "Du kommst immer wieder zu „Pull request #12 · nixbook“ zurück — soll ich das Wichtigste herausziehen?" "$(jq -r .item.offer.say <<<"$out")"
+expect_eq "offer: never a private window" none "$(cons '{"event":"error_dialog","app":"signal","title":"Error sending"}' | jq -r .action)"
+out=$(cons '{"event":"meeting_soon","title":"Standup","start":"2026-10-27T10:30","link":"https://meet.example/abc","minutes":4,"lang":"vi"}')
+expect_eq "offer: a meeting soon, in Vietnamese" "“Standup” bắt đầu sau 4 phút — để mình chuẩn bị cho bạn nhé?" "$(jq -r .item.offer.say <<<"$out")"
+expect_contains "offer: the meeting's link in the order" "$(jq -r .item.offer.order <<<"$out")" "mở liên kết https://meet.example/abc"
+expect_eq "offer: a meeting once" "none offered for this meeting already" "$(cons '{"event":"meeting_soon","title":"Standup","start":"2026-10-27T10:30","minutes":3}' | jq -r '"\(.action) \(.why)"')"
+# Taken up now and then: offers keep their value (deliver's learning).
+for id in $(python3 "$mcp" initiative pending | jq -r '.[] | select(.kind=="offer") | .id'); do python3 "$mcp" initiative answer "$id" replied; done
+expect_eq "offer: another meeting, offered" notify "$(cons '{"event":"meeting_soon","title":"Retro","start":"2026-10-27T15:00","minutes":5}' | jq -r .action)"
+out=$(cons '{"event":"error_dialog","app":"org.gnome.Nautilus","title":"Error while copying"}')
+expect_contains "offer: an error dialog" "$(jq -r .item.offer.say <<<"$out")" "shows an error (“Error while copying”)"
+jq '.offerCooldowns = {}' "$XDG_STATE_HOME/nixbook-shell/initiative.json" >"$tmp/i.json" && mv "$tmp/i.json" "$XDG_STATE_HOME/nixbook-shell/initiative.json"
+expect_eq "offer: busy, a word in the bar instead" "badge the user is busy" "$(cons '{"event":"returning_window","app":"kitty","title":"htop","busy":true}' | jq -r '"\(.action) \(.why)"')"
+# No error line to name it by: a few words from the model.
+out=$(STUB_AGENT_ANSWER='{"structured_output": {"gist": "the sync gave up"}}' cons '{"event":"error_copied","text":"sync stopped halfway through the folder\nnothing more was written to the disk"}')
+expect_eq "offer: the model words what the template lacks" "You copied an error (“the sync gave up”) — want me to explain it?" "$(jq -r .item.offer.say <<<"$out")"
+out=$(python3 "$mcp" prefs add '{"text":"No offers when a command fails again","signature":"trigger:command_failed_again","source":"initiative"}')
+expect_eq "offer: Never for this, a preference and the trigger muted" "true true" "$(jq -r '"\(.ok) \(.triggerMuted)"' <<<"$out")"
+expect_eq "offer: muted for a month" "none the user asked for none of these for now" "$(cons '{"event":"command_failed_again","command":"npm test","error":"failed"}' | jq -r '"\(.action) \(.why)"')"
+# The bubble's Never for this as an answer: that trigger rests a month,
+# the preference kept for the agents.
+dialog=$(python3 "$mcp" initiative pending | jq -r '[.[] | select(.kind=="offer" and .app=="error_dialog")][0].id')
+python3 "$mcp" initiative answer "$dialog" never
+expect_eq "offer: never, a month's rest" yes "$(jq --argjson now "$(date +%s)" 'if .offerCooldowns.error_dialog > $now + 29 * 86400 then "yes" else "no" end' -r "$XDG_STATE_HOME/nixbook-shell/initiative.json")"
+expect_eq "offer: never, not muted for good" false "$(jq '.muted | index("offer:error_dialog") != null' "$XDG_STATE_HOME/nixbook-shell/initiative.json")"
+expect_contains "offer: never, the preference kept" "$(python3 "$mcp" prefs list)" "Doesn't want offers about an error dialog on screen"
+# The shell's own key: once per calendar event, whatever its title says.
+expect_eq "offer: the shell's key" notify "$(cons '{"event":"meeting_soon","key":"cal:ev42","title":"Planning","start":"2026-10-28T09:00","minutes":5}' | jq -r .action)"
+expect_eq "offer: the shell's key, once" none "$(cons '{"event":"meeting_soon","key":"cal:ev42","title":"Planning (moved)","start":"2026-10-28T09:05","minutes":5}' | jq -r .action)"
+echo '{"ai": {"reactivity": {"triggers": {"errorDialog": false}}}}' >"$shellcfg"
+expect_contains "offer: a trigger off in Settings" "$(cons '{"event":"error_dialog","app":"gimp","title":"Error opening file"}' | jq -r .why)" "this trigger is off"
+rm -f "$shellcfg"
+expect_eq "offer: a meeting without its start, none" none "$(cons '{"event":"meeting_soon","title":"X"}' | jq -r .action)"
+python3 "$mcp" initiative clear
+rm -f "$XDG_STATE_HOME/nixbook-shell/"{journal,trust}.json "$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
+unset NIXBOOK_MUSE_TASK
 python3 "$mcp" personal clear >/dev/null
 
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')

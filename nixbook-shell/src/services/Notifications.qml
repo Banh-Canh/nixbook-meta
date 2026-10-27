@@ -700,8 +700,13 @@ Singleton {
             // console.log("Action found: " + JSON.stringify(action));
             if (action) {
                 root._actedIds[id] = true;
-                root.acted(root.list.find(n => n.notificationId === id)?.appName ?? "");
+                const listed = root.list.find(n => n.notificationId === id);
+                root.acted(listed?.appName ?? "");
                 action.invoke();
+                // A background task's (nixbook-muse-task): its Open opens
+                // the Tasks list in the side panel.
+                if (notifIdentifier === "default" && listed?.hints?.["x-nixbook-task"] !== undefined)
+                    MuseTasks.openList();
             } else {
                 console.warn("[Notifications] Action not found:", notifIdentifier);
             }

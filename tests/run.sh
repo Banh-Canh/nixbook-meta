@@ -116,6 +116,8 @@ cmd_shell() {
   bash nixbook-shell/tests/quick-ai.sh || failed=1
   section "nixbook-shell headless agent (nixbook-meta-agent)"
   bash nixbook-shell/tests/meta-agent.sh || failed=1
+  section "nixbook-shell background tasks (nixbook-muse-task)"
+  bash nixbook-shell/tests/muse-task.sh || failed=1
   section "nixbook-shell accounts backend (nixbook-accounts)"
   local accounts
   accounts=$(nix-build --no-out-link -E '(import ./nixbook-shell { }).package.passthru.accounts' 2> >(annotate >&2)) &&

@@ -117,6 +117,15 @@ Scope {
         const it = root.item
         if (!it || root.conversing) return []
         const out = []
+        // An offer before being asked (ContextTriggers.qml): Yes gives Muse
+        // the order, Never for this mutes that trigger (and the memory
+        // keeps it).
+        if (it.offer?.order) {
+            out.push({ label: Translation.tr("Yes"), main: true, run: () => Initiative.takeOffer(it) })
+            out.push({ label: Translation.tr("Not now"), main: false, run: () => Initiative.hush("later") })
+            out.push({ label: Translation.tr("Never for this"), main: false, run: () => Initiative.neverOffer(it) })
+            return out
+        }
         if (it.accept) out.push({ label: Translation.tr("Yes, do it"), main: true, run: () => Initiative.accept() })
         else if ((it.actions ?? []).length > 0)
             for (const [i, a] of it.actions.entries())
@@ -125,8 +134,8 @@ Scope {
             out.push({ label: Translation.tr("Yes, please"), main: true, run: () => Initiative.reply(Translation.tr("Yes, please.")) })
             out.push({ label: Translation.tr("No thanks"), main: false, run: () => Initiative.hush("dismissed") })
         }
-        // A watch the user asked for: seen, nothing to silence.
-        if (it.id && it.kind === "watch")
+        // A watch the user asked for, the journal's line: seen, nothing to silence.
+        if (it.id && (it.kind === "watch" || it.kind === "journal"))
             out.push({ label: Translation.tr("OK"), main: out.length === 0, run: () => Initiative.hush("later") })
         else if (it.id) {
             out.push({ label: Translation.tr("Not now"), main: false, run: () => Initiative.hush("later") })
@@ -485,7 +494,7 @@ Scope {
                         visible: !root.conversing && !threadList.visible && text.length > 0
                         wrapMode: Text.WordWrap
                         textFormat: Text.PlainText // its words may quote third-party text
-                        text: root.item?.text ?? ""
+                        text: root.item?.text || root.item?.offer?.say || ""
                         font.family: root.font
                         font.pixelSize: Appearance.font.pixelSize.normal
                         color: root.fg
@@ -589,6 +598,20 @@ Scope {
                             color: checks.last?.verify && !checks.last?.verify?.met && !checks.last?.clarify ? "#e5484d" : root.fg
                             opacity: 0.8
                         }
+                    }
+                    // Autonomy under Muse's last answer: a standing order to turn on,
+                    // what it did and told after (Undo), stop asking before…?
+                    AutonomyNotes {
+                        Layout.fillWidth: true
+                        readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+                        visible: root.conversing && !threadList.visible && last?.role === "assistant"
+                            && ((last?.orders ?? []).length > 0 || (last?.told ?? []).length > 0 || (last?.trustSuggest ?? []).length > 0)
+                        message: last
+                        fg: root.fg
+                        accent: root.accent
+                        bg: root.bg
+                        fontFamily: root.font
+                        square: root.square
                     }
                     AnswerFeedbackRow {
                         Layout.fillWidth: true
@@ -968,6 +991,8 @@ Scope {
                         readonly property bool waits: Initiative.waits(small.modelData)
                         readonly property var chips: {
                             const it = small.modelData
+                            if (it.offer?.order) return [{ label: Translation.tr("Yes"), run: () => Initiative.takeOffer(it) },
+                                                         { label: Translation.tr("Never for this"), run: () => Initiative.neverOffer(it) }]
                             if (it.accept) return [{ label: Translation.tr("Yes, do it"), run: () => Initiative.accept(it) }]
                             const acts = (it.actions ?? []).slice(0, 2).map(a => ({ label: a.label, run: () => Initiative.act(a, it) }))
                             if (acts.length > 0) return acts
@@ -1029,7 +1054,7 @@ Scope {
                                 StyledText {
                                     Layout.fillWidth: true
                                     textFormat: Text.PlainText // its words may quote third-party text
-                                    text: small.modelData.text ?? ""
+                                    text: small.modelData.text || small.modelData.offer?.say || ""
                                     wrapMode: Text.Wrap
                                     maximumLineCount: 3
                                     elide: Text.ElideRight

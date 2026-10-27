@@ -26,6 +26,9 @@ import Quickshell
 //   hand while the user has taken it over). Click switches.
 // - Fixing nixbook (a wrench, services/SelfImprove.qml; only then): click
 //   opens it in Settings.
+// - Background tasks (a list with a count, services/MuseTasks.qml; only
+//   while some run or wait for the user): click opens them in the side
+//   panel's Muse tab; it breathes while one waits for an OK or an answer.
 // - Looking at the screen (an eye; only then): pairing reads the screen's
 //   text now (Initiative.looking), never unseen. Click stops screen reading.
 Item {
@@ -134,7 +137,7 @@ Item {
     GridLayout {
         id: buttons
         anchors.centerIn: parent
-        columns: root.vertical ? 1 : 6
+        columns: root.vertical ? 1 : 7
         rowSpacing: 2
         columnSpacing: root.isMaterial ? 2 : 0
 
@@ -351,6 +354,59 @@ Item {
                     }
                 }
             }
+        }
+
+        // Background tasks running or waiting for the user.
+        AgentButton {
+            id: tasksButton
+            visible: MuseTasks.activeCount > 0
+            small: true
+            icon: MuseTasks.waiting.length > 0 ? "front_hand" : "pending_actions"
+            filled: true
+            tone: Appearance.colors.colPrimary
+            chip: Appearance.colors.colPrimary
+            onChip: Appearance.colors.colOnPrimary
+            iconOpacity: MuseTasks.waiting.length > 0 ? buttons.breatheTasks : 1
+            onClicked: MuseTasks.openList()
+            StyledText {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.rightMargin: -1
+                text: String(MuseTasks.activeCount)
+                font.pixelSize: Appearance.font.pixelSize.smallest
+                font.weight: Font.Bold
+                color: Appearance.colors.colPrimary
+            }
+            StyledPopup {
+                hoverTarget: tasksButton
+                ColumnLayout {
+                    spacing: 4
+                    StyledPopupHeaderRow {
+                        icon: "pending_actions"
+                        label: Translation.tr("Background tasks")
+                    }
+                    Repeater {
+                        model: [...MuseTasks.waiting, ...MuseTasks.running].slice(0, 4)
+                        delegate: StyledPopupValueRow {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            icon: modelData.status === "waiting" ? "front_hand" : "progress_activity"
+                            label: String(modelData.text ?? "").slice(0, 48)
+                            value: MuseTasks.statusText(modelData)
+                        }
+                    }
+                    Hint {
+                        text: Translation.tr("Click to see them in the side panel")
+                    }
+                }
+            }
+        }
+        property real breatheTasks: 1
+        SequentialAnimation on breatheTasks {
+            running: MuseTasks.waiting.length > 0
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine }
         }
 
         // Looking at the screen: pairing reads its text now.

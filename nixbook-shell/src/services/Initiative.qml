@@ -98,7 +98,7 @@ Singleton {
     readonly property int stackMax: 3
     readonly property var stacked: root.stack.filter(p => (p.expires ?? 0) * 1000 > root.now && p.id !== root.speaking?.id)
     function waits(item) {
-        return !!item && (!!item.accept || (item.actions ?? []).length > 0 || /[?？]\s*$/.test(item.text ?? ""))
+        return !!item && (!!item.accept || !!item.offer?.order || (item.actions ?? []).length > 0 || /[?？]\s*$/.test(item.text ?? ""))
     }
     function _stackPush(item) {
         if (!item?.id) return
@@ -197,7 +197,9 @@ Singleton {
         return e ? `${e.summary} ${CalendarEvents.whenText(e, new Date())}` : ""
     }
 
-    function consider(event) {
+    // `tag`: what the shell offered about (ContextTriggers.qml: {kind, key,
+    // app}), kept with the word that comes back, for its Never for this.
+    function consider(event, tag) {
         if (!root.enabled) return
         event.busy = event.force === true ? false : root.busy()
         const what = event.force !== true ? "" : event.event === "news" ? "news" : "say"
@@ -207,13 +209,17 @@ Singleton {
         if (looks) root.looking += 1
         // The helper decides on a thread of its own (a model's answer can take
         // seconds): no Python start each time.
-        DesktopHelper.run(["initiative", "consider", JSON.stringify(event)], "", (code, out) => root._considered(out, what, looks))
+        DesktopHelper.run(["initiative", "consider", JSON.stringify(event)], "", (code, out) => root._considered(out, what, looks, tag ?? null))
     }
-    function _considered(out, asked, looks) {
+    function _considered(out, asked, looks, tag) {
         if (looks) root.looking = Math.max(0, root.looking - 1)
         let action = "none"
         try {
             const answer = JSON.parse(out)
+            if (tag && answer.item) {
+                answer.item.trigger = tag
+                if (answer.item.id) root._offerTags = Object.assign({}, root._offerTags, { [answer.item.id]: tag })
+            }
             if (answer.action === "notify") root._say(answer.item)
             if (answer.action === "badge") {
                 root.pending = [...root.pending, answer.item]
@@ -578,6 +584,10 @@ Singleton {
                 for (const task of Todo.list.filter(x => !x.done && x.due && Todo.deadlineGroup(x) === "today"))
                     Todo.updateTask(task, { due: tomorrow })
             } else GlobalStates.openTasksPanel("")
+        } else if (a.do === "journal") {
+            Autonomy.openJournal()
+        } else if (a.do === "tasks_list") {
+            MuseTasks.openList()
         } else if (a.do === "settings") {
             GlobalStates.settingsPage = String(a.page ?? "")
             GlobalStates.settingsOpen = true
@@ -718,10 +728,94 @@ Singleton {
         if (root._opened && Date.now() - root._opened.time < 1800000)
             DesktopHelper.run(["initiative", "answer", root._opened.id, "engaged"])
     }
+    // The instant triage's "direct" verdict (Reactor.qml): what it says, said
+    // at once by plain code, no model and no batch. Out loud when the user
+    // isn't busy, else a quiet word for the next pause. False: not said
+    // (the initiative off, or nothing to say): the model's path then.
+    function direct(ev, text, verdict) {
+        const said = String(text ?? "").trim()
+        if (!root.enabled || said.length === 0) return false
+        if (!ev || !root._wants(ev)) return false
+        const t = Date.now()
+        const item = { id: Qt.md5(`${said}|${t}`).slice(0, 12), kind: "direct", level: "notify", text: said.slice(0, 400),
+                       app: String(ev?.app ?? ""), title: "Muse", time: t / 1000, expires: t / 1000 + 15 * 60,
+                       why: String(verdict?.why ?? "") }
+        root._local(item)
+        if (root.busy()) {
+            item.level = "badge"
+            root.pending = [...root.pending, item]
+            root._feed(item)
+        } else root._say(item)
+        root.log = [...root.log, { time: t / 1000, event: ev?.event ?? "", action: "direct", said: item.text, why: item.why }].slice(-30)
+        return true
+    }
+    // The day's line about what Muse did yesterday (Autonomy.daySummary):
+    // a quiet word, the journal one click away.
+    function journalLine(text) {
+        if (!root.enabled) return
+        const t = Date.now()
+        const item = { id: Qt.md5(`journal|${text}|${t}`).slice(0, 12), kind: "journal", level: "badge", title: "Muse",
+                       text: String(text).slice(0, 400), time: t / 1000, expires: t / 1000 + 6 * 3600,
+                       actions: [{ label: Translation.tr("What Muse did"), do: "journal" }] }
+        root._local(item)
+        root.pending = [...root.pending, item]
+        root._feed(item)
+    }
+    // Words made here (the triage's, the journal's line), not by
+    // nixbook-desktop-mcp: kept across its rewrites of initiative.json, and
+    // their answers not sent to it (it doesn't know them).
+    property var _localItems: []
+    function _local(item) {
+        const t = Date.now() / 1000
+        root._localItems = [...root._localItems.filter(p => (p.expires ?? 0) > t), item].slice(-20)
+    }
+    // What the shell offers before being asked (ContextTriggers.qml, through
+    // the Reactor): `initiative consider` words it as an offer of ONE order
+    // (item.offer {say, order}), within the day's budget and quiet rules.
+    readonly property var triggerKinds: Reactor.triggerEvents
+    property var _offerTags: ({})
+    function tagOf(item) {
+        return item?.trigger ?? root._offerTags[item?.id ?? ""] ?? null
+    }
+    // Yes: the order goes to the bubble's session (Muse's agent does it there).
+    function takeOffer(from) {
+        const item = from ?? root.speaking
+        const order = String(item?.offer?.order ?? "").trim()
+        if (!item || order.length === 0) return
+        root.unstack(item)
+        root.markRead(item)
+        if (item.id) root.answer(item.id, "replied")
+        if (root.speaking === item) root.speaking = null
+        const shown = order.split("\n")[0]
+        QuickAi.command(order, "offer", shown.length > 140 ? shown.slice(0, 139) + "…" : shown)
+    }
+    // Never for this: a preference in the one memory (never offered again),
+    // and the trigger itself quiet for 30 days.
+    function neverOffer(from) {
+        const item = from ?? root.speaking
+        if (!item) return
+        const tag = root.tagOf(item) ?? { kind: String(item.app ?? "offer"), key: "", app: "" }
+        ContextTriggers.mute(tag.kind, tag.key ?? "", 30)
+        const about = ContextTriggers.describe(tag)
+        DesktopHelper.run(["prefs", "add", JSON.stringify({ text: `Doesn't want Muse to offer help ${about}.`,
+            keys: [tag.kind.replace(/_/g, " ")], app: tag.app ?? "", signature: `trigger:${tag.kind}:${tag.key ?? ""}`,
+            source: "initiative" })])
+        root.unstack(item)
+        root.markRead(item)
+        if (root.speaking === item) {
+            root._aside()
+            root.pending = root.pending.filter(p => p.id !== item.id)
+        }
+        if (item.id) root.answer(item.id, "never")
+    }
     function answer(id, outcome) {
         if (!/^[0-9a-f]{1,16}$/.test(id ?? "")) return
         root.pending = root.pending.filter(p => p.id !== id)
         root.stack = root.stack.filter(p => p.id !== id)
+        if (root._localItems.some(p => p.id === id)) {
+            root._localItems = root._localItems.filter(p => p.id !== id)
+            return
+        }
         DesktopHelper.run(["initiative", "answer", id, outcome])
     }
 
@@ -735,7 +829,9 @@ Singleton {
             try {
                 const data = JSON.parse(stateFile.text())
                 const known = root._known
-                root.pending = data.pending ?? []
+                const t = Date.now() / 1000
+                const theirs = data.pending ?? []
+                root.pending = [...theirs, ...root._localItems.filter(p => (p.expires ?? 0) > t && !theirs.some(q => q.id === p.id))]
                 root.log = data.log ?? []
                 root.watches = data.watches ?? []
                 // A quiet word written by something else (the memory pass, a
@@ -793,6 +889,9 @@ Singleton {
             // Not while away (locked) or on Do Not Disturb: nobody to tell,
             // and what comes then isn't read by the model either.
             return root.readNotifications && !GlobalStates.screenLocked && !Notifications.silent
+        // What the shell offers (ContextTriggers.qml): an order for Muse,
+        // so only with online models, never about what an agent did.
+        if (root.triggerKinds.includes(ev.event)) return root.online && !DesktopControl.active
         // What the user just did, to lend a hand with (reactions): not what
         // an agent did (its downloads, its screenshots).
         return root.reactions && root.reactTo.includes(ev.event) && !!ev.path && !DesktopControl.active
@@ -801,6 +900,11 @@ Singleton {
         if (ev.event === "notification") {
             root._batch = [...root._batch, { app: ev.app, summary: ev.title, body: ev.body, urgency: ev.urgency }].slice(-12)
             if (!batchTimer.running) batchTimer.start()
+            return
+        }
+        if (root.triggerKinds.includes(ev.event)) {
+            root.consider(Object.assign({}, ev, { lang: ConfigAssistant.uiLang() }),
+                          { kind: ev.event, key: String(ev.key ?? ""), app: String(ev.app ?? "") })
             return
         }
         root.consider({ event: "happened", what: ev.event, name: ev.name ?? "", path: ev.path })

@@ -21,6 +21,9 @@ Singleton {
     property bool sidebarLeftOpen: false
     // The side panel's chat to the front (services/Initiative.qml: a reply).
     signal aiChatRequested()
+    // The side panel's Muse tab to the front ("What Muse did", the
+    // background tasks): `what` is "journal" or "tasks".
+    signal museActivityRequested(string what)
     // The region selector in its Ask AI action (services/QuickAi.qml's
     // askScreen, the screenshot app's Ask AI): the region drawn goes to the Quick AI card.
     signal regionAskAiRequested()

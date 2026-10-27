@@ -59,6 +59,17 @@ What you say or type in the bubble is an order or a question:
    playing music just happen. Settings > Desktop agents > Talk to your desktop
    > _Ask me before_: _Risky steps only_ (the default), _Every action_ or
    > _Never_.
+6. **What it does without asking is yours to widen**: with the
+   [trust ladder](./desktop-agents.md#trust-ladder), the other steps that change
+   something are done and then told (a **Did: …** line with **Undo**); after
+   three yeses in a row to the same kind of step, it offers **Stop asking
+   before …?**. Everything done unasked is in
+   [What Muse did](./desktop-agents.md#what-muse-did), with Undo.
+7. **Long orders can go on in the background**: while Muse works on a long
+   order, **Do it in the background** under the bubble hands it to a
+   [background task](./desktop-agents.md#background-tasks) and frees the
+   bubble. "From now on, when …" or "every evening at 6, …" sets up a
+   [standing order](./desktop-agents.md#standing-orders).
 
 **It is Muse in the side panel**, with the same brain, and so is Full AI
 mode:

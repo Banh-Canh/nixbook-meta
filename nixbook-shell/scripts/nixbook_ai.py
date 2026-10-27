@@ -26,6 +26,9 @@ them):
   mask/unmask/mask_json/unmask_json, sent_note    through dm()
   is_risky, reads_only, build_report, strip_report, step_summary
                           what the agent loop asks about and reports
+  action_class, class_summary
+                          the kind of step a call is (the trust ladder, the
+                          journal: `close_window@firefox`, `calendar:add`)
   config(), routing()     the shell's settings (config.json)
 """
 
@@ -757,6 +760,58 @@ def is_risky(name, args, meta=None):
         said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
         return bool(RISKY_TARGET.search(said))
     return False
+
+
+# The trust ladder's classes (action_class): what the user lets Muse do
+# without asking is decided per kind of step, not per tool. The window tools
+# that name the app they act on (its `app`), and the input tools, which act
+# on the window in front (the app the caller saw there): the app is part of
+# the class, so "typing in Firefox" and "typing in the terminal" are trusted
+# apart.
+APP_TOOLS = {"launch_app", "close_window", "focus_window", "window_action", "move_window_to_workspace", "set_aside",
+             "ui_act"}
+INPUT_TOOLS = {"type_text", "press_keys", "click", "drag", "scroll", "run_steps", "run_recipe", "move_pointer"}
+TRUST_LEVELS = ("ask", "tell", "silent")
+
+
+def _class_part(value, limit):
+    """A piece of a class name: lower case, letters, digits, . _ - only."""
+    return re.sub(r"[^a-z0-9._-]+", "-", str(value or "").strip().lower()).strip("-")[:limit]
+
+
+def action_class(name, args, app=None, meta=None):
+    """The kind of step a tool call is, for the trust ladder and the
+    journal: the tool's own name (`mcp__desktop__media_control` →
+    `media_control`), `:<action>` for the multi-purpose tools (their
+    `action` argument), `@<app desktop id>` for the window and input tools
+    acting on an app (APP the caller knows, e.g. the window in front for the
+    input tools; else the call's own `app`). `media_control:pause`,
+    `close_window@firefox`, `calendar:add`."""
+    tool = _bare(name, meta)
+    cls = tool
+    args = args if isinstance(args, dict) else {}
+    action = _class_part(args.get("action"), 40)
+    if action:
+        cls += ":" + action
+    if tool in APP_TOOLS or tool in INPUT_TOOLS:
+        who = app or (args.get("app") if isinstance(args.get("app"), str) else "")
+        who = _class_part(re.sub(r"\.desktop$", "", str(who or "").strip(), flags=re.I), 80)
+        if who:
+            cls += "@" + who
+    return cls
+
+
+def class_summary(cls):
+    """A class in words, for "Stop asking before …?": `close_window@firefox`
+    → "close window in firefox", `calendar:add` → "calendar: add"."""
+    tool, _, app = str(cls or "").partition("@")
+    tool, _, action = tool.partition(":")
+    out = tool.replace("_", " ")
+    if action:
+        out += ": " + action.replace("_", " ")
+    if app:
+        out += " in " + app
+    return out
 
 
 def step_summary(args):

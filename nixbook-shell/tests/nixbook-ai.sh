@@ -10,7 +10,7 @@
 #   - Provider: from the environment, or `nixbook-model-provider env`;
 #   - dm(): through the helper's socket, a process when it isn't one of its
 #     commands or isn't there, (127, "") without either; mask/unmask;
-#   - is_risky, reads_only, build_report;
+#   - is_risky, reads_only, build_report, action_class;
 #   - nix-onboard's turn through it.
 # Needs bash, python3 and jq. Run: bash tests/nixbook-ai.sh
 set -euo pipefail
@@ -259,6 +259,20 @@ check("risky: closing a window isn't", False, ai.is_risky("close_window", {"id":
 check("reads only: an annotated tool", True, ai.reads_only("x", {}, {"x": {"read_only": True}}))
 check("reads only: a reading action", True, ai.reads_only("tasks", {"action": "list"}))
 check("reads only: an acting one", False, ai.reads_only("tasks", {"action": "add"}))
+# The trust ladder's classes.
+check("class: a tool alone", "media_control", ai.action_class("mcp__desktop__media_control", {"volume": 3}))
+check("class: a multi-purpose tool's action", "media_control:pause", ai.action_class("media_control", {"action": "Pause"}))
+check("class: calendar add", "calendar:add", ai.action_class("mcp__desktop__calendar", {"action": "add", "title": "x"}))
+check("class: a window tool, its app", "close_window@firefox", ai.action_class("close_window", {"app": "firefox.desktop"}))
+check("class: an input tool, the app the caller saw", "type_text@org.kde.dolphin",
+      ai.action_class("type_text", {"text": "hi"}, "org.kde.dolphin"))
+check("class: the caller's app wins over the call's", "launch_app@zen", ai.action_class("launch_app", {"app": "Firefox"}, "zen"))
+check("class: no app for the other tools", "tasks:add", ai.action_class("tasks", {"action": "add", "app": "x"}, "firefox"))
+check("class: a window tool without one", "close_window", ai.action_class("close_window", {"id": 3}))
+check("class: odd characters folded", "set_theme:dark-mode", ai.action_class("set_theme", {"action": "Dark mode!"}))
+check("class: another server's tool, bare", "send_sms", ai.action_class("mcp__phone__send_sms", {"to": "x"}))
+check("class: in words", "close window in firefox", ai.class_summary("close_window@firefox"))
+check("class: an action in words", "media control: pause", ai.class_summary("media_control:pause"))
 steps = [{"tool": "launch_app", "summary": "app=x", "status": "error", "result": "no such app", "read_only": False}]
 text, report = ai.build_report("Hmm.", steps)
 check("report: a failed step", ["launch app (app=x): no such app"], report["failed"])

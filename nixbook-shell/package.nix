@@ -78,6 +78,7 @@ let
     cp ${./scripts/meta-agent.py} $out/meta-agent.py
     cp ${./scripts/quick-ai.py} $out/quick-ai.py
     cp ${./scripts/nix-onboard.py} $out/nix-onboard.py
+    cp ${./scripts/muse-task.py} $out/muse-task.py
     ${pkgs.python3}/bin/python3 -c 'import importlib.util, py_compile, sys; py_compile.compile(sys.argv[1], cfile=importlib.util.cache_from_source(sys.argv[1]), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)' $out/nixbook_ai.py
   '';
 
@@ -97,6 +98,23 @@ let
       ]
     }:$PATH
     exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/meta-agent.py "$@"
+  '';
+
+  # Muse's background tasks (scripts/muse-task.py, `nixbook-muse-task`):
+  # the agent run out of the way (a transient systemd user unit, the
+  # caller's PATH passed on), its state for the shell, its questions and
+  # approvals over a socket and notifications. nixbook-desktop-mcp (the
+  # agent's desktop server) comes from the caller's PATH: it calls this one
+  # (background_task), so neither can name the other.
+  museTask = pkgs.writeShellScriptBin "nixbook-muse-task" ''
+    export PATH=${
+      lib.makeBinPath [
+        metaAgent
+        pkgs.libnotify # notify-send: "Muse needs you", "Muse is done"
+      ]
+    }:$PATH:/run/current-system/sw/bin
+    export NIXBOOK_META_AGENT=${metaAgent}/bin/nixbook-meta-agent
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/muse-task.py "$@"
   '';
 
   # Quick AI's answers (scripts/quick-ai.py, services/QuickAi.qml): the
@@ -269,6 +287,7 @@ let
           improve # nixbook-improve: report_problem
           modelProvider # nixbook-model-provider: the provider's key for the passes
           metaAgent # nixbook-meta-agent: the memory/news passes and routine runs
+          museTask # nixbook-muse-task: background_task, tasks
           libarchive # bsdtar: `extract`, a download extracted from its bubble
           procps # pgrep: a watched process
         ]
@@ -412,6 +431,7 @@ let
       shell.passthru.pythonEnv
       modelProvider # `nixbook-model-provider` — the model provider the shell's AI talks to
       metaAgent # `nixbook-meta-agent` — the side panel's Muse and every other agent (Meta's Model API)
+      museTask # `nixbook-muse-task` — Muse's background tasks (services: the Tasks list)
       quickAi # `nixbook-quick-ai` — Quick AI's instant answers (services/QuickAi.qml)
       nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
@@ -536,6 +556,7 @@ launcher.overrideAttrs (old: {
       improve
       modelProvider
       metaAgent
+      museTask
       quickAi
       voiceTranscribe
       voiceStream
