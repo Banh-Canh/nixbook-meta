@@ -109,6 +109,42 @@ let
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-stream.py} "$@"
   '';
 
+  # The desktop agent's voice (scripts/voice-speak.py, ai.voice.speak):
+  # Meta's MMS-TTS (facebook/mms-tts, English and French) in sherpa-onnx's
+  # ONNX conversion, on this computer (Meta's Model API has no speech
+  # synthesis), made cute with ffmpeg + Rubber Band. The MMS weights are
+  # CC-BY-NC 4.0: personal use.
+  mmsVoices = pkgs.linkFarm "nixbook-mms-voices" [
+    {
+      name = "en";
+      path = pkgs.fetchzip {
+        url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-mms-eng.tar.bz2";
+        hash = "sha256-8qoNvG9mkbqSn768fOVCfho7f/E9DqAVQ9hfURkAvxk=";
+      };
+    }
+    {
+      name = "fr";
+      path = pkgs.fetchzip {
+        url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-mms-fra.tar.bz2";
+        hash = "sha256-+ASA8wP2orIZAl5HNrQ3YtNJZ98QYFk9qDWBKpHAf64=";
+      };
+    }
+  ];
+  voiceSpeak = pkgs.writeShellScriptBin "nixbook-voice-speak" ''
+    export PATH=${
+      lib.makeBinPath [
+        pkgs.sherpa-onnx
+        pkgs.rubberband
+        pkgs.ffmpeg
+        pkgs.pipewire # pw-play
+      ]
+    }:$PATH
+    # Its own libraries only (a leaked LD_LIBRARY_PATH broke ffmpeg's).
+    unset LD_LIBRARY_PATH
+    export NIXBOOK_MMS_VOICES=''${NIXBOOK_MMS_VOICES:-${mmsVoices}}
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-speak.py} "$@"
+  '';
+
   voiceTranscribe = pkgs.writeShellScriptBin "nixbook-voice-transcribe" ''
     export PATH=${
       lib.makeBinPath [
@@ -309,6 +345,7 @@ let
       nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
       voiceStream # `nixbook-voice-stream` — Quick AI's voice through Meta's Muse Voice Transcribe
+      voiceSpeak # `nixbook-voice-speak` — the agent's answers read out loud (Meta MMS, cute)
       desktopMcp # `nixbook-desktop-mcp` — desktop tools of the AI chat
       updateCheck # `nixbook-update-check` — the update check (services/UpdateState.qml)
       improve # `nixbook-improve` — the desktop agent's fixes to nixbook (services/SelfImprove.qml)
@@ -430,6 +467,7 @@ launcher.overrideAttrs (old: {
       quickAi
       voiceTranscribe
       voiceStream
+      voiceSpeak
       nixOnboard
       configName
       settingsLib
