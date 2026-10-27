@@ -211,7 +211,7 @@ def level_db(chunk):
 
 
 def main(argv):
-    langs, path = [], None
+    langs, path, continuous = [], None, False
     pause, longest = PAUSE_SECONDS, MAX_SECONDS
     args = list(argv[1:])
     while args:
@@ -221,6 +221,12 @@ def main(argv):
             continue
         if a == "--max" and args:
             longest = max(5.0, min(600.0, float(args.pop(0))))
+            continue
+        if a == "--continuous":
+            # Full AI mode: one stream for the whole session, each utterance
+            # sent as a "final" when the user pauses, the microphone kept
+            # open (no reconnecting between orders).
+            continuous = True
             continue
         if a == "--lang" and args:
             # A hint, not a constraint: "fr,en" (the interface's, then English).
@@ -335,6 +341,9 @@ def main(argv):
     threading.Thread(target=commands, daemon=True).start()
 
     started = time.monotonic()
+    if continuous:
+        longest = 3600.0
+    finished = False
     try:
         while not done.is_set() and not state["ending"]:
             try:
@@ -346,25 +355,33 @@ def main(argv):
             ws.send_binary(chunk)
             now = time.monotonic()
             elapsed = now - started
-            if not state["heard"] and elapsed > NOTHING_AFTER:
+            if not continuous and not state["heard"] and elapsed > NOTHING_AFTER:
                 break
             if elapsed > longest:
                 break
             # The user has finished: words said, then a long enough pause.
             if state["parts"] and not state["speaking"] and not state["partial"] and now - state["lastEnd"] > pause:
-                break
+                if not continuous:
+                    finished = True
+                    break
+                said, state["parts"], state["heard"] = " ".join(state["parts"]).strip(), [], False
+                if said:
+                    emit("final", text=said)
     except (OSError, ConnectionError):
         pass
     finally:
         if proc:
             proc.terminate()
-    if not state["done"] and not done.is_set():
-        # The audio ended (the key, the time, the file): the last words.
+    # Words still being recognised (the key pressed mid-sentence, the file
+    # or the time over): the server's last ones, a moment at most. A user
+    # who just paused has nothing pending: gone at once (the microphone
+    # reopens without waiting for the server to close).
+    if not state["done"] and not done.is_set() and (not finished or state["speaking"] or state["partial"]):
         try:
             ws.send_text(json.dumps({"type": "endStream"}))
         except OSError:
             pass
-        done.wait(8)
+        done.wait(3)
     ws.close()
     if state["done"]:
         return 0
