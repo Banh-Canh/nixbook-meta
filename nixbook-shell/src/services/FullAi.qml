@@ -17,7 +17,7 @@ import QtQuick
  * With ai.quick.bubble "needed" the bubble stays out of sight
  * (Initiative.quiet): the mascot's balloon and its voice answer.
  * The microphone stays open the whole time, also while the agent works: a
- * new order takes over (Quick AI's agent, in Claude's speech bubble, which
+ * new order takes over (Quick AI's agent, in Muse's speech bubble, which
  * keeps the conversation).
  * It reacts to what happens (ai.fullAi.react): a notification, a download,
  * the battery, a screen or an audio output plugged in, the network lost,
@@ -133,7 +133,7 @@ Singleton {
     // What it just did on its own: the user saying no undoes the learning.
     property var didAlone: null
     // Its own words and the shell's: not events.
-    readonly property var ownApps: ["quick ai", "desktop agent", "snoozed", "nixbook", "nixbook-shell", "quickshell"]
+    readonly property var ownApps: ["quick ai", "muse", "desktop agent", "snoozed", "nixbook", "nixbook-shell", "quickshell"]
     readonly property var reactEvents: ["download", "battery_low", "monitor_connected", "monitor_disconnected",
         "audio_output", "wifi_disconnected", "back", "day_start"]
     function event(ev) {
@@ -183,7 +183,7 @@ Singleton {
         reactor.out = "";
         reactor.requestJson = JSON.stringify({ mode: "react", event: ev, lang: ConfigAssistant.uiLang(),
             facts: QuickAi.facts(), recent: QuickAi.recentText(12),
-            model: Config.options.ai.quick?.model ?? "small", claude: Ai.claudeCodePath });
+            model: Config.options.ai.quick?.model ?? "small" });
         reactor.running = true;
     }
     function decided(ev, d) {

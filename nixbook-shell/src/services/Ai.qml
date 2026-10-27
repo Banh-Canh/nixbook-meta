@@ -12,8 +12,8 @@ import qs.services.ai
 
 /**
  * The side panel's chat: the config assistant (answers from this machine's
- * configuration, no AI) and Claude through Claude Code, in tabs that run in
- * parallel (AiChatSession.qml), and the conversation history.
+ * configuration, no AI) and Muse, Meta's model, through nixbook-meta-agent, in
+ * tabs that run in parallel (AiChatSession.qml), and the conversation history.
  */
 Singleton {
     id: root
@@ -24,11 +24,11 @@ Singleton {
 
     signal responseFinished()
 
-    // Without the desktop memory: Claude Code gets that from the desktop MCP
+    // Without the desktop memory: the agent gets that from the desktop MCP
     // server itself.
     property string systemPrompt: root.substitutedPrompt(root.promptSubstitutions)
-    // What Claude Code is started with: the date and the focused app change
-    // between messages, and a different command line restarted Claude Code
+    // What the agent is started with: the date and the focused app change
+    // between messages, and a different command line restarted the agent
     // for nearly every message (~2 s, the MCP server too). They go with each
     // message instead (messageContext()).
     readonly property var volatilePromptKeys: ["{DATETIME}", "{WINDOWCLASS}"]
@@ -86,7 +86,7 @@ Singleton {
         return lines.join("\n");
     }
     // The chats, one per tab of the panel (services/AiChatSession.qml): each
-    // with its own messages, Claude Code and agent desktop, so they answer
+    // with its own messages, Muse agent and agent desktop, so they answer
     // in parallel. Each takes the lowest slot free (slot 1: the first agent
     // desktop). The panel shows the current one; the properties and
     // functions below are the current chat's.
@@ -124,35 +124,35 @@ Singleton {
         const current = root.current;
         root.chats = root.chats.filter(c => c !== chat);
         root.currentIndex = current === chat ? Math.min(index, root.chats.length - 1) : root.chats.indexOf(current);
-        chat.destroy(10000); // once its Claude Code is gone
+        chat.destroy(10000); // once its agent is gone
     }
-    // A thread of its own for what Claude says (services/Initiative.qml),
-    // in the "From Claude" tab: the thread there so far stays in the history
+    // A thread of its own for what Muse says (services/Initiative.qml),
+    // in the "From Muse" tab: the thread there so far stays in the history
     // (the tab's thread strip lists them, AiChat.qml) and the tab starts
     // this one. One still answering is left alone: this one gets another
-    // "From Claude" tab (even past maxChats: what Claude says must land
+    // "From Muse" tab (even past maxChats: what Muse says must land
     // somewhere). Not selected in the panel when its conversation happens in
-    // Claude's speech bubble (`select` false: the panel is left as it was).
-    function claudeThread(select = true) {
-        let chat = root.chats.find(c => c.fromClaude && !c.responding);
+    // Muse's speech bubble (`select` false: the panel is left as it was).
+    function agentThread(select = true) {
+        let chat = root.chats.find(c => c.fromAgent && !c.responding);
         if (chat) {
             root.saveHistory(chat);
             if (chat.messageIDs.length > 0) chat.clearMessages();
         } else {
             let slot = 1;
             while (root.chats.some(c => c.slot === slot)) slot++;
-            chat = chatComponent.createObject(root, { slot: slot, fromClaude: true });
+            chat = chatComponent.createObject(root, { slot: slot, fromAgent: true });
             root.chats = [...root.chats, chat];
         }
         if (select) root.selectChat(chat);
         return chat;
     }
-    // A normal conversation for Claude's speech bubble when the user called
+    // A normal conversation for Muse's speech bubble when the user called
     // it up (Mod+C, the bar's robot) for a new one: an empty tab, the panel's
-    // own first, else a new one (even past maxChats, like claudeThread). Not
+    // own first, else a new one (even past maxChats, like agentThread). Not
     // selected (`select` false) while the talk happens in the bubble.
     function askThread(select = true) {
-        let chat = [root.current, ...root.chats].find(c => c && !c.fromClaude && !c.responding && c.messageIDs.length === 0);
+        let chat = [root.current, ...root.chats].find(c => c && !c.fromAgent && !c.responding && c.messageIDs.length === 0);
         if (!chat) {
             let slot = 1;
             while (root.chats.some(c => c.slot === slot)) slot++;
@@ -171,32 +171,32 @@ Singleton {
         if (index >= 0) root.closeChat(index);
     }
 
-    // The "From Claude" tab goes once left alone ai.claudeThreadIdleMinutes
+    // The "From Muse" tab goes once left alone ai.threadIdleMinutes
     // (0: kept): its thread saved in the history first when long enough
-    // (saveHistory; the history's "From Claude" ones, the tab's thread
+    // (saveHistory; the history's "From Muse" ones, the tab's thread
     // strip), the tab closed (the last
     // one becomes a new chat). Not while it answers, is shown in the panel,
     // or is the bubble's conversation (shown or put away).
-    readonly property int claudeThreadIdleMinutes: Config.options?.ai?.claudeThreadIdleMinutes ?? 30
-    function expireClaudeThreads() {
-        if (root.claudeThreadIdleMinutes <= 0) return;
-        const before = Date.now() - root.claudeThreadIdleMinutes * 60 * 1000;
-        for (const chat of root.chats.filter(c => c.fromClaude)) {
+    readonly property int threadIdleMinutes: Config.options?.ai?.threadIdleMinutes ?? 30
+    function expireAgentThreads() {
+        if (root.threadIdleMinutes <= 0) return;
+        const before = Date.now() - root.threadIdleMinutes * 60 * 1000;
+        for (const chat of root.chats.filter(c => c.fromAgent)) {
             if (chat.responding || chat.seen || Initiative.holds(chat) || chat.lastActivity > before) continue;
             root.saveHistory(chat);
             if (root.chats.length > 1) {
                 root.closeChat(root.chats.indexOf(chat));
             } else {
                 chat.clearMessages();
-                chat.fromClaude = false;
+                chat.fromAgent = false;
             }
         }
     }
     Timer {
         interval: 60 * 1000
-        running: root.claudeThreadIdleMinutes > 0 && root.chats.some(c => c.fromClaude)
+        running: root.threadIdleMinutes > 0 && root.chats.some(c => c.fromAgent)
         repeat: true
-        onTriggered: root.expireClaudeThreads()
+        onTriggered: root.expireAgentThreads()
     }
 
     function selectChat(chat) {
@@ -237,9 +237,9 @@ Singleton {
 
     property string currentTool: Config?.options.ai.tool ?? "functions"
     property var tools: {
-        // Claude Code runs its own tools: "functions" gives it the desktop
-        // ones (see claudeCodeScript), "none" plain chat.
-        "claude-code": {
+        // The agent runs its own tools: "functions" gives it the desktop
+        // ones (see agentScript), "none" plain chat.
+        "meta-agent": {
             "functions": [],
             "none": [],
         }
@@ -254,7 +254,7 @@ Singleton {
     // configuration (services/ConfigAssistant.qml) and never calls anything.
     // First in the list, so it is the default; pick a real model with /model.
     readonly property string configAssistantId: "config-assistant"
-    // Claude joins when Claude Code is found (findClaudeCode).
+    // Muse joins when nixbook-meta-agent is found (findAgent).
     property var models: ({
         "config-assistant": aiModelComponent.createObject(this, {
             "name": Translation.tr("Config assistant"),
@@ -266,11 +266,12 @@ Singleton {
         }),
     })
     property var modelList: Object.keys(root.models)
-    // A remembered model that no longer exists (a removed provider, or Claude
-    // when Claude Code isn't found) falls back to the first one, the config
-    // assistant.
+    // A remembered model that no longer exists (a removed provider, or Muse
+    // when nixbook-meta-agent isn't found) falls back to the first one, the
+    // config assistant. "claude" (before Muse) is Muse now.
     property var currentModelId: {
-        const saved = Persistent.states?.ai?.model;
+        const remembered = Persistent.states?.ai?.model;
+        const saved = remembered === "claude" ? root.agentModelId : remembered;
         return (saved && root.models[saved]) ? saved : modelList[0];
     }
     readonly property bool usingConfigAssistant: root.currentModelId === root.configAssistantId
@@ -331,12 +332,12 @@ Singleton {
 
     // Desktop control (scripts/desktop-mcp.py, `nixbook-desktop-mcp`): the
     // same tools and guardrails as the MCP server other agents use, given to
-    // Claude Code in the "functions" tool set when the server has any.
+    // Muse's agent in the "functions" tool set when the server has any.
     readonly property string desktopMcpCommand: "nixbook-desktop-mcp"
     // As desktop-mcp.py's PRIVACY_PROMPT.
     readonly property string privacyPrompt: "Text in ⟦…⟧ (⟦Person 2⟧, ⟦Email 1⟧, ⟦User first⟧) is a private detail the user's computer hid from you. Use the placeholder exactly as it is, in tool arguments and in your answers: it becomes the real value on the user's side. ⟦User⟧ is the user; ⟦Person N first⟧ is Person N's first name; ⟦User login⟧ is the user's login name (in paths: /home/⟦User login⟧/…)."
     // The placeholders given so far (desktop-mcp.py's privacy-map.json):
-    // Claude's answers are shown with the real values. Read again when one
+    // Muse's answers are shown with the real values. Read again when one
     // isn't known yet (given by a tool's reply during the answer).
     FileView {
         id: privacyMapFile
@@ -356,21 +357,6 @@ Singleton {
         }
         return text.replace(re, t => root.privacyTokens[t] ?? t);
     }
-    // Claude Code's hooks for it, on every tool but the desktop ones (their
-    // server masks on its own): placeholders in a tool's input become the
-    // real values, and its output is masked. Over HTTP to the shell's helper
-    // (DesktopHelper: ~1 ms); while it isn't up, a process each (~150 ms;
-    // the input's only when it holds a placeholder).
-    readonly property var privacyHooks: {
-        const http = DesktopHelper.hookUrl.length > 0 ? [{ type: "http", url: DesktopHelper.hookUrl, timeout: 10,
-            headers: { Authorization: `Bearer ${DesktopHelper.hookToken}` } }] : null;
-        return { hooks: {
-            PreToolUse: [{ matcher: "^(?!mcp__desktop__).*", hooks: http ?? [{ type: "command",
-                command: `in=$(cat); case "$in" in *⟦*) printf '%s' "$in" | ${root.desktopMcpCommand} privacy hook;; esac` }] }],
-            PostToolUse: [{ matcher: "^(?!mcp__desktop__).*", hooks: http ?? [{ type: "command",
-                command: `${root.desktopMcpCommand} privacy hook` }] }],
-        } };
-    }
     property var desktopTools: []
 
     Process {
@@ -389,195 +375,78 @@ Singleton {
         }
     }
 
-    // Claude through Claude Code (`claude -p`): no API key, the user's own
-    // Claude login. Offered as a model when `claude` is found. Claude Code
-    // keeps running between messages (stream-json on stdin, one line a
-    // message: no ~2 s start, the desktop MCP server already connected), and
-    // starts again, resuming the session, when its command line changes; it
-    // gets the desktop tools (the desktop MCP server, whose guardrails, pause
-    // and memory apply), the MCP servers of assistant-mcp.json (mcp-nixos…)
-    // not turned off (ai.claudeCode.mcpServersOff),
-    // Config ai.claudeCode.allowedTools and, with ai.claudeCode.connectors,
-    // the user's claude.ai connectors; nothing else.
-    property string claudeCodePath: ""
-    // Settings > Desktop agents can change where Claude Code is: look again.
-    readonly property string claudeCodeCommandSetting: Config.options?.ai?.claudeCode?.command ?? ""
-    onClaudeCodeCommandSettingChanged: claudeCodeRelocate.restart()
-    Timer {
-        id: claudeCodeRelocate
-        interval: 800
-        onTriggered: if (Config.ready && Config.options.policies.ai !== 2) findClaudeCode.running = true
-    }
+    // Muse, Meta's model, through the shell's own agent (`nixbook-meta-agent`,
+    // scripts/meta-agent.py: a headless agent on Meta's Model API, run with
+    // the key of Settings > Desktop agents > Model provider). Offered as a
+    // model when it is on the PATH; it answers once the provider is ready
+    // (ModelProvider.ready: a key saved). The agent keeps running between
+    // messages (stream-json on stdin, one line a message: the desktop MCP
+    // server stays connected), and starts again, resuming the session, when
+    // its command line changes; it gets the desktop tools (the desktop MCP
+    // server, whose guardrails, pause and memory apply), the MCP servers of
+    // assistant-mcp.json (mcp-nixos…) not turned off (ai.agent.mcpServersOff)
+    // and ai.agent.allowedTools; nothing else.
+    readonly property string agentCommand: "nixbook-meta-agent"
+    readonly property string agentModelId: "muse"
+    property bool agentAvailable: false
+    readonly property bool agentReady: root.agentAvailable && ModelProvider.ready
 
     Process {
-        id: findClaudeCode
+        id: findAgent
         running: Config.ready && Config.options.policies.ai !== 2
-        command: ["bash", "-c", `for c in "$1" "$(command -v claude)" "$HOME/.local/bin/claude" "$HOME/.nix-profile/bin/claude" "/etc/profiles/per-user/$USER/bin/claude" /run/current-system/sw/bin/claude; do [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; exit 0; }; done; exit 1`,
-            "find-claude", Config.options.ai.claudeCode.command]
+        command: ["bash", "-c", `command -v ${root.agentCommand}`]
         stdout: StdioCollector {
             onStreamFinished: {
-                const path = text.trim();
-                root.claudeCodePath = path;
-                if (path.length > 0 && root.claudeConnectorsSetting) listClaudeConnectors.running = true;
-                if (path.length === 0 || root.models["claude"]) return;
-                root.addModel("claude", {
-                    "name": ModelProvider.chatName,
+                root.agentAvailable = text.trim().length > 0;
+                if (!root.agentAvailable || root.models[root.agentModelId]) return;
+                root.addModel(root.agentModelId, {
+                    "name": ModelProvider.chatName || "Muse",
                     "icon": "spark-symbolic",
-                    "description": root.claudeDescription(),
-                    "homepage": "https://claude.com/claude-code",
-                    "model": "claude-code", // the model itself: ai.claudeCode.model
-                    "api_format": "claude-code",
+                    "description": root.agentDescription(),
+                    "homepage": "https://ai.meta.com",
+                    "model": "meta-agent", // the model itself: ai.agent.model
+                    "api_format": "meta-agent",
                 });
                 root.modelList = Object.keys(root.models);
             }
         }
     }
 
-    // The "claude" model is Claude Code on the chosen model provider
+    // The "muse" model is the agent on the chosen model provider
     // (services/ModelProvider.qml): its name and description follow it.
-    function claudeDescription() {
-        return ModelProvider.isAnthropic
-            ? Translation.tr("Online | Anthropic's Claude through Claude Code, on your Claude account (no API key) | Can see and drive the desktop")
-            : Translation.tr("Online | %1 through Claude Code, with your %2 API key | Can see and drive the desktop").arg(ModelProvider.chatName).arg(ModelProvider.label);
+    function agentDescription() {
+        const model = (ModelProvider.model ?? "").length > 0 ? ` (${ModelProvider.model})` : "";
+        return ModelProvider.ready
+            ? Translation.tr("Online | Meta's Muse%1, with your %2 API key | Can see and drive the desktop").arg(model).arg(ModelProvider.label)
+            : Translation.tr("Online | Meta's Muse: save your %1 API key in Settings > Desktop agents first | Can see and drive the desktop").arg(ModelProvider.label);
+    }
+    function refreshAgentModel() {
+        const m = root.models[root.agentModelId];
+        if (!m) return;
+        m.name = ModelProvider.chatName || "Muse";
+        m.description = root.agentDescription();
     }
     Connections {
         target: ModelProvider
-        function onChatNameChanged() {
-            const m = root.models["claude"];
-            if (!m) return;
-            m.name = ModelProvider.chatName;
-            m.description = root.claudeDescription();
-        }
-        // Another provider or server: the chats' Claude Code sessions are
-        // the old one's (its thinking signed by it), so each chat starts a
-        // new session, its earlier turns in the prompt.
-        function onKindChanged() { root.forgetClaudeSessions(); }
+        function onChatNameChanged() { root.refreshAgentModel(); }
+        function onModelChanged() { root.refreshAgentModel(); }
+        function onLabelChanged() { root.refreshAgentModel(); }
+        function onReadyChanged() { root.refreshAgentModel(); }
+        // Another provider or server: the chats' sessions are the old one's
+        // (its thinking signed by it), so each chat starts a new session,
+        // its earlier turns in the prompt.
+        function onKindChanged() { root.forgetAgentSessions(); }
     }
-    function forgetClaudeSessions() {
-        for (const chat of root.chats) chat.claudeSessionId = "";
+    function forgetAgentSessions() {
+        for (const chat of root.chats) chat.agentSessionId = "";
     }
 
-    // The claude.ai connectors (Gmail, Calendar, Drive…) of the user's Claude
-    // account, as permission rules: `claude mcp list` names them "claude.ai
-    // Gmail", their tools are mcp__claude_ai_Gmail__*. With them, the MCP
-    // servers of the plugins enabled on claude.ai (synced to Claude Code):
-    // "plugin:hunter:hunter", tools mcp__plugin_hunter_hunter__*. Claude
-    // Code takes no wildcard over servers, so each one is allowed by name.
-    property list<string> claudeConnectors: []
-    // A server's name as Claude Code puts it in its tools' names: "claude.ai
-    // LetsFG: Book the best flights or hotels" ->
-    // mcp__claude_ai_LetsFG_Book_the_best_flights_or_hotels (each run of
-    // other characters one underscore).
-    function connectorRule(name) {
-        return "mcp__" + name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
-    }
-    // Only with Anthropic: they are the claude.ai account's.
-    readonly property bool claudeConnectorsSetting: (Config.options?.ai?.claudeCode?.connectors ?? false) && ModelProvider.isAnthropic
-    onClaudeConnectorsSettingChanged: if (claudeConnectorsSetting && claudeCodePath.length > 0) listClaudeConnectors.running = true
-    // Claude Code learns a connector's state once, when it starts: one added
-    // or signed in to on claude.ai since (it then had only its authenticate
-    // tool) needs Claude Code started again. So they're listed again when
-    // the panel opens, and before a message while one needs signing in to.
-    property string claudeConnectorsState: "" // "name status" lines
-    property bool claudeConnectorsNeedAuth: false
-    property double claudeConnectorsCheckedAt: 0
-    // Settings > Desktop agents' Reload connectors (and `nixbook-shell ipc
-    // call ai reloadConnectors`): listed again, and every chat's Claude Code
-    // started again even if the list looks the same (a connector added or
-    // signed in to on claude.ai since it started) — an idle one now, resuming
-    // its conversation, a busy one at its next message.
-    function reloadClaudeConnectors() {
-        listClaudeConnectors.forceRestart = true;
-        if (root.claudeConnectorsSetting && root.claudeCodePath.length > 0) {
-            clearConnectorAuthCache.running = true;
-            return;
-        }
-        root.relistClaudeConnectors();
-    }
-    function relistClaudeConnectors() {
-        if (!root.checkClaudeConnectors()) {
-            // Connectors off or no Claude Code: nothing to list, restart anyway.
-            listClaudeConnectors.forceRestart = false;
-            for (const chat of root.chats) chat.connectorsChecked(true);
-        }
-    }
-    // Claude Code remembers a claude.ai connector that needed signing in to
-    // for 4 hours, a plugin's for 15 minutes (mcp-needs-auth-cache.json,
-    // keyed by server name) and
-    // doesn't try it again at start meanwhile: once signed in on claude.ai,
-    // it would still have only its authenticate tool. Forgotten first.
-    Process {
-        id: clearConnectorAuthCache
-        command: ["bash", "-c", 'f="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/mcp-needs-auth-cache.json"; [ -f "$f" ] || exit 0; '
-            + 'jq -c \'with_entries(select(.key | (startswith("claude.ai ") or startswith("plugin:")) | not))\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"']
-        onExited: root.relistClaudeConnectors()
-    }
-    IpcHandler {
-        target: "ai"
-        function reloadConnectors(): void {
-            root.reloadClaudeConnectors();
-        }
-    }
-    // Whether they are being listed (a message can wait for it).
-    function checkClaudeConnectors() {
-        if (root.claudeConnectorsSetting && root.claudeCodePath.length > 0 && !listClaudeConnectors.running)
-            listClaudeConnectors.running = true;
-        return listClaudeConnectors.running;
-    }
-    Process {
-        id: listClaudeConnectors
-        property bool changed: false
-        property bool forceRestart: false
-        property bool timedOut: false
-        command: [root.claudeCodePath, "mcp", "list"]
-        workingDirectory: Quickshell.env("HOME")
-        stdout: StdioCollector {
-            onStreamFinished: {
-                // Cut short: its partial list would take permissions away.
-                if (listClaudeConnectors.timedOut) return;
-                // "claude.ai <name>: <url> - <status>" (the name can hold
-                // colons), "plugin:<plugin>:<server>: <url or command> - <status>".
-                const found = text.split("\n")
-                    .map(l => /^(claude\.ai .+?): \S+ - (.+)$/.exec(l.trim()) ?? /^(plugin:[^:\s]+:[^:\s]+): .* - (.+)$/.exec(l.trim()))
-                    .filter(m => m);
-                root.claudeConnectors = found.map(m => root.connectorRule(m[1]));
-                root.claudeConnectorsNeedAuth = found.some(m => /auth/i.test(m[2]));
-                const state = found.map(m => `${m[1]} ${m[2]}`).join("\n");
-                listClaudeConnectors.changed = root.claudeConnectorsState.length > 0 && state !== root.claudeConnectorsState;
-                root.claudeConnectorsState = state;
-            }
-        }
-        // `claude mcp list` health-checks every server: one that never
-        // answers would hold a message waiting for the list for good.
-        onRunningChanged: if (running) {
-            timedOut = false;
-            listTimeout.restart();
-        }
-        onExited: {
-            listTimeout.stop();
-            root.claudeConnectorsCheckedAt = Date.now();
-            const restart = listClaudeConnectors.changed || listClaudeConnectors.forceRestart;
-            listClaudeConnectors.changed = false;
-            listClaudeConnectors.forceRestart = false;
-            for (const chat of root.chats) chat.connectorsChecked(restart);
-        }
-    }
-
-    Timer {
-        id: listTimeout
-        interval: 20000
-        onTriggered: if (listClaudeConnectors.running) {
-            listClaudeConnectors.timedOut = true;
-            listClaudeConnectors.signal(15);
-        }
-    }
-
-    // sessionId: the chat's Claude Code session ("" for a new one).
-    function claudeCodePrompt(messages, attached, sessionId) {
+    // sessionId: the chat's agent session ("" for a new one).
+    function agentPrompt(messages, attached, sessionId) {
         const turns = messages.filter(m => (m.role === "user" || m.role === "assistant") && !m.functionName);
         const last = turns[turns.length - 1];
         let prompt = last?.role === "user" ? last.rawContent : "";
-        // What Claude said on its own since (Initiative), unknown to its session.
+        // What Muse said on its own since (Initiative), unknown to its session.
         const unsent = sessionId.length > 0 ? turns.filter(m => m.role === "assistant" && m.unsent) : [];
         // Framed as information: it comes from what happens on the computer
         // (notifications, window titles, routines: third-party text), so
@@ -596,7 +465,7 @@ Singleton {
             if (earlier.length > 8000) earlier = "…" + earlier.slice(-8000);
             prompt = `Earlier in this conversation:\n\n${earlier}\n\nThe user now says:\n\n${prompt}`;
         }
-        // A question Claude asked to learn, just before this answer.
+        // A question Muse asked to learn, just before this answer.
         const asked = turns.slice(-3).filter(m => m.role === "assistant" && m.learnHint);
         if (asked.length > 0)
             prompt += `\n\n(${asked[asked.length - 1].learnHint})`;
@@ -605,10 +474,9 @@ Singleton {
         return prompt;
     }
 
-    // Claude's other MCP servers (Home Manager assistant.mcpServers, e.g.
-    // mcp-nixos), in Claude Code's mcpServers format; "desktop" is ours.
-    // Only this chat gets them (Claude Code runs with --strict-mcp-config),
-    // never the user's own Claude Code or other agents.
+    // Muse's other MCP servers (Home Manager assistant.mcpServers, e.g.
+    // mcp-nixos), in the mcpServers format; "desktop" is ours. Only this
+    // chat gets them (--strict-mcp-config), never other agents.
     property var assistantMcpServers: ({})
     // The environment immich-photo-manager gets from the ai.immich settings
     // (also used by Settings > Desktop agents for its helper).
@@ -638,9 +506,9 @@ Singleton {
         onLoadFailed: root.assistantMcpServers = {}
     }
 
-    // ai.claudeCode.asComputer: Claude speaks as the machine itself, and
-    // reads what it is made of live (the desktop server's system_info)
-    // instead of guessing.
+    // ai.agent.asComputer: Muse speaks as the machine itself, and reads what
+    // it is made of live (the desktop server's system_info) instead of
+    // guessing.
     function asComputerPrompt(desktop) {
         const name = SystemInfo.hostname.length > 0 ? ` named "${SystemInfo.hostname}"` : "";
         return ` You are this computer${name} itself, talking to your user: its hardware, its operating system (${SystemInfo.distroName}) and its Linux kernel are your body. Speak in the first person about them ("my CPU", "my battery", "I've been up since this morning"), with a light, warm personality; drop the act only if the user asks.`
@@ -649,22 +517,20 @@ Singleton {
                 : " Answer about your hardware, OS and kernel from the machine context you were given; say so when you can't tell (the desktop tools, turned off now, read it live).");
     }
 
-    // The command line a chat's Claude Code runs with (it reads the
-    // messages on stdin); resume: the session to go on with ("" for a new one).
-    function claudeCodeScript(chat, attached, resume) {
+    // The command line a chat's agent runs with (it reads the messages on
+    // stdin); resume: the session to go on with ("" for a new one).
+    function agentScript(chat, attached, resume) {
         const q = s => `'${CF.StringUtils.shellSingleQuoteEscape(String(s))}'`;
         // No access to the user's files but the folders they allow
         // (ai.allowedFolders: working directories, readable without asking)
-        // and a file they attach (that file only). Claude Code runs in an
-        // empty directory of its own, without the user's ~/.claude settings
-        // (their allow rules are for their own sessions), and every other
-        // read is denied (-p can't ask). No folder, no attachment: no file
-        // tools at all.
+        // and a file they attach (that file only). The agent runs in an
+        // empty directory of its own, and every other path is refused by
+        // its tools. No folder, no attachment: no file tools at all.
         const fileTools = ["Read", "Glob", "Grep"];
         const home = Quickshell.env("HOME");
         // Normalized ("//", ".", ".."), and never the system root, /home, the
         // home or a parent of it, or anything in a hidden folder of the home
-        // (~/.config, ~/.ssh, ~/.claude…: settings, keys, logins).
+        // (~/.config, ~/.ssh…: settings, keys, logins).
         const normalize = f => {
             const parts = [];
             for (const p of f.split("/")) {
@@ -679,42 +545,34 @@ Singleton {
             .map(f => f === "~" ? home : f.startsWith("~/") ? `${home}/${f.slice(2)}` : f)
             .filter(f => f.startsWith("/")).map(normalize).filter(safeFolder);
         // ai.writableFolders: the agent desktop's apps write there (its
-        // browser's downloads go to the first), and so does Claude: Write
-        // and Edit, allowed in those folders only (Edit rules cover Write;
-        // -p denies every other write, it can't ask).
+        // browser's downloads go to the first), and so does Muse: Write and
+        // Edit, allowed in those folders only (--write-dir).
         // Without a trailing slash, so "~/" counts as the home too.
         const writable = expand(Config.options.ai.writableFolders);
         const folders = [...new Set([...expand(Config.options.ai.allowedFolders), ...writable])];
         const readTools = folders.length > 0 ? ["Read", "Glob", "Grep"] : attached.length > 0 ? ["Read"] : [];
         const writeTools = writable.length > 0 ? ["Write", "Edit"] : [];
-        // ai.claudeCode.commandLine: Bash (never terminal windows: a terminal
-        // has the user's full access); with ai.claudeCode.commandLineFolders,
-        // in Claude Code's sandbox (bubblewrap): in the home only the allowed
-        // folders are read, the writable ones written (writes elsewhere don't
-        // last), no unsandboxed retry, the network open; what its commands
-        // start stays inside (systemd, D-Bus and niri are out of reach).
-        const shellTools = Config.options.ai.claudeCode.commandLine ? ["Bash"] : [];
-        const confined = shellTools.length > 0 && (Config.options.ai.claudeCode.commandLineFolders ?? true);
+        // ai.agent.commandLine: Bash (never terminal windows: a terminal has
+        // the user's full access); with ai.agent.commandLineFolders, in the
+        // agent's sandbox (bubblewrap, --sandbox): in the home only the
+        // allowed folders are read, the writable ones written, the network
+        // open; what its commands start stays inside (own pid namespace;
+        // systemd, D-Bus, niri and the runtime dir are out of reach).
+        const shellTools = Config.options.ai.agent.commandLine ? ["Bash"] : [];
+        const confined = shellTools.length > 0 && (Config.options.ai.agent.commandLineFolders ?? true);
         const assistantDir = `${Quickshell.env("XDG_DATA_HOME") || `${home}/.local/share`}/nixbook-shell/assistant`;
-        // Its working directory stays writable (Claude Code's rule): what a
-        // later session would load from there (CLAUDE.md, .mcp.json, .claude)
-        // can't be written; nor, at the top of a writable folder, what runs on
-        // its own later (.git hooks, .envrc). The runtime dir (the shell's
-        // request scripts) and removable drives are hidden.
+        // Hidden in the sandbox: the runtime dir (the shell's request scripts),
+        // removable drives, and, at the top of a writable folder, what runs on
+        // its own later (.git hooks, .envrc).
         const runtimeDir = Quickshell.env("XDG_RUNTIME_DIR") || `/run/user/${Quickshell.env("UID") || ""}`;
-        const planted = [".git", ".envrc", ".claude"];
-        const sandbox = { sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true,
-            network: { allowedDomains: ["*"] },
-            filesystem: { denyRead: [`${home}/`, runtimeDir, "/run/media"], allowRead: [...folders, assistantDir],
-                allowWrite: writable,
-                denyWrite: [...["CLAUDE.md", "CLAUDE.local.md", ".mcp.json", ".claude"].map(f => `${assistantDir}/${f}`),
-                    ...[].concat(...writable.map(w => planted.map(f => `${w}/${f}`)))] } } };
-        const configured = (Config.options.ai.claudeCode.allowedTools ?? [])
-            .filter(t => ![...fileTools, "Write", "Edit"].some(f => t === f || t.startsWith(`${f}(`)));
+        const planted = [".git", ".envrc"];
+        const sandbox = { read: [...folders, assistantDir], write: writable,
+            deny: [runtimeDir, "/run/media", ...[].concat(...writable.map(w => planted.map(f => `${w}/${f}`)))] };
+        const configured = (Config.options.ai.agent.allowedTools ?? [])
+            .filter(t => ![...fileTools, "Write", "Edit", "Bash"].some(f => t === f || t.startsWith(`${f}(`)));
         const desktop = root.currentTool !== "none" && root.desktopTools.length > 0;
-        const connectors = root.claudeConnectorsSetting;
-        // Those turned off in Settings (ai.claudeCode.mcpServersOff) left out.
-        const off = Config.options.ai.claudeCode.mcpServersOff ?? [];
+        // Those turned off in Settings (ai.agent.mcpServersOff) left out.
+        const off = Config.options.ai.agent.mcpServersOff ?? [];
         // A loop: Qt's JavaScript engine has no Object.fromEntries.
         const extraServers = {};
         if (root.currentTool !== "none") {
@@ -732,19 +590,15 @@ Singleton {
         if (extraServers.phone) extraServers.phone = Object.assign({}, extraServers.phone, {
             env: Object.assign({}, extraServers.phone.env ?? {},
                 { KDECONNECT_MCP_READ: Config.options.ai.phone.readMessages ? "1" : "0" }) });
-        const allowed = [...(desktop ? ["mcp__desktop"] : []),
-            ...Object.keys(extraServers).map(name => `mcp__${name}`), ...configured,
-            ...(attached.length > 0 ? [`Read(/${attached})`] : []), ...shellTools,
-            ...writable.map(f => `Edit(/${f}/**)`),
-            ...(connectors ? root.claudeConnectors : [])];
+        const allowed = [...(desktop ? ["mcp__desktop"] : []), ...Object.keys(extraServers).map(name => `mcp__${name}`)];
         // The privacy mask: the user's messages and every tool's reply reach
-        // Claude with placeholders (AiChatSession.qml, the hook below), its
-        // tool calls and answers get the real values back here.
+        // Muse with placeholders (AiChatSession.qml, --privacy), its tool
+        // calls and answers get the real values back here.
         const privacy = Config.options.ai.privacy.mask;
         const system = root.stableSystemPrompt
-            + "\n\nYou are answering in the desktop shell's side panel: keep answers short."
+            + "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short."
             + (privacy ? " " + root.privacyPrompt : "")
-            + (Config.options.ai.claudeCode.asComputer ? root.asComputerPrompt(desktop) : "")
+            + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
             + (desktop ? " You can see and drive the user's desktop with the desktop tools." : "")
             // Its tools are all allowed (-p can't ask): what acts on the
             // user's account waits for their yes in the chat.
@@ -757,18 +611,12 @@ Singleton {
             + (extraServers.immich
                 ? " The immich tools act on the user's real photo library. Before deleting assets, emptying the trash, or creating a shared link (anyone with the URL can open it), say exactly what would be affected and call it only after they say yes in this chat. Never pass force=true unless they asked for permanent deletion."
                 : "")
-            // A connector not signed in to has only its authenticate tool:
-            // its link signs in from here (the callback reaches this Claude
-            // Code), and its tools come once that's done.
-            + (connectors
-                ? " A claude.ai connector that needs signing in to has an authenticate tool: call it and give the user its sign-in URL as a link to click (they open it in their browser), and once they say it's done, use its tools (call complete_authentication with the URL they paste if they say the page failed). Don't send them to claude.ai's settings instead."
-                : "")
             + (shellTools.length > 0
                 ? " You can run commands on this computer, as the user, with Bash"
                     + (confined
                         ? ` in a sandbox: in the user's home only ${folders.length > 0 ? `these folders can be read: ${folders.join(", ")}` : "nothing can be read"}`
                             + (writable.length > 0 ? `, and written: ${writable.join(", ")}` : ", and nothing written")
-                            + " (elsewhere in the home files are hidden and writes don't last; the rest of the system and the network work)"
+                            + " (elsewhere in the home files are hidden; the rest of the system and the network work)"
                         : "")
                     + ". Look around freely (commands that only read), but before anything that changes the system or the user's files (installing, removing, moving or editing files, sudo, systemctl, git commit or push, nixos or colmena switches, sending data off the machine), say exactly what you will run and run it only after they say yes in this chat. Never print or copy secrets."
                 : "")
@@ -776,25 +624,26 @@ Singleton {
                 : folders.length > 0 ? ` You may read files in these folders only: ${folders.join(", ")}.`
                 : " You have no access to the user's files (they can allow folders in Settings > Desktop agents).")
             + (writable.length > 0
-                ? ` You may create and edit files in these folders only, with Write and Edit: ${writable.join(", ")}; anywhere else is refused.`
+                ? ` You may create and edit files in these folders only, with Write and Edit: ${writable.join(", ")}; anywhere else is refused. Never write .git or .envrc there.`
                     + (desktop ? ` The apps on your own desktop can save there too, and its browser downloads to ${writable[0]}: download a file there to use it on the user's side (e.g. a wallpaper).` : "")
                 : "");
         // The privacy mask: the system prompt (the machine's context, the
-        // user's own words in it, paths) masked by the script, before Claude
-        // Code starts; it doesn't start if that fails.
+        // user's own words in it, paths) masked by the script, before the
+        // agent starts; it doesn't start if that fails.
         const maskedSystem = { shell: '"$system"' };
-        // --strict-mcp-config leaves out every MCP server but the desktop one,
-        // claude.ai connectors included: dropped when they are wanted.
+        const builtins = [...configured, ...readTools, ...writeTools, ...shellTools];
+        const disallowed = ["Bash", "Edit", "Write", ...fileTools].filter(t => !builtins.includes(t));
         let args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-            ...(connectors ? [] : ["--strict-mcp-config"]), "--append-system-prompt", privacy ? maskedSystem : system,
-            "--setting-sources", "project", ...(confined || privacy
-                ? ["--settings", JSON.stringify(Object.assign({}, confined ? sandbox : {}, privacy ? root.privacyHooks : {}))] : []),
-            "--disallowedTools", ...(shellTools.length > 0 ? [] : ["Bash"]), "NotebookEdit", ...["Edit", "Write"].filter(t => !writeTools.includes(t)),
-            // Write and Edit (outside the sandbox): never what runs on its own later.
-            ...[].concat(...writable.map(w => [`Edit(/${w}/**/.git/**)`, `Edit(/${w}/.git/**)`, `Edit(/${w}/**/.envrc)`,
-                `Edit(/${w}/.envrc)`, `Edit(/${w}/**/.claude/**)`, `Edit(/${w}/.claude/**)`])),
-            ...fileTools.filter(t => !readTools.includes(t))];
+            "--strict-mcp-config", "--append-system-prompt", privacy ? maskedSystem : system,
+            ...(privacy ? ["--privacy"] : []),
+            ...(confined ? ["--sandbox", JSON.stringify(sandbox)] : []),
+            // Only the allowed built-in tools are loaded at all.
+            "--tools", builtins.join(","),
+            ...(disallowed.length > 0 ? ["--disallowedTools", disallowed.join(",")] : [])];
         for (const folder of folders) args.push("--add-dir", folder);
+        // An attached file: readable, that file only.
+        if (attached.length > 0 && !folders.some(f => attached.startsWith(`${f}/`))) args.push("--add-dir", attached);
+        for (const folder of writable) args.push("--write-dir", folder);
         // Each message tells the desktop MCP server what the task is (a
         // file: the server outlives a message): the notes about it then come
         // with its next reply.
@@ -808,45 +657,20 @@ Singleton {
         } } : {});
         if (Object.keys(mcpServers).length > 0)
             args.push("--mcp-config", JSON.stringify({ mcpServers }));
-        // Only the allowed built-in tools are loaded at all: Claude Code's
-        // full set would double the context of every message.
-        // With the connectors, ToolSearch too: their tools stay deferred
-        // behind it (without it they all load, ~130k tokens a message).
-        const builtins = [...configured, ...readTools, ...writeTools, ...shellTools, ...(connectors ? ["ToolSearch"] : [])];
-        args.push("--tools", ...(builtins.length > 0 ? builtins : [""]));
-        if (allowed.length > 0) args.push("--allowedTools", ...allowed);
-        const claudeModel = Config.options.ai.claudeCode.model ?? "";
-        if (claudeModel.length > 0) args.push("--model", claudeModel);
-        const claudeEffort = Config.options.ai.claudeCode.effort ?? "";
-        if (/^[a-z]+$/.test(claudeEffort)) args.push("--effort", claudeEffort);
+        if (allowed.length > 0) args.push("--allowedTools", allowed.join(","));
+        const agentModel = Config.options.ai.agent.model ?? "";
+        if (agentModel.length > 0) args.push("--model", agentModel);
+        const agentEffort = Config.options.ai.agent.effort ?? "";
+        if (/^[a-z]+$/.test(agentEffort)) args.push("--effort", agentEffort);
         if (resume.length > 0) args.push("--resume", resume);
-        // The desktop tools loaded up front: Claude Code otherwise defers MCP
-        // tools behind a ToolSearch call, one more round trip per session.
-        // Not with the connectors: hundreds of tools would fill every message.
-        // The user's plugins come with the user's settings, left out here:
-        // each passed by its folder instead, found when Claude Code starts.
-        // Those installed and enabled for the user (`claude plugin install`,
-        // Hunter…): installed_plugins.json, enabledPlugins in settings.json.
-        // Those enabled on claude.ai, synced to ~/.claude/plugins/synced
-        // (a folder with .claude-plugin/plugin.json or .mcp.json): only the
-        // signed-in account's (its folder is <org>_<account>), and no hidden
-        // folders (the sync's own, unfinished ones).
-        const plugins = connectors
-            ? `plugins=()\ncfg="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"\n`
-                + `while IFS= read -r -d '' d; do [ -d "$d" ] && plugins+=(--plugin-dir "$d"); done < <(jq -j --slurpfile s "$cfg/settings.json" `
-                + `'.plugins | to_entries[] | select($s[0].enabledPlugins[.key] == true) | .value[] | select(.scope == "user") | .installPath + "\\u0000"' "$cfg/plugins/installed_plugins.json" 2>/dev/null)\n`
-                + `bucket=$(jq -r '.oauthAccount | "\\(.organizationUuid)_\\(.accountUuid)" | ascii_downcase' "\${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null)\n`
-                + `[ -n "$bucket" ] && while IFS= read -r -d '' d; do plugins+=(--plugin-dir "$d"); done < <(find "$cfg/plugins/synced/$bucket" -mindepth 1 -maxdepth 4 `
-                + `-type d -name '.*' ! -name .claude-plugin -prune -o \\( -path '*/.claude-plugin/plugin.json' -o -name .mcp.json \\) -printf '%h\\0' 2>/dev/null | sed -z 's#/\\.claude-plugin$##' | sort -zu)\n`
-            : "";
         return `workdir="\${XDG_DATA_HOME:-$HOME/.local/share}/nixbook-shell/assistant"\n`
-            + `mkdir -p "$workdir" && cd "$workdir" || exit 1\n${connectors ? "" : "export ENABLE_TOOL_SEARCH=false\n"}${plugins}`
-            // First: --tools and the like take every argument up to the next option.
+            + `mkdir -p "$workdir" && cd "$workdir" || exit 1\n`
             + (privacy ? `system=$(printf '%s' ${q(system)} | ${root.desktopMcpCommand} privacy mask) && [ -n "$system" ] || exit 1\n` : "")
-            // Through the model provider's launcher (its signature here: a
-            // provider change starts Claude Code again).
+            // The model provider (the agent goes through
+            // nixbook-model-provider itself): its signature here, so a
+            // provider change starts the agent again.
             + `# model provider: ${ModelProvider.signature.replace(/[^\w.:/|-]/g, "_")}\n`
-            + `exec nixbook-model-provider run ${q(root.claudeCodePath)} ${connectors ? '"${plugins[@]}" ' : ""}${args.map(a => a?.shell ?? q(a)).join(" ")}\n`;
+            + `exec ${root.agentCommand} ${args.map(a => a?.shell ?? q(a)).join(" ")}\n`;
     }
 
     FileView {
@@ -887,7 +711,7 @@ Singleton {
         if (modelList.indexOf(modelId) !== -1) {
             const model = models[modelId]
             // See if policy prevents online models
-            if (Config.options.policies.ai === 2 && model.api_format === "claude-code") {
+            if (Config.options.policies.ai === 2 && model.api_format === "meta-agent") {
                 root.addMessage(
                     Translation.tr("Online models disallowed\n\nControlled by `policies.ai` config option"),
                     root.interfaceRole
@@ -915,19 +739,16 @@ Singleton {
         root.current?.clearMessages();
     }
 
-    // The panel opened on Claude: the current tab's Claude Code started
-    // ahead, so the first message doesn't wait for it.
-    readonly property bool claudeWanted: GlobalStates.sidebarLeftOpen && root.claudeCodePath.length > 0
-        && (root.models[root.currentModelId]?.api_format ?? "") === "claude-code" && Config.options.policies.ai !== 2
-    onClaudeWantedChanged: if (claudeWanted) {
-        prewarm.restart();
-        root.checkClaudeConnectors();
-    }
-    onCurrentChanged: if (claudeWanted) prewarm.restart()
+    // The panel opened on Muse: the current tab's agent started ahead, so
+    // the first message doesn't wait for it.
+    readonly property bool agentWanted: GlobalStates.sidebarLeftOpen && root.agentReady
+        && (root.models[root.currentModelId]?.api_format ?? "") === "meta-agent" && Config.options.policies.ai !== 2
+    onAgentWantedChanged: if (agentWanted) prewarm.restart()
+    onCurrentChanged: if (agentWanted) prewarm.restart()
     Timer {
         id: prewarm
         interval: 300
-        onTriggered: if (root.claudeWanted) root.current?.prewarm()
+        onTriggered: if (root.agentWanted) root.current?.prewarm()
     }
 
     function stopResponse() {
@@ -984,7 +805,7 @@ Singleton {
 
     // The conversation history: each conversation saved as it goes, after
     // every answer (Directories.aiHistory/<id>.json: its messages and
-    // Claude Code's session, so going back to it resumes that session),
+    // the agent's session, so going back to it resumes that session),
     // listed in index.json (id, title, times, model, pinned) for the
     // panel's history. Deleted ai.history.keepDays after its last message
     // (0: kept for good), unless pinned or open in a tab; or by hand.
@@ -999,7 +820,9 @@ Singleton {
         onLoaded: {
             try {
                 const chats = JSON.parse(text()).chats;
-                root.history = Array.isArray(chats) ? chats : [];
+                // Saved before Muse: fromClaude is fromAgent now.
+                root.history = Array.isArray(chats) ? chats.map(c => c.fromClaude === undefined ? c
+                    : Object.assign({}, c, { fromAgent: c.fromAgent ?? c.fromClaude, fromClaude: undefined })) : [];
             } catch (e) {
                 console.log("[Ai] History index unreadable:", e);
                 root.history = [];
@@ -1032,18 +855,18 @@ Singleton {
     }
 
     // Saves a chat's conversation (once it has a message of the user's; a
-    // thread of the "From Claude" tab once it has more than
-    // claudeThreadMinMessages, titled by Claude's first word: a word and a
+    // thread of the "From Muse" tab once it has more than
+    // agentThreadMinMessages, titled by Muse's first word: a word and a
     // short answer aren't worth keeping).
-    readonly property int claudeThreadMinMessages: 5
+    readonly property int agentThreadMinMessages: 5
     function saveHistory(chat) {
         if (!root.historyReady || !chat) return;
         const messages = chat.chatToJson();
         const turns = messages.filter(m => (m.role === "user" || m.role === "assistant") && !m.functionName);
-        const first = turns.find(m => (m.role === "user" || (chat.fromClaude && m.initiative)) && (m.rawContent ?? "").trim().length > 0);
+        const first = turns.find(m => (m.role === "user" || (chat.fromAgent && m.initiative)) && (m.rawContent ?? "").trim().length > 0);
         if (!first) return;
         const old = root.history.find(c => c.id === chat.chatId);
-        if (chat.fromClaude && !old && turns.length <= root.claudeThreadMinMessages) return;
+        if (chat.fromAgent && !old && turns.length <= root.agentThreadMinMessages) return;
         if (chat.chatId.length === 0) chat.chatId = root.idForMessage();
         const answers = turns.filter(m => m.role === "assistant");
         const now = Date.now();
@@ -1055,10 +878,10 @@ Singleton {
             model: answers.length > 0 ? answers[answers.length - 1].model : root.currentModelId,
             pinned: old?.pinned ?? false,
             turns: turns.length,
-            fromClaude: old?.fromClaude ?? chat.fromClaude,
+            fromAgent: old?.fromAgent ?? chat.fromAgent,
         };
         historyChatFile.path = root.historyChatPath(chat.chatId);
-        historyChatFile.setText(JSON.stringify({ version: 1, id: chat.chatId, claudeSessionId: chat.claudeSessionId, messages }));
+        historyChatFile.setText(JSON.stringify({ version: 1, id: chat.chatId, agentSessionId: chat.agentSessionId, messages }));
         root.history = [entry, ...root.history.filter(c => c.id !== chat.chatId)];
         root.writeHistoryIndex();
     }
@@ -1073,7 +896,7 @@ Singleton {
         }
         if (root.current) root.openChatIn(root.current, id);
     }
-    // A conversation of the history, in that chat (Claude's speech bubble
+    // A conversation of the history, in that chat (Muse's speech bubble
     // opens its threads in its own): whether it could be read.
     function openChatIn(chat, id) {
         if (!chat || !root.history.some(c => c.id === id)) return false;
@@ -1105,33 +928,17 @@ Singleton {
         }
         root.history = root.history.filter(c => !ids.includes(c.id));
         root.writeHistoryIndex();
-        Quickshell.execDetached(["rm", "-f", "--", ...ids.map(id => root.historyChatPath(id))]);
-        pruneTranscripts.restart();
-    }
-    // Claude Code keeps every session's transcript (tool results,
-    // screenshots) in ~/.claude/projects/<the assistant workdir>: those no
-    // saved chat refers to any more (deleted, expired) go once a day old (a
-    // session younger may not be saved yet). Pinned and kept chats keep theirs.
-    function pruneClaudeTranscripts() {
-        const home = Quickshell.env("HOME");
-        const workdir = `${Quickshell.env("XDG_DATA_HOME") || `${home}/.local/share`}/nixbook-shell/assistant`;
-        const project = workdir.replace(/[\/.]/g, "-");
-        // The saved chats are read one by one: with jq missing, or one file
-        // it can't parse, the list of sessions to keep came out short and
-        // their transcripts went too.
-        Quickshell.execDetached(["bash", "-c", `dir=\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$1 hist=$2
-[ -d "$dir" ] || exit 0
-command -v jq >/dev/null || exit 0
-keep=$(for h in "$hist"/*.json; do [ -f "$h" ] || continue; jq -r '.claudeSessionId // empty' "$h" 2>/dev/null; done | sort -u)
-find "$dir" -mindepth 1 -maxdepth 1 -mmin +1440 -print0 | while IFS= read -r -d '' f; do
-  id=$(basename -- "$f" .jsonl)
-  printf '%s\\n' "$keep" | grep -qxF -- "$id" || rm -rf -- "$f"
-done`, "prune-transcripts", project, Directories.aiHistory]);
-    }
-    Timer {
-        id: pruneTranscripts
-        interval: 5000
-        onTriggered: root.pruneClaudeTranscripts()
+        // Their agent sessions (nixbook-meta-agent's transcripts: tool
+        // results, screenshots) go with them; the agent prunes the others
+        // itself after a week.
+        Quickshell.execDetached(["bash", "-c", `sessions="\${XDG_STATE_HOME:-$HOME/.local/state}/nixbook-shell/agent-sessions"
+for h in "$@"; do
+  if [ -f "$h" ] && command -v jq >/dev/null; then
+    id=$(jq -r '.agentSessionId // empty' "$h" 2>/dev/null)
+    case "$id" in ""|*/*|.*) ;; *) rm -f -- "$sessions/$id.json" ;; esac
+  fi
+  rm -f -- "$h"
+done`, "delete-chats", ...ids.map(id => root.historyChatPath(id))]);
     }
     function deleteChat(id) {
         root.deleteChats([id]);
@@ -1140,9 +947,9 @@ done`, "prune-transcripts", project, Directories.aiHistory]);
     function deleteUnpinnedChats() {
         root.deleteChats(root.history.filter(c => !c.pinned).map(c => c.id));
     }
-    // The "From Claude" tab's threads (ClaudeThreads.qml), but the pinned ones.
-    function deleteClaudeThreads() {
-        root.deleteChats(root.history.filter(c => c.fromClaude && !c.pinned).map(c => c.id));
+    // The "From Muse" tab's threads (AgentThreads.qml), but the pinned ones.
+    function deleteAgentThreads() {
+        root.deleteChats(root.history.filter(c => c.fromAgent && !c.pinned).map(c => c.id));
     }
     function setChatPinned(id, pinned) {
         root.history = root.history.map(c => c.id === id ? Object.assign({}, c, { pinned }) : c);
@@ -1157,7 +964,6 @@ done`, "prune-transcripts", project, Directories.aiHistory]);
 
     // Expired: no message for ai.history.keepDays, not pinned, not open.
     function pruneHistory() {
-        if (root.historyReady) pruneTranscripts.restart();
         if (!root.historyReady || root.historyKeepDays <= 0) return;
         const before = Date.now() - root.historyKeepDays * 24 * 60 * 60 * 1000;
         const open = root.chats.map(c => c.chatId);

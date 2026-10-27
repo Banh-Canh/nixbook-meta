@@ -7,7 +7,7 @@
     "history": {
       "keepDays": 30
     },
-    "claudeThreadIdleMinutes": 30,
+    "threadIdleMinutes": 30,
     "allowedFolders": [],
     "writableFolders": [],
     "agentDesktop": {
@@ -15,7 +15,7 @@
       "privateNetwork": true
     },
     "provider": {
-      "kind": "anthropic",
+      "kind": "meta",
       "baseUrl": "",
       "model": "",
       "smallModel": "",
@@ -46,16 +46,16 @@
       "speak": "voice",
       "style": "cute"
     },
-    "claudeCode": {
+    "agent": {
       "allowedTools": ["WebSearch", "WebFetch"],
       "asComputer": true,
-      "command": "",
+      "autoMemory": true,
       "commandLine": false,
       "commandLineFolders": true,
-      "connectors": false,
       "effort": "low",
       "mcpServersOff": ["linkedin", "immich"],
-      "model": "sonnet"
+      "memoryModel": "small",
+      "model": "main"
     },
     "immich": {
       "apiKeyFile": "",
@@ -80,7 +80,7 @@
     },
     "improve": {
       "enable": false,
-      "model": "sonnet",
+      "model": "main",
       "perDay": 2,
       "maxFiles": 5,
       "maxLines": 150,
@@ -556,7 +556,7 @@
   },
   "equalizer": {
     "agent": false,
-    "agentModel": "haiku",
+    "agentModel": "small",
     "albumColors": false
   },
   "hacks": {

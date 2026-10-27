@@ -9,7 +9,7 @@ import qs.modules.common
 /**
  * The config assistant: the chat's built-in "Config assistant" entry
  * (Ai.configAssistantId). No AI — every answer comes from this machine's
- * configuration, instantly and exactly. To chat with Claude instead, pick
+ * configuration, instantly and exactly. To chat with Muse instead, pick
  * it with /model.
  *
  * Understanding: the question's language is detected (English, French,
@@ -129,7 +129,7 @@ Singleton {
     // the configuration (quickReply). A third element names what an entry
     // needs ("nvim": Neovim keymaps, "os": system facts, "howto": how-tos).
     readonly property var helpExamples: ({
-        en: { title: "Answered instantly from your configuration (no model):", more: "No AI here: to chat with a model (Claude), pick one with /model.", items: [
+        en: { title: "Answered instantly from your configuration (no model):", more: "No AI here: to chat with a model (Muse), pick one with /model.", items: [
             ["Find a shortcut", "shortcut for the launcher · how do I lock the screen"],
             ["What a key does", "what does Mod+R do?"],
             ["List shortcuts", "all shortcuts · shortcuts for workspaces"],
@@ -139,7 +139,7 @@ Singleton {
             ["Modules", "is tailscale enabled? · which modules are enabled"],
             ["Packages", "is firefox installed? · which packages are installed"],
             ["Shell settings", "settings set in Nix"]] },
-        fr: { title: "Réponse immédiate depuis votre configuration (sans modèle) :", more: "Pas d'IA ici : pour discuter avec un modèle (Claude), choisissez-le avec /model.", items: [
+        fr: { title: "Réponse immédiate depuis votre configuration (sans modèle) :", more: "Pas d'IA ici : pour discuter avec un modèle (Muse), choisissez-le avec /model.", items: [
             ["Trouver un raccourci", "raccourci pour le lanceur · comment verrouiller l'écran"],
             ["Ce que fait une touche", "que fait Mod+R ?"],
             ["Lister les raccourcis", "tous les raccourcis · raccourcis des espaces de travail"],
@@ -149,7 +149,7 @@ Singleton {
             ["Modules", "tailscale est activé ? · quels modules sont activés"],
             ["Paquets", "firefox est installé ? · quels paquets sont installés"],
             ["Réglages du shell", "réglages définis dans Nix"]] },
-        de: { title: "Sofort aus deiner Konfiguration beantwortet (ohne Modell):", more: "Keine KI hier: Um mit einem Modell (Claude) zu chatten, wähle es mit /model.", items: [
+        de: { title: "Sofort aus deiner Konfiguration beantwortet (ohne Modell):", more: "Keine KI hier: Um mit einem Modell (Muse) zu chatten, wähle es mit /model.", items: [
             ["Tastenkürzel finden", "Tastenkürzel für den Starter · wie sperre ich den Bildschirm"],
             ["Was eine Taste macht", "was macht Mod+R?"],
             ["Kürzel auflisten", "alle Tastenkürzel · Kürzel für Arbeitsbereiche"],
@@ -159,7 +159,7 @@ Singleton {
             ["Module", "ist tailscale aktiviert? · welche Module sind aktiv"],
             ["Pakete", "ist firefox installiert? · welche Pakete sind installiert"],
             ["Shell-Einstellungen", "Einstellungen in Nix"]] },
-        vi: { title: "Trả lời ngay từ cấu hình của bạn (không cần mô hình):", more: "Không dùng AI ở đây: để trò chuyện với mô hình (Claude), chọn bằng /model.", items: [
+        vi: { title: "Trả lời ngay từ cấu hình của bạn (không cần mô hình):", more: "Không dùng AI ở đây: để trò chuyện với mô hình (Muse), chọn bằng /model.", items: [
             ["Tìm phím tắt", "phím tắt mở trình khởi chạy · làm sao khóa màn hình"],
             ["Phím làm gì", "Mod+R để làm gì?"],
             ["Liệt kê phím tắt", "tất cả phím tắt · phím tắt cho không gian làm việc"],
@@ -234,7 +234,7 @@ Singleton {
     // Lexicons onto the facts' English vocabulary. "=w" matches the word w
     // exactly; "a b" a phrase; anything else a word prefix (inflections).
     readonly property var lexicon: ({
-        en: [["in parallel", "work alongside without mouse"], ["alongside", "work alongside without mouse"], ["=zen", "zen page tab"], ["no bubble", "without the bubble"], ["hide the bubble", "without the bubble"], ["read out", "answers loud voice"], ["=aloud", "answers loud voice"], ["text to speech", "answers loud voice"], ["=tts", "answers loud voice"], ["=cute", "cute voice"], ["quick ai", "quick ai"], ["full ai", "full ai mode"], ["=mascot", "full ai mode mascot"], ["takes control", "full ai mode"], ["onboard", "set up desktop by talking"], ["set up my", "set up desktop by talking"], ["=selection", "selection selected text"], ["=selected", "selection selected text"], ["=voice", "voice talk"], ["=speak", "voice talk"], ["dictat", "voice talk"], ["=mic", "voice talk"], ["microphone", "voice talk"], ["kiroshi", "kiroshi scan"], ["=brief", "kiroshi scan focus"], ["=triage", "kiroshi scan urgency"], ["delegat", "kiroshi scan do it"], ["what needs me", "kiroshi scan focus"], ["=scan", "kiroshi scan"], ["summari", "summarize"], ["suggest repl", "suggest replies"], ["=rephrase", "rewrite"], ["=proofread", "fix"], ["hotkey", "shortcut"], ["=muse", "meta model provider"], ["=llama", "meta model provider"], ["=llm", "model provider"], ["=providers", "provider"], ["=bug", "fix broken"], ["=bugs", "fix broken"], ["pull request", "fix"], ["self-improv", "fix"], ["improve itself", "fix"], ["=queue", "fix queue"], ["=queued", "fix queue"], ["feature request", "feature build"], ["new feature", "feature build"], ["=wish", "feature build"], ["remember", "memory"], ["=memorize", "memory"], ["=pause", "stop"], ["=halt", "stop"], ["=agent", "ai agent"], ["=agents", "ai agent"], ["=claude", "claude ai"], ["arrangement", "layout window"], ["=float", "floating toggle"], ["=floating", "floating toggle"], ["=go", "focus"], ["=switch", "focus"], ["louder", "volume up raise"], ["quieter", "volume down lower"],
+        en: [["in parallel", "work alongside without mouse"], ["alongside", "work alongside without mouse"], ["=zen", "zen page tab"], ["no bubble", "without the bubble"], ["hide the bubble", "without the bubble"], ["read out", "answers loud voice"], ["=aloud", "answers loud voice"], ["text to speech", "answers loud voice"], ["=tts", "answers loud voice"], ["=cute", "cute voice"], ["quick ai", "quick ai"], ["full ai", "full ai mode"], ["=mascot", "full ai mode mascot"], ["takes control", "full ai mode"], ["onboard", "set up desktop by talking"], ["set up my", "set up desktop by talking"], ["=selection", "selection selected text"], ["=selected", "selection selected text"], ["=voice", "voice talk"], ["=speak", "voice talk"], ["dictat", "voice talk"], ["=mic", "voice talk"], ["microphone", "voice talk"], ["kiroshi", "kiroshi scan"], ["=brief", "kiroshi scan focus"], ["=triage", "kiroshi scan urgency"], ["delegat", "kiroshi scan do it"], ["what needs me", "kiroshi scan focus"], ["=scan", "kiroshi scan"], ["summari", "summarize"], ["suggest repl", "suggest replies"], ["=rephrase", "rewrite"], ["=proofread", "fix"], ["hotkey", "shortcut"], ["=muse", "muse ai meta model provider"], ["=llama", "meta model provider"], ["=llm", "model provider"], ["=providers", "provider"], ["=bug", "fix broken"], ["=bugs", "fix broken"], ["pull request", "fix"], ["self-improv", "fix"], ["improve itself", "fix"], ["=queue", "fix queue"], ["=queued", "fix queue"], ["feature request", "feature build"], ["new feature", "feature build"], ["=wish", "feature build"], ["remember", "memory"], ["=memorize", "memory"], ["=pause", "stop"], ["=halt", "stop"], ["=agent", "ai agent"], ["=agents", "ai agent"], ["arrangement", "layout window"], ["=float", "floating toggle"], ["=floating", "floating toggle"], ["=go", "focus"], ["=switch", "focus"], ["louder", "volume up raise"], ["quieter", "volume down lower"],
              ["=next", "below down"], ["previous", "above up"], ["=sound", "volume audio"], ["background", "wallpaper"],
              ["=panel", "sidebar"], ["=chat", "assistant ai"], ["=computer", "screen host"], ["=pc", "screen host"],
              ["=os", "nixos operating system"], ["what shell", "shell login"], ["which shell", "shell login"], ["my shell", "shell login"], ["distro", "nixos operating system"], ["hostname", "host name"],

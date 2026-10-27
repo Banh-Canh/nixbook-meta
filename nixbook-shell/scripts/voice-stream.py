@@ -211,7 +211,18 @@ def level_db(chunk):
     return round(20 * math.log10(rms), 1) if rms > 0 else -90.0
 
 
+def through_provider(argv):
+    """Run without the provider's key: through nixbook-model-provider, which
+    sets it (once: it marks the environment)."""
+    if os.environ.get("NIXBOOK_AI_KEY") or os.environ.get("NIXBOOK_AI_PROVIDED"):
+        return
+    provider = shutil.which("nixbook-model-provider")
+    if provider:
+        os.execv(provider, [provider, "run", sys.executable, "-I", os.path.abspath(__file__), *argv[1:]])
+
+
 def main(argv):
+    through_provider(argv)
     langs, path, continuous, held = [], None, False, False
     pause, longest = PAUSE_SECONDS, MAX_SECONDS
     args = list(argv[1:])
@@ -237,8 +248,8 @@ def main(argv):
             langs = [LANGS[c.strip()[:2].lower()] for c in args.pop(0).split(",") if c.strip()[:2].lower() in LANGS]
         elif a == "--file" and args:
             path = args.pop(0)
-    base = os.environ.get("ANTHROPIC_BASE_URL", "")
-    key = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+    base = os.environ.get("NIXBOOK_AI_BASE_URL", "")
+    key = os.environ.get("NIXBOOK_AI_KEY", "")
     if not base or not key:
         emit("error", error="voice through Meta needs the Meta model provider and its key "
                             "(Settings > Desktop agents > Model provider)")

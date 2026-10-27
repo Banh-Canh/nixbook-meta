@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nixbook-desktop-mcp: lets an AI agent see and drive the niri desktop.
 
-A Model Context Protocol server (any MCP client: Claude Code, opencode,
+A Model Context Protocol server (any MCP client: the shell's Muse agent, opencode,
 Codex, …) and a command line for the shell's own AI chat, both
 behind the same tools and the same guardrails:
 
@@ -112,10 +112,11 @@ DEFAULT_CONFIG = {
     "memoryMaxNotes": 100,
     # The memory pass on agents' tasks: a small model, in the background,
     # only for a task new to the memory that took work, and the weekly
-    # tidy-up (Claude Code: memoryClaude, else `claude` on PATH).
+    # tidy-up (nixbook-meta-agent: small, main or big, or a provider model id).
     "memoryLearn": True,
-    "memoryModel": "haiku",
-    "memoryClaude": "",
+    "memoryModel": "small",
+    # The news pass (its web search): small, main or big.
+    "newsModel": "small",
     # The agent speaking first (the shell's services/Initiative.qml): at
     # most this many notifications a day, this many minutes apart, none in
     # the quiet hours (the rest waits in the bar); notifications read by the
@@ -137,9 +138,9 @@ DEFAULT_CONFIG = {
     ],
     "pairIgnoreTitles": [r"\b(inbox|gmail|outlook|proton ?mail|messenger|whatsapp|telegram|signal|discord|slack|teams|"
                          r"private browsing|incognito|bank|banque|paypal|doctolib|ameli|health|medical)\b"],
-    # Routines that take judgment: a short Claude run each, at most this many a day.
+    # Routines that take judgment: a short Muse run each, at most this many a day.
     "routineAgentPerDay": 20,
-    "routineModel": "haiku",
+    "routineModel": "small",
     # Personal memory (what the user told agents about their life): the part
     # sent when an agent connects, at most this many characters; entries kept.
     "personalPromptChars": 900,
@@ -222,6 +223,11 @@ def load_config():
     return cfg
 
 
+# Keys of older versions, ignored without a word (memoryClaude: the path of
+# the agent CLI used before nixbook-meta-agent).
+REMOVED_CONFIG_KEYS = {"memoryClaude"}
+
+
 def read_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     path = config_path()
@@ -236,6 +242,8 @@ def read_config():
         log(f"ignoring {path}: {e}")
         return cfg
     for key, value in user.items():
+        if key in REMOVED_CONFIG_KEYS:
+            continue
         if key not in DEFAULT_CONFIG:
             log(f"{path}: unknown key {key!r}, ignored")
         elif key in ("http", "browser") and isinstance(value, dict):
@@ -398,7 +406,7 @@ def mark_agent_input():
 
 
 # The shell's own windows over the apps (services/MakeWay.qml: the side
-# panel, Claude's speech bubble, notification popups, a theme's cut-in)
+# panel, Muse's speech bubble, notification popups, a theme's cut-in)
 # make way for an agent on the user's desktop: its clicks and keys go
 # through them to the apps, and they are invisible in its screenshots,
 # while the user still sees them (faded). The shell lists what is on screen
@@ -1924,7 +1932,7 @@ class Memory:
             self.changed = True
         if self.data["version"] < 4:
             # Before music_repeating, "when a song repeats too long" could
-            # only be a track_changed routine whose Claude run guessed the
+            # only be a track_changed routine whose Muse run guessed the
             # repeat at each new track (and never saw a loop): the cue now.
             for r in self.data.get("routines") or []:
                 when = r.get("when") if isinstance(r, dict) else None
@@ -2734,7 +2742,7 @@ INITIATIVE_SAID_KEEP = 200
 INITIATIVE_BORING_MAX = 300
 INITIATIVE_NOTICE_BATCH = 6
 # Never reacted to: the shell's and the agent's own.
-INITIATIVE_OWN_APPS = {"claude", "reminder", "calendar", "nixbook-shell", "nixbook-desktop-mcp", "desktop agents"}
+INITIATIVE_OWN_APPS = {"muse", "reminder", "calendar", "nixbook-shell", "nixbook-desktop-mcp", "desktop agents"}
 
 INITIATIVE_SCHEMA = {
     "type": "object",
@@ -2775,36 +2783,34 @@ def ai_policy():
     return v if v in (0, 1, 2) else 1
 
 
-def claude_path(cfg, hint=None):
-    """Claude Code for the small model's passes: memoryClaude, the path the
-    shell gives (its own Claude Code: the shell's PATH may not have it), on
-    PATH, or where it is usually installed. None while AI is off or local
-    only (policies.ai): Claude is an online model, so every pass skips."""
+def meta_agent(cfg=None):
+    """nixbook-meta-agent, the headless agent on Meta's Model API, for the
+    small model's passes and routines: NIXBOOK_META_AGENT, on PATH (the
+    package puts it there), or the script beside this one (the source
+    tree). None while AI is off or local only (policies.ai): Muse is an
+    online model, so every pass skips."""
     if ai_policy() != 1:
         return None
-    home = os.path.expanduser("~")
-    for c in [cfg.get("memoryClaude"), hint, shutil.which("claude"), f"{home}/.local/bin/claude",
-              f"{home}/.claude/local/claude", f"/etc/profiles/per-user/{os.environ.get('USER', '')}/bin/claude",
-              f"{home}/.nix-profile/bin/claude", "/run/current-system/sw/bin/claude"]:
-        if isinstance(c, str) and c and os.path.isfile(c) and os.access(c, os.X_OK):
+    here = os.path.dirname(os.path.abspath(__file__))
+    for c in [os.environ.get("NIXBOOK_META_AGENT"), shutil.which("nixbook-meta-agent"),
+              os.path.join(here, "nixbook-meta-agent"), os.path.join(here, "meta-agent.py")]:
+        if isinstance(c, str) and c and os.path.isfile(c) and (c.endswith(".py") or os.access(c, os.X_OK)):
             return c
     return None
 
 
-def claude_cmd(claude):
-    """Claude Code started through nixbook-model-provider, which points it
-    at the provider chosen in Settings (Anthropic: the user's own login,
-    unchanged; Meta or another Anthropic-compatible API: its key and model
-    names). Without the launcher (outside the package), Claude Code as it is."""
-    provider = shutil.which("nixbook-model-provider")
-    return [provider, "run", claude] if provider else [claude]
+def agent_cmd(agent):
+    """How to start it: it goes through nixbook-model-provider by itself
+    (the provider chosen in Settings: its key and model names)."""
+    return [sys.executable, agent] if agent.endswith(".py") else [agent]
 
 
 def provider_model(model):
-    """The model as the record of what was sent names it: with another
-    provider than Anthropic, prefixed by it (meta:haiku is Meta's small model)."""
-    kind = str(shell_setting("ai.provider.kind", "anthropic")).lower()
-    return model if kind == "anthropic" else f"{kind}:{model}"
+    """The model as the record of what was sent names it, prefixed by the
+    provider (meta:small is Meta's small model). The old "anthropic" kind
+    is Meta now."""
+    kind = str(shell_setting("ai.provider.kind", "meta")).lower()
+    return f"{'meta' if kind in ('', 'anthropic') else kind}:{model}"
 
 
 def initiative_path():
@@ -2968,7 +2974,7 @@ def brief_item(cfg, event, now):
         if layout or missing:
             lines.append("Your usual start: " + ", ".join(([f"the {layout!r} layout"] if layout else [])
                                                          + [app_name(a) for a in missing[:3]]) + ". Set it up?")
-            # Done by the shell at once: no need to ask Claude for it.
+            # Done by the shell at once: no need to ask Muse for it.
             actions.append({"label": "Set it up", "do": "setup", "layout": layout or "", "apps": missing[:3]})
     back = where_were_we(cfg, event.get("recent"))
     if back:
@@ -2979,7 +2985,7 @@ def brief_item(cfg, event, now):
     soon = any(isinstance(e.get("inMinutes"), (int, float)) and 0 <= e["inMinutes"] <= 30 for e in events)
     text_ = hello + " " + " ".join(lines)
     return ({"kind": "brief", "key": f"brief:{time.strftime('%Y-%m-%d %H', time.localtime(now))}",
-             "title": "Claude", "text": text_, **({"actions": actions} if actions else {})}, "notify" if soon else "badge")
+             "title": "Muse", "text": text_, **({"actions": actions} if actions else {})}, "notify" if soon else "badge")
 
 
 def recipe_item(event):
@@ -2992,7 +2998,7 @@ def recipe_item(event):
         fs = n.get("failStep")
         if n.get("kind") != "recipe" or not fs or not (set(n.get("apps") or []) & {app} or app_name(app).lower() in n["topic"].lower()):
             continue
-        return {"kind": "recipe", "key": f"recipe:{n['id']}:{fs.get('time')}", "title": "Claude",
+        return {"kind": "recipe", "key": f"recipe:{n['id']}:{fs.get('time')}", "title": "Muse",
                 "text": f"My recipe “{n['topic']}” broke at step {fs.get('step')} last time "
                         f"({short(fs.get('error', ''), 80)}). Want me to fix it now?"}
     return None
@@ -3004,7 +3010,7 @@ def initiative_offer(cfg, kind, key, text_, app=None, actions=None):
         return
     try:
         with Initiative() as m:
-            deliver(cfg, m.data, {"kind": kind, "key": key, "title": "Claude", "text": text_, "app": app,
+            deliver(cfg, m.data, {"kind": kind, "key": key, "title": "Muse", "text": text_, "app": app,
                                   **({"actions": actions} if actions else {})},
                     "badge", False, time.time())
             m.save()
@@ -3138,7 +3144,7 @@ def chat_item(cfg, data, event, now):
     cands = [c for c in chat_candidates(cfg, event, now) if c[1] not in said
              and c[1] not in data["boring"] and f"chat:{c[0]}" not in data["muted"]]
     if not cands and force:
-        return {"kind": "chat", "key": f"chat:hello:{int(now)}", "title": "Claude", "app": "hello", "test": True,
+        return {"kind": "chat", "key": f"chat:hello:{int(now)}", "title": "Muse", "app": "hello", "test": True,
                 "text": pick("Hi! Nothing on my mind right now. I'll speak up when something comes up.",
                              "Here! All quiet on my side for now. I'll tell you when something's worth it.")}, ""
     if not cands:
@@ -3147,15 +3153,15 @@ def chat_item(cfg, data, event, now):
     weights = [initiative_value(data, "chat", c[0]) + 0.05 for c in cands]
     sub, key, text_, entry = random.choices(cands, weights)[0]
     if text_ is None:
-        claude = claude_path(cfg, event.get("claude"))
-        if not claude:
-            return None, "no Claude Code"
+        agent = meta_agent(cfg)
+        if not agent:
+            return None, "no model (nixbook-meta-agent)"
         if sub == "tip":
             system, prompt = TIP_SYSTEM, f"The app: {app_name((entry.get('apps') or [''])[0])}\nThe note: {entry['text']}"
         else:
             system, prompt = CHAT_SYSTEM, f"Today is {today}.\nThe subject: {entry_line(entry)}"
         try:
-            answer = ask_claude(claude, cfg.get("memoryModel") or "haiku", system, prompt, CHAT_SCHEMA)
+            answer = ask_agent(agent, cfg.get("memoryModel") or "small", system, prompt, CHAT_SCHEMA)
         except ToolError as e:
             return None, str(e)
         text_ = said_text(str(answer.get("text") or ""), 400)
@@ -3165,12 +3171,12 @@ def chat_item(cfg, data, event, now):
                 m.data["boring"] = (m.data["boring"] + [key])[-INITIATIVE_BORING_MAX:]
                 m.save()
             return None, "nothing to say"
-    return {"kind": "chat", "key": key, "title": "Claude", "text": text_, "app": sub,
+    return {"kind": "chat", "key": key, "title": "Muse", "text": text_, "app": sub,
             **({"actions": CHAT_ACTIONS[sub]} if sub in CHAT_ACTIONS else {}),
             **({"test": True} if force else {})}, ""
 
 
-# What a light word offers that the shell does at once, without Claude.
+# What a light word offers that the shell does at once, without Muse.
 CHAT_ACTIONS = {
     "wrapup": [{"label": "Move to tomorrow", "do": "tasks", "what": "tomorrow"},
                {"label": "Show them", "do": "tasks", "what": "show"}],
@@ -3264,7 +3270,7 @@ def notice_apply(data, items, answer, now):
     critical = about["urgency"] == "critical"
     urgent = bool(answer.get("urgent")) or critical
     return ({"kind": "notice", "key": "notice:" + notice_pattern(about["app"], about["summary"] + about["body"][:60])
-             + f":{int(now) // 600}", "title": "Claude", "text": said, "chat": chat, "app": about["app"],
+             + f":{int(now) // 600}", "title": "Muse", "text": said, "chat": chat, "app": about["app"],
              "urgent": urgent, "critical": critical},
             "notify" if urgent else "badge")
 
@@ -3276,7 +3282,7 @@ def notice_apply(data, items, answer, now):
 # no token; never password managers or private windows: habitsIgnoreApps,
 # habitsIgnoreTitles; kept CURIOUS_SEEN_DAYS). Once a day, with enough new
 # things seen, a small model reads them with what the personal memory
-# already knows, saves the lasting facts there by itself, and Claude says
+# already knows, saves the lasting facts there by itself, and Muse says
 # what it learned in its bubble (Reply to correct it), with a question only
 # when something that matters is unclear. It needs to ask less as it knows
 # more: what the memory has is no news, and titles read aren't sent again.
@@ -3364,11 +3370,11 @@ def curious_digest(cfg, event, now):
         data["curiousAt"] = int(now)  # once a day, even if the call fails
         m.save()
     new = new[:CURIOUS_PROMPT_TITLES]
-    claude = claude_path(cfg, event.get("claude"))
-    if not claude:
-        return {"action": "none", "why": "curious: no Claude Code to read what it saw"}
+    agent = meta_agent(cfg)
+    if not agent:
+        return {"action": "none", "why": "curious: no model to read what it saw"}
     try:
-        answer = ask_claude(claude, cfg.get("memoryModel") or "haiku", CURIOUS_SYSTEM,
+        answer = ask_agent(agent, cfg.get("memoryModel") or "small", CURIOUS_SYSTEM,
                             curious_prompt(new, now), CURIOUS_SCHEMA)
     except ToolError as e:
         return {"action": "none", "why": f"curious: {e}"}
@@ -3402,7 +3408,7 @@ def curious_digest(cfg, event, now):
                     + " I'll remember that; tell me if I got it wrong.")
             if question:
                 parts.append(question)
-            item = {"kind": "curious", "key": f"curious:{day_of(now)}:{int(now)}", "title": "Claude",
+            item = {"kind": "curious", "key": f"curious:{day_of(now)}:{int(now)}", "title": "Muse",
                     "text": " ".join(parts), "app": "offer" if offer else "noticed" if learned else "question",
                     "curious": True,
                     **({"asked": True} if force else {})}
@@ -3417,7 +3423,7 @@ def curious_digest(cfg, event, now):
 # how often they came up, how lately; never people, events or the profile's
 # details) and searches the web (WebSearch/WebFetch only) for what is new on
 # them, and where they are (the city and country: the shell's weather, or
-# newsLocation), what's happening there. Claude says it in its bubble: what's happening in a sentence or two,
+# newsLocation), what's happening there. Muse says it in its bubble: what's happening in a sentence or two,
 # then the items, the most interesting for the user first, each with its
 # link (a button under the bubble; the thread has them as Markdown links).
 # Links come from the search only, http(s); one told is never told again.
@@ -3517,11 +3523,11 @@ def news_digest(cfg, event, now):
         m.data["newsAt"] = int(now)  # once a day, even if the call fails
         seen = list(m.data.get("newsSeen", []))
         m.save()
-    claude = claude_path(cfg, event.get("claude"))
-    if not claude:
-        return {"action": "none", "why": "news: no Claude Code"}
+    agent = meta_agent(cfg)
+    if not agent:
+        return {"action": "none", "why": "news: no model"}
     try:
-        answer = ask_claude(claude, cfg.get("newsModel") or cfg.get("memoryModel") or "haiku", NEWS_SYSTEM,
+        answer = ask_agent(agent, cfg.get("newsModel") or cfg.get("memoryModel") or "small", NEWS_SYSTEM,
                             news_prompt(topics, extra, seen, now, location), NEWS_SCHEMA, web=True)
     except ToolError as e:
         return {"action": "none", "why": f"news: {e}"}
@@ -3534,7 +3540,7 @@ def news_digest(cfg, event, now):
     chat = "\n\n".join([intro, "\n".join(f"- **[{i['headline']}]({i['url']})**: {i['summary']} _({i['source']})_"
                                          for i in items)])
     actions = [{"label": short(i["source"], 24), "do": "link", "url": i["url"]} for i in items[:NEWS_LINKS]]
-    item = {"kind": "news", "key": f"news:{day_of(now)}:{int(now)}", "title": "Claude", "text": text_,
+    item = {"kind": "news", "key": f"news:{day_of(now)}:{int(now)}", "title": "Muse", "text": text_,
             "chat": chat, "app": "news", "actions": actions, "ttl": NEWS_TTL, **({"asked": True} if force else {})}
     with Initiative() as m:
         m.data["newsSeen"] = (m.data.get("newsSeen", []) + [i["url"] for i in items])[-NEWS_SEEN_MAX:]
@@ -3687,8 +3693,8 @@ def pair_consider(cfg, event, now):
     digest = hashlib.sha256(f"{key}\n{screen or ''}".encode()).hexdigest()[:16]
     if seen and (seen.get("hash") == digest or now - seen.get("at", 0) < PAIR_SAME_GAP):
         return quiet("the same as before")
-    if not model_ready(cfg, event.get("claude")):
-        return quiet("no model (Claude Code, or localModel when local only)")
+    if not model_ready(cfg):
+        return quiet("no model (Meta's, or localModel when local only)")
     with Initiative() as m:
         p = m.data.setdefault("pair", {})
         p["lastCall"] = int(now)
@@ -3700,7 +3706,7 @@ def pair_consider(cfg, event, now):
     notes = [f"{n['topic']}: {short(n.get('text', ''), 160)}" for n in read_memory()["notes"]
              if n.get("kind") != "recipe" and app in (n.get("apps") or [])][:4]
     try:
-        answer = ask_model(cfg, event.get("claude"), PAIR_SYSTEM,
+        answer = ask_model(cfg, PAIR_SYSTEM,
                            pair_prompt(app, title, screen, notes, now), PAIR_SCHEMA, web=True)
     except ToolError as e:
         return {"action": "none", "why": f"pairing: {e}"}
@@ -3718,7 +3724,7 @@ def pair_consider(cfg, event, now):
                           "url": url})
     links = links[:2] if ai_policy() == 1 else []
     chat = full + ("\n\n" + "\n".join(f"- [{ln['title']}]({ln['url']})" for ln in links) if links else "")
-    item = {"kind": "pair", "key": f"pair:{key}:{digest[:8]}", "title": "Claude", "text": said, "chat": chat,
+    item = {"kind": "pair", "key": f"pair:{key}:{digest[:8]}", "title": "Muse", "text": said, "chat": chat,
             "app": app, "ttl": PAIR_TTL,
             "actions": [{"label": short(ln["title"], 24), "do": "link", "url": ln["url"]} for ln in links]}
     with Initiative() as m:
@@ -3806,11 +3812,11 @@ def routine_idea(cfg, event, now):
         data["ideaAt"] = now + IDEA_EVERY
         m.save()
         snapshot = json.loads(json.dumps(data))
-    claude = claude_path(cfg, event.get("claude"))
-    if not claude:
-        return {"action": "none", "why": "ideas: no Claude Code"}
+    agent = meta_agent(cfg)
+    if not agent:
+        return {"action": "none", "why": "ideas: no model"}
     try:
-        answer = ask_claude(claude, cfg.get("memoryModel") or "haiku", IDEA_SYSTEM, idea_prompt(cfg, snapshot, now),
+        answer = ask_agent(agent, cfg.get("memoryModel") or "small", IDEA_SYSTEM, idea_prompt(cfg, snapshot, now),
                             IDEA_SCHEMA)
     except ToolError as e:
         return {"action": "none", "why": f"ideas: {e}"}
@@ -3989,11 +3995,11 @@ def improve_idea(cfg, event, now):
         data["improveIdeaAt"] = now + IMPROVE_IDEA_EVERY
         m.save()
         snapshot = json.loads(json.dumps(data))
-    claude = claude_path(cfg, event.get("claude"))
-    if not claude:
-        return {"action": "none", "why": "improvement ideas: no Claude Code"}
+    agent = meta_agent(cfg)
+    if not agent:
+        return {"action": "none", "why": "improvement ideas: no model"}
     try:
-        answer = ask_claude(claude, cfg.get("memoryModel") or "haiku", IMPROVE_SYSTEM,
+        answer = ask_agent(agent, cfg.get("memoryModel") or "small", IMPROVE_SYSTEM,
                             improve_prompt(cfg, snapshot, kinds, now), IMPROVE_SCHEMA)
     except ToolError as e:
         return {"action": "none", "why": f"improvement ideas: {e}"}
@@ -4009,7 +4015,7 @@ def improve_idea(cfg, event, now):
     iid = secrets.token_hex(3)
     noun = "fix" if idea["kind"] == "fix" else "feature"
     said = f"{why} Shall I ask for this {noun} of nixbook? \u201c{short(text_, 300)}\u201d"
-    item = {"id": secrets.token_hex(3), "kind": "improve", "key": f"improve:{iid}", "title": "Claude",
+    item = {"id": secrets.token_hex(3), "kind": "improve", "key": f"improve:{iid}", "title": "Muse",
             "text": said.strip(), "time": int(now), "level": "badge", "expires": int(now) + 3 * 86400,
             "accept": f"improve:{iid}"}
     with Initiative() as m:
@@ -4038,10 +4044,10 @@ def improve_answer(data, iid, outcome):
 
 
 # Reactions (ai.initiative.reactions, off by default): something the user
-# just did on the computer that Claude can lend a hand with, said at once in
+# just did on the computer that Muse can lend a hand with, said at once in
 # its bubble with buttons that act in one click: a file downloaded (open it,
 # show it in its folder; summarize it, extract it, how to install it, what is
-# in it: those ask Claude, the file attached), a screenshot taken (what is in
+# in it: those ask Muse, the file attached), a screenshot taken (what is in
 # it), a drive plugged in (open it). Plain code, no model call; the value of
 # each kind, "don't tell me this" and the dedupe as for the rest, but neither
 # the day's budget nor the gap: a reaction is now or never. Never while busy
@@ -4056,7 +4062,7 @@ REACT_INSTALL = {"deb", "rpm", "appimage", "exe", "msi", "dmg", "flatpakref", "p
 def happened_item(event):
     """What it offers for something that just happened, or None:
     {kind: react, app: what, text, actions: [{label, do: open|reveal|ask,
-    path, text?, attach?}]}. Local only (policies.ai 2): no asking Claude."""
+    path, text?, attach?}]}. Local only (policies.ai 2): no asking Muse."""
     item = _happened_item(event)
     if item and ai_policy() != 1:
         item["actions"] = [a for a in item["actions"] if a["do"] != "ask"]
@@ -4067,7 +4073,7 @@ def happened_item(event):
 
 # A command failing again in a terminal (ai.initiative.terminal), an error
 # copied (ai.initiative.clipboardErrors): plain code offers "Explain it";
-# only that click sends it to Claude, redacted like pairing's screen text.
+# only that click sends it to Muse, redacted like pairing's screen text.
 COMMAND_MAX = 300
 COPIED_MAX = 2000
 
@@ -4082,7 +4088,7 @@ def _happened_item(event):
             return None
         head = short(command, 40)
         return {"kind": "react", "key": f"react:command_failed:{fold(command)[:80]}:{int(time.time() // 1800)}",
-                "title": "Claude", "app": what, "ttl": REACT_TTL,
+                "title": "Muse", "app": what, "ttl": REACT_TTL,
                 "text": pick(f"“{head}” failed again. Want me to look into it?",
                              f"“{head}” keeps failing{f' (exit {code})' if code else ''}. Shall I help?"),
                 "actions": [{"label": "Explain it", "do": "ask", "path": cwd,
@@ -4097,7 +4103,7 @@ def _happened_item(event):
         if len(copied) < 20:
             return None
         return {"kind": "react", "key": f"react:copied_error:{hashlib.sha256(copied.encode()).hexdigest()[:12]}",
-                "title": "Claude", "app": what, "ttl": 15 * 60,
+                "title": "Muse", "app": what, "ttl": 15 * 60,
                 "text": f"You copied an error{f' (“{line}”)' if line else ''}. Want me to explain it?",
                 "actions": [{"label": "Explain it", "do": "ask", "path": os.path.expanduser("~"),
                              "text": f"I copied this error. What does it mean, and how do I fix it?\n\n```\n{copied}\n```"}]}
@@ -4116,7 +4122,7 @@ def _happened_item(event):
         elif ext in REACT_IMAGE:
             text_, extra = f"{name} is in Downloads.", ask("What's in it?", "What's in this image?")
         elif ext in REACT_ARCHIVE:
-            # Extracted by the shell at once (`extract`): no need for Claude.
+            # Extracted by the shell at once (`extract`): no need for Muse.
             text_, extra = f"{name} downloaded. Extract it?", {"label": "Extract it", "do": "extract", "path": path}
         elif ext in REACT_INSTALL:
             text_, extra = f"{name} downloaded. On NixOS that usually needs another way in: want me to look?", ask(
@@ -4134,7 +4140,7 @@ def _happened_item(event):
                    ask("What's on it?", f"A drive was plugged in at {path}: tell me briefly what's on it.", False)]
     else:
         return None
-    return {"kind": "react", "key": f"react:{what}:{fold(name)}", "title": "Claude", "text": text_,
+    return {"kind": "react", "key": f"react:{what}:{fold(name)}", "title": "Muse", "text": text_,
             "app": what, "actions": actions, "ttl": REACT_TTL}
 
 
@@ -4142,7 +4148,7 @@ def _happened_item(event):
 # the shell keeps it in memory only and has it filtered here before it goes
 # anywhere: private apps and windows out (as for pairing), secrets, numbers
 # and addresses redacted, capped. `context` prints it for a question asked
-# in Claude's bubble; the brief says where they were before a break.
+# in Muse's bubble; the brief says where they were before a break.
 CONTEXT_LINES = 15
 
 
@@ -4242,11 +4248,11 @@ def consider_event(cfg, event, now=None):
             m.save()
         if not items:
             return {"action": "none", "why": why}
-        if not model_ready(cfg, event.get("claude")):
-            return {"action": "none", "why": "no model (Claude Code, or localModel when local only)"}
+        if not model_ready(cfg):
+            return {"action": "none", "why": "no model (Meta's, or localModel when local only)"}
         # The model reads them without holding the file: other events go on.
         try:
-            answer = ask_model(cfg, event.get("claude"), INITIATIVE_SYSTEM,
+            answer = ask_model(cfg, INITIATIVE_SYSTEM,
                                notice_prompt(event, items, now, read_initiative().get("apps")), INITIATIVE_SCHEMA)
         except ToolError as e:
             return {"action": "none", "why": str(e)}
@@ -4332,7 +4338,7 @@ def consider_event(cfg, event, now=None):
                 # A shorter break: only where they were, when the shell kept it.
                 back = where_were_we(cfg, event.get("recent")) if (event.get("away") or 0) >= INITIATIVE_BREAK_MINUTES else ""
                 if back:
-                    item = {"kind": "brief", "key": f"back:{int(now // 600)}", "title": "Claude",
+                    item = {"kind": "brief", "key": f"back:{int(now // 600)}", "title": "Muse",
                             "text": "Welcome back. " + back}
                 else:
                     why = "not away long enough"
@@ -4349,7 +4355,7 @@ def consider_event(cfg, event, now=None):
 # Watches: "tell me when the build is done", "ping me when CI passes", "let
 # me know when the site is back". An agent adds one (the watch tool); the
 # shell asks `watch check` every minute while there are some, and what
-# finished is said in Claude's bubble (a notification when it is off). Plain
+# finished is said in Muse's bubble (a notification when it is off). Plain
 # code, no token: a process (pid or exact name), a systemd unit, a file done
 # growing (a download), a GitHub Actions run or a pull request's checks
 # (gh, the user's login, read only), a web page answering again. In
@@ -4434,7 +4440,7 @@ def watch_item(w, state, now):
                                 f"{' (system)' if w.get('system') else ''} failed: read its journal and tell me why, briefly."})
     else:
         text_ = f"{label}: done" + (", all green." if w["kind"] in ("run", "pr") else ".")
-    return {"kind": "watch", "key": f"watch:{w['id']}", "title": "Claude", "text": text_[:300], "app": w["kind"],
+    return {"kind": "watch", "key": f"watch:{w['id']}", "title": "Muse", "text": text_[:300], "app": w["kind"],
             "actions": actions, "ttl": 6 * 3600, **({"urgent": True, "critical": True} if state != "expired" else {})}
 
 
@@ -4559,7 +4565,7 @@ def watch_check(cfg, busy=False, now=None):
             item = watch_item(w, state, now)
             if not on:
                 with contextlib.suppress(ToolError):
-                    run(["notify-send", "-a", "Claude", "--", "Claude", item["text"]])
+                    run(["notify-send", "-a", "Muse", "--", "Muse", item["text"]])
                 continue
             out = deliver(cfg, m.data, item, "badge" if state == "expired" else "notify", busy, now)
             if out.get("item"):
@@ -4656,7 +4662,7 @@ def initiative_command(cfg, argv):
         return 0
     if sub == "news":
         # The news now (Settings > Find news now): {action, item, why}.
-        print(json.dumps(initiative_consider(cfg, {"event": "news", "force": True, "claude": argv[1] if len(argv) > 1 else None}),
+        print(json.dumps(initiative_consider(cfg, {"event": "news", "force": True}),
                          ensure_ascii=False))
         return 0
     if sub == "ideas":
@@ -4666,7 +4672,7 @@ def initiative_command(cfg, argv):
     if sub == "improve":
         # A fix or feature of nixbook to propose now (else every two days):
         # {action, why}.
-        out = improve_idea(cfg, {"event": "moment", "improveNow": True, "claude": argv[1] if len(argv) > 1 else None},
+        out = improve_idea(cfg, {"event": "moment", "improveNow": True},
                            time.time())
         print(json.dumps(out or {"action": "none", "why": "improvement ideas: not now"}, ensure_ascii=False))
         return 0
@@ -4782,7 +4788,7 @@ def watch_command(cfg, argv):
 #     something I like" at no token); never a text someone else wrote. And
 #     open_file, for {file}: the file with its default app;
 #   - or, when it takes judgment ("something I'd like for this time of day"),
-#     a short headless Claude turn with only those servers' tools, at most
+#     a short headless Muse turn with only those servers' tools, at most
 #     routineAgentPerDay a day.
 # It never fights the user: music routines fire only on music that ended on
 # its own (never on a pause), each routine waits `cooldown` minutes between
@@ -4882,15 +4888,15 @@ ROUTINE_SYSTEM = (
 )
 # What a routine may do. A fixed action: these desktop tools only (windows,
 # layouts, themes, music; never typing, clicking, the clipboard, the screen,
-# the memory or contacts); shell_ipc for the music only. A routine's Claude
+# the memory or contacts); shell_ipc for the music only. A routine's Muse
 # run: its servers and these desktop groups. Routines an agent adds wait for
-# the user's yes (routine_accept); none runs a Claude turn while locked.
+# the user's yes (routine_accept); none runs a Muse turn while locked.
 ROUTINE_DESKTOP_TOOLS = {"focus_window", "focus_workspace", "launch_app", "move_window_to_workspace",
                          "restore_layout", "window_action", "close_window", "set_theme", "set_wallpaper",
                          "equalizer", "widget", "notify", "shell_ipc"}
 ROUTINE_IPC_TARGETS = {"mpris"}
 ROUTINE_AGENT_GROUPS = "observe,windows,shell"
-# What of the event a routine's Claude run is told: no text from anyone else.
+# What of the event a routine's Muse run is told: no text from anyone else.
 ROUTINE_EVENT_FIELDS = ("event", "app", "name", "percent", "ext", "at", "minutes", "times", "matched")
 
 
@@ -4907,7 +4913,7 @@ def assistant_servers():
     # Those turned off for the side panel are off for routines too.
     try:
         with open(os.path.join(xdg("XDG_CONFIG_HOME", "~/.config"), "nixbook-shell", "config.json"), encoding="utf-8") as f:
-            off = set(((json.load(f).get("ai") or {}).get("claudeCode") or {}).get("mcpServersOff") or [])
+            off = set(((json.load(f).get("ai") or {}).get("agent") or {}).get("mcpServersOff") or [])
     except (OSError, ValueError, AttributeError):
         off = set()
     return {k: v for k, v in servers.items() if isinstance(v, dict) and v.get("command") and k not in off}
@@ -5102,7 +5108,7 @@ def routine_line(r):
     "once and costs nothing; desktop tools: " + ", ".join(sorted(ROUTINE_DESKTOP_TOOLS)) + ", shell_ipc "
     "for mpris only), a few in a row {steps: [{tool, args, server}…]} (at "
     "most " + str(ROUTINE_STEPS_MAX) + "), or, when it truly takes judgment, {agent: \"what to do\", "
-    "servers: [the MCP servers it needs]} (a short Claude run each time, slower, not "
+    "servers: [the MCP servers it needs]} (a short Muse run each time, slower, not "
     "while the screen is locked). Prefer a fixed call: \"{liked}\" in its args is "
     "filled at no token with a song the user likes (\"Title Artist\", from their "
     "listening history, another each time, never the artist on repeat), so "
@@ -5178,7 +5184,7 @@ def routine_ask(r, why=""):
     """A routine an agent added (or asks to turn on), or an idea (why it
     would help): the user's yes turns it on, shown as what it would do."""
     do = r["do"]
-    how = f"a short Claude run: \u201c{short(do['agent'], 120)}\u201d" + (
+    how = f"a short Muse run: \u201c{short(do['agent'], 120)}\u201d" + (
         f" with {', '.join(do.get('servers') or [])}" if do.get("servers") else "") if do.get("agent") else \
         ", then ".join(f"{x['server']}: {x['tool']} {short(json.dumps(x.get('args') or {}, ensure_ascii=False), 120)}"
                        for x in routine_steps(do)) + (
@@ -5316,11 +5322,12 @@ def app_call(client, server, tool_name, args):
 
 
 def routine_agent(cfg, r, event):
-    """A short headless Claude turn for a routine that takes judgment, with
-    the desktop and the servers it named only: its one-line report."""
-    claude = claude_path(cfg, event.get("claude"))
-    if not claude:
-        raise ToolError("no Claude Code")
+    """A short headless Muse turn (nixbook-meta-agent) for a routine that
+    takes judgment, with the desktop and the servers it named only: its
+    one-line report."""
+    agent = meta_agent(cfg)
+    if not agent:
+        raise ToolError("no model (nixbook-meta-agent)")
     servers = assistant_servers()
     desktop = shutil.which("nixbook-desktop-mcp")
     config = {"mcpServers": {"desktop": {"command": desktop, "args": []} if desktop else
@@ -5348,21 +5355,19 @@ def routine_agent(cfg, r, event):
     workdir = os.path.join(xdg("XDG_DATA_HOME", "~/.local/share"), "nixbook-shell", "routines")
     os.makedirs(workdir, mode=0o700, exist_ok=True)
     system = ROUTINE_SYSTEM
-    settings = []
+    privacy = []
     if privacy_on():
-        # The privacy mask: its prompt and, through the hook, its other
+        # The privacy mask: its prompt and, with --privacy, its other
         # servers' replies (the desktop's masks on its own); its report
         # has the real values.
         prompt, system = mask_text(prompt), system + "\n\n" + PRIVACY_PROMPT
-        hook = [{"matcher": "^(?!mcp__desktop__).*", "hooks": [{"type": "command", "command": f"{shlex.quote(desktop or sys.executable)}"
-                 + ("" if desktop else f" {shlex.quote(os.path.abspath(__file__))}") + " privacy hook"}]}]
-        settings = ["--settings", json.dumps({"hooks": {"PreToolUse": hook, "PostToolUse": hook}})]
-    cmd = [*claude_cmd(claude), "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-           "--mcp-config", json.dumps(config), "--setting-sources", "project", *settings,
+        privacy = ["--privacy"]
+    cmd = [*agent_cmd(agent), "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
+           "--mcp-config", json.dumps(config), *privacy,
            # Only its servers' tools: no built-in one (shell, files, web).
            "--tools", "", "--allowedTools", ",".join(f"mcp__{s}" for s in config["mcpServers"]),
            "--max-turns", str(ROUTINE_AGENT_TURNS), "--append-system-prompt", system,
-           "--model", cfg.get("routineModel") or "haiku"]
+           "--model", cfg.get("routineModel") or "small"]
     try:
         proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, cwd=workdir, timeout=240)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -5399,7 +5404,7 @@ def routine_say(r, said, accept=None):
     word's yes turns it on, a no forgets it). Its reports stop once the
     user said "don't tell me this" to one (muted: routine:ID)."""
     now = int(time.time())
-    item = {"id": secrets.token_hex(3), "kind": "routine", "key": f"routine:{r['id']}:{now}", "title": "Claude",
+    item = {"id": secrets.token_hex(3), "kind": "routine", "key": f"routine:{r['id']}:{now}", "title": "Muse",
             "text": said, "time": now, "level": "badge", "expires": now + (3 * 86400 if accept else
                                                                          INITIATIVE_PENDING_HOURS * 3600)}
     if accept:
@@ -5440,7 +5445,7 @@ def routine_run(cfg, rid, event, now=None):
         if r["when"]["event"] == "day_start" and day_of(r.get("last", 0)) == day_of(now):
             return {"ran": False, "why": "it ran today already"}
         if r["do"].get("agent") and screen_locked():
-            return {"ran": False, "why": "the screen is locked (a routine's Claude run waits for the user)"}
+            return {"ran": False, "why": "the screen is locked (a routine's Muse run waits for the user)"}
         if r["do"].get("agent"):
             today = time.strftime("%Y-%m-%d", time.localtime(now))
             runs = sum(x.get("agentToday", 0) for x in m.data["routines"] if x.get("lastAgentDay") == today)
@@ -5905,11 +5910,11 @@ def start_learning(cfg, episode):
     `memory learn` on the episode, the fading, the weekly tidy-up when due."""
     if not cfg.get("memoryLearn", True):
         return
-    claude = claude_path(cfg)
-    if not claude:
+    agent = meta_agent(cfg)
+    if not agent:
         return
     cmd = [sys.executable, os.path.abspath(__file__), "memory", "learn",
-           "--claude", claude, "--model", cfg.get("memoryModel") or "haiku"]
+           "--model", cfg.get("memoryModel") or "small"]
     try:
         if episode:
             fd, path = tempfile.mkstemp(prefix="episode-", suffix=".json", dir=episodes_dir())
@@ -7854,8 +7859,8 @@ def t_forget_about_user(ctx, args):
 
 # The memory pass: agents are told to save what matters, but in the middle
 # of a task they often don't. So the shell's AI chat hands each conversation,
-# once it goes quiet, to `personal learn`: a small model (Claude Code, no
-# tools, no MCP, no settings) reads it with the entries it may bear on and
+# once it goes quiet, to `personal learn`: a small model (nixbook-meta-agent, no
+# tools, no MCP) reads it with the entries it may bear on and
 # answers what to save, update or forget; this applies it with the same
 # rules as the tools (one entry per subject, an existing one only by id).
 
@@ -7976,7 +7981,7 @@ def tidy_prompt(entries):
 
 
 def learn_answer(out):
-    """The pass's JSON, from Claude Code's --output-format json."""
+    """The pass's JSON, from nixbook-meta-agent's --output-format json."""
     try:
         reply = json.loads(out)
     except ValueError:
@@ -8644,23 +8649,6 @@ def privacy_note(boxes):
     return [text(f"Private details are blacked out in this image: {where}.")]
 
 
-def privacy_hook():
-    """Claude Code's PreToolUse and PostToolUse hook (the side panel's
-    Claude): placeholders become the real values in what it sends to any
-    tool, and what tools answer is masked."""
-    try:
-        event = json.load(sys.stdin)
-    except ValueError:
-        return 0
-    answer = privacy_hook_answer(event)
-    if answer:
-        print(json.dumps(answer, ensure_ascii=False))
-    return 0
-
-
-PRIVACY_PROVIDER_TOOLS = ("WebSearch", "WebFetch")
-
-
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
 
@@ -8697,24 +8685,12 @@ def mask_images(obj):
     return {**obj, "file": {**inner, key: data}}
 
 
-def privacy_hook_answer(event):
-    """The hook's answer to an event, or None: nothing to change."""
-    if not isinstance(event, dict) or not privacy_on():
-        return None
-    name = event.get("hook_event_name")
-    # WebSearch runs at the model's provider, and WebFetch has its small
-    # model read the page with the prompt: a placeholder stays one there.
-    if name == "PreToolUse" and event.get("tool_name") in PRIVACY_PROVIDER_TOOLS:
-        return None
-    if name == "PreToolUse" and isinstance(event.get("tool_input"), dict):
-        real = unmask_obj(event["tool_input"])
-        if real != event["tool_input"]:
-            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": real}}
-    elif name == "PostToolUse" and "tool_response" in event:
-        masked = mask_obj(mask_images(event["tool_response"]) if privacy_screenshots() else event["tool_response"])
-        if masked != event["tool_response"]:
-            return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedToolOutput": masked}}
-    return None
+def mask_json(obj):
+    """`privacy mask --json`: a tool's reply (nixbook-meta-agent's --privacy,
+    another MCP server's), its text masked and, with
+    ai.privacy.screenshots, its images' private details blacked out; the
+    same shape back."""
+    return mask_obj(mask_images(obj) if privacy_screenshots() else obj)
 
 
 # What was sent to a model: each small-model pass (what for, which model,
@@ -8821,31 +8797,30 @@ def ask_local(cfg, system, prompt, schema=None):
     return unmask_obj(ask_local_now(cfg, system + "\n\n" + PRIVACY_PROMPT, mask_text(prompt), schema))
 
 
-def model_ready(cfg, hint=None):
-    return bool(claude_path(cfg, hint)) if ai_policy() == 1 else ai_policy() == 2 and bool(local_model(cfg))
+def model_ready(cfg):
+    return bool(meta_agent(cfg)) if ai_policy() == 1 else ai_policy() == 2 and bool(local_model(cfg))
 
 
-def ask_model(cfg, hint, system, prompt, schema=None, web=False):
+def ask_model(cfg, system, prompt, schema=None, web=False):
     if ai_policy() == 1:
-        claude = claude_path(cfg, hint)
-        if not claude:
-            raise ToolError("no Claude Code")
-        return ask_claude(claude, cfg.get("memoryModel") or "haiku", system, prompt, schema, web)
+        return ask_agent(meta_agent(cfg), cfg.get("memoryModel") or "small", system, prompt, schema, web)
     if ai_policy() == 2 and local_model(cfg):
         return ask_local(cfg, system, prompt, schema)
     raise ToolError("no model: AI is off, or local only without localModel")
 
 
-def ask_claude_now(claude, model, system, prompt, schema=None, web=False):
-    """One answer from a small model through Claude Code: no tools (with
-    `web`, only WebSearch and WebFetch), no MCP servers, no settings, no
+def ask_agent_now(agent, model, system, prompt, schema=None, web=False):
+    """One structured answer from a small model through nixbook-meta-agent:
+    no tools (with `web`, only WebSearch and WebFetch), no MCP servers, no
     session kept."""
-    sent_note(sent_purpose(system), provider_model(model or "default"), prompt, web)
+    if not agent:
+        raise ToolError("no model: nixbook-meta-agent wasn't found")
+    sent_note(sent_purpose(system), provider_model(model or "main"), prompt, web)
     workdir = os.path.join(xdg("XDG_DATA_HOME", "~/.local/share"), "nixbook-shell", "memory-pass")
     os.makedirs(workdir, mode=0o700, exist_ok=True)
     tools = "WebSearch,WebFetch" if web else ""
-    cmd = [*claude_cmd(claude), "-p", "--output-format", "json", "--no-session-persistence",
-           "--strict-mcp-config", "--setting-sources", "project", "--tools", tools,
+    cmd = [*agent_cmd(agent), "-p", "--output-format", "json", "--no-session-persistence",
+           "--strict-mcp-config", "--tools", tools,
            "--system-prompt", system, "--json-schema", json.dumps(schema or LEARN_SCHEMA)]
     if web:
         cmd += ["--allowedTools", tools]
@@ -8861,11 +8836,11 @@ def ask_claude_now(claude, model, system, prompt, schema=None, web=False):
     return learn_answer(proc.stdout)
 
 
-def ask_claude(claude, model, system, prompt, schema=None, web=False):
-    """As ask_local, through Claude Code."""
+def ask_agent(agent, model, system, prompt, schema=None, web=False):
+    """As ask_local, through nixbook-meta-agent."""
     if not privacy_on():
-        return ask_claude_now(claude, model, system, prompt, schema, web)
-    return unmask_obj(ask_claude_now(claude, model, system + "\n\n" + PRIVACY_PROMPT, mask_text(prompt), schema, web))
+        return ask_agent_now(agent, model, system, prompt, schema, web)
+    return unmask_obj(ask_agent_now(agent, model, system + "\n\n" + PRIVACY_PROMPT, mask_text(prompt), schema, web))
 
 
 def ids_of(answer, key, limit):
@@ -8938,7 +8913,7 @@ def tidy_due(now):
     return True
 
 
-def learn_from(cfg, transcript, claude, model, tidy=None):
+def learn_from(cfg, transcript, agent, model, tidy=None):
     """The memory pass on a conversation, then the fading and, when due,
     the tidy-up: {"saved": [topics], "recalled": [ids], "forgot": [ids],
     "faded": [ids], "tidied": bool, "skipped": [why]}. tidy: True to tidy
@@ -8954,12 +8929,12 @@ def learn_from(cfg, transcript, claude, model, tidy=None):
         transcript = "…" + transcript[-LEARN_TRANSCRIPT_MAX:]
     if transcript:
         prompt, shown = learn_prompt(read_personal(), transcript)
-        apply_answer(ctx, ask_claude(claude, model, LEARN_SYSTEM, prompt), shown, done,
+        apply_answer(ctx, ask_agent(agent, model, LEARN_SYSTEM, prompt), shown, done,
                      LEARN_MAX_SAVES, LEARN_MAX_FORGETS)
     if tidy or (tidy is None and tidy_due(now)):
         prompt, shown = tidy_prompt(read_personal())
         try:
-            apply_answer(ctx, ask_claude(claude, model, TIDY_SYSTEM, prompt), shown, done,
+            apply_answer(ctx, ask_agent(agent, model, TIDY_SYSTEM, prompt), shown, done,
                          TIDY_MAX_CHANGES, TIDY_MAX_CHANGES, tidy=True)
             done["tidied"] = True
         except ToolError as e:
@@ -9126,11 +9101,11 @@ def apply_desktop_save(ctx, item, done):
                                   {"label": "Forget it", "do": "forget", "note": ctx.last_note}])
 
 
-def learn_episode(cfg, episode, claude, model, done):
+def learn_episode(cfg, episode, agent, model, done):
     ctx = Context(cfg, "cli", LEARN_CLIENT, notify=False)
     notes = read_memory()["notes"]
     prompt, shown = episode_prompt(episode, notes)
-    answer = ask_claude(claude, model, DLEARN_SYSTEM, prompt, DLEARN_SCHEMA)
+    answer = ask_agent(agent, model, DLEARN_SYSTEM, prompt, DLEARN_SCHEMA)
     known = {n["id"] for n in notes}
     for item in [i for i in answer.get("save") or [] if isinstance(i, dict)][:DLEARN_MAX_SAVES]:
         if item.get("id") not in known:
@@ -9196,7 +9171,7 @@ def tidy_desktop_prompt(notes, since):
     return "\n".join(out), shown, {n["id"] for n in bare}
 
 
-def tidy_desktop(cfg, claude, model, done):
+def tidy_desktop(cfg, agent, model, done):
     with Memory() as m:
         since = m.data.get("tidiedBefore", 0)
         notes = list(m.data["notes"])
@@ -9206,7 +9181,7 @@ def tidy_desktop(cfg, claude, model, done):
         m.save()
     if not shown and not bare:
         return
-    answer = ask_claude(claude, model, DTIDY_SYSTEM, prompt, DLEARN_SCHEMA)
+    answer = ask_agent(agent, model, DTIDY_SYSTEM, prompt, DLEARN_SCHEMA)
     with Memory() as m:
         by_id = {n["id"]: n for n in m.data["notes"]}
         saved_in = {}
@@ -9259,8 +9234,8 @@ def tidy_desktop(cfg, claude, model, done):
 
 
 def memory_learn_command(cfg, sub, argv):
-    opts = {"--claude": claude_path(cfg) or "claude",
-            "--model": cfg.get("memoryModel") or "haiku"}
+    # --claude PATH: an old option, still accepted, ignored.
+    opts = {"--claude": None, "--model": cfg.get("memoryModel") or "small"}
     delete = "--delete" in argv
     rest = [a for a in argv if a != "--delete"]
     while len(rest) > 1 and rest[0] in opts:
@@ -9290,12 +9265,12 @@ def memory_learn_command(cfg, sub, argv):
     expire_triggers(now)
     if isinstance(episode, dict) and episode.get("actions"):
         try:
-            learn_episode(cfg, episode, opts["--claude"], opts["--model"], done)
+            learn_episode(cfg, episode, meta_agent(cfg), opts["--model"], done)
         except ToolError as e:
             done["skipped"].append(f"learn: {e}")
     if sub == "tidy" or desktop_tidy_due(now):
         try:
-            tidy_desktop(cfg, opts["--claude"], opts["--model"], done)
+            tidy_desktop(cfg, meta_agent(cfg), opts["--model"], done)
         except ToolError as e:
             done["skipped"].append(f"tidy: {e}")
     print(json.dumps(done, ensure_ascii=False))
@@ -11999,9 +11974,9 @@ def improve_now(ctx, item, st=None):
                 "on its own once the ones before it are done. The user can reorder or remove it in "
                 "Settings > Desktop agents.")
     env = [f"--setenv=PATH={os.environ.get('PATH', '')}"]
-    claude = claude_path(ctx.cfg)
-    if claude:
-        env.append(f"--setenv=NIXBOOK_IMPROVE_CLAUDE={claude}")
+    agent = meta_agent(ctx.cfg)
+    if agent:
+        env.append(f"--setenv=NIXBOOK_IMPROVE_AGENT={agent}")
     try:
         proc = run(["systemd-run", "--user", "--collect", "--quiet", f"--unit=nixbook-improve-run-{int(time.time() * 1000)}",
                     "-p", "RuntimeMaxSec=8h", "-p", "Nice=19", "-p", "CPUWeight=idle", "-p", "IOSchedulingClass=idle",
@@ -12395,7 +12370,7 @@ def capture_geometry(args):
     "while you work (your screenshots and actions say when they are on "
     "screen; it comes back for the user a few seconds after your last "
     "action, nothing is dismissed): notificationPopups, cutIn (a theme's "
-    "full-screen alert), speechBubble (Claude's bubble). Rarely needed: they "
+    "full-screen alert), speechBubble (Muse's bubble). Rarely needed: they "
     "let your clicks and keys through and are hidden from your screenshots "
     "already. Never the sidePanel (the user's chat with you), the lock "
     "screen or a password prompt.",
@@ -12715,7 +12690,7 @@ EQ_BANDS_HZ = [32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
     "32, 63, 125, 250, 500 Hz, 1, 2, 4, 8, 16 kHz}; song_curve {gains, db} "
     "(a curve for the song playing only: the user's saved curve comes back "
     "when it ends); preamp {db}; auto {on}; "
-    "agent {on} (agent mode: each new song, a Claude Code task tunes it; "
+    "agent {on} (agent mode: each new song, a Muse task tunes it; "
     "replaces Auto); "
     "open / close (the equalizer window, on the user's screen). Setting a "
     "preset or bands turns Auto off. To fit what's playing: read status, "
@@ -14471,7 +14446,7 @@ def instructions_with_desktop():
 def task_query():
     """What the client says the task is: NIXBOOK_DESKTOP_MCP_QUERY, or the
     file NIXBOOK_DESKTOP_MCP_QUERY_FILE names (the shell's AI chat writes
-    each message there: its Claude Code, and so this server, outlive one)."""
+    each message there: its agent, and so this server, outlive one)."""
     path = os.environ.get("NIXBOOK_DESKTOP_MCP_QUERY_FILE")
     if path:
         try:
@@ -14794,10 +14769,7 @@ def serve_http(cfg, port):
 # the commands in HELPER_COMMANDS (no model, no long wait: one at a time),
 # and the initiative's decisions (`initiative consider`: a model's answer
 # can take seconds), each on a thread of its own, answered when done; the
-# shell starts the others as before. Also the side panel's privacy hooks
-# over HTTP (Claude Code's "http" hooks), on 127.0.0.1, a random port, a
-# bearer token and the caller the same user: ~2 ms instead of a process per
-# tool call. Its first line says where: {"hook": URL, "token": TOKEN}.
+# shell starts the others as before.
 HELPER_COMMANDS = {
     "privacy": None, "context": None, "sent": None, "pause": None, "resume": None, "status": None,
     "notify": None, "personal": ("context", "show", "forget"), "habits": ("cue", "alias", "status"),
@@ -14832,41 +14804,6 @@ def helper_run(argv, stdin):
     return code or 0, out.getvalue()
 
 
-def helper_hooks(token):
-    """The privacy hooks' HTTP endpoint, in a thread: its port."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    class Hook(BaseHTTPRequestHandler):
-        def log_message(self, fmt, *args):
-            pass
-
-        def do_POST(self):
-            auth = self.headers.get("Authorization") or ""
-            if (self.path != "/hook" or not hmac.compare_digest(auth.encode(), f"Bearer {token}".encode())
-                    or peer_uid(self.client_address, port) != os.getuid()):
-                self.send_response(403)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-                event = json.loads(self.rfile.read(length)) if 0 < length <= 1 << 24 else None
-            except ValueError:
-                event = None
-            data = json.dumps(privacy_hook_answer(event) or {}, ensure_ascii=False).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Hook)
-    server.daemon_threads = True
-    port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return port
-
-
 def helper_consider(argv, answer):
     """`initiative consider` on its own thread: its JSON, as the command
     prints it."""
@@ -14896,9 +14833,8 @@ def serve_helper():
         with lock:
             real.write(json.dumps(msg, ensure_ascii=False) + "\n")
             real.flush()
-    token = secrets.token_urlsafe(32)
-    port = helper_hooks(token)
-    send({"hook": f"http://127.0.0.1:{port}/hook", "token": token})
+    # Its first line: up, the shell may send it commands.
+    send({"ready": True})
     for line in sys.stdin:
         try:
             req = json.loads(line)
@@ -14925,8 +14861,7 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
 
   (none) | serve          MCP over stdio (what MCP clients start)
   serve --http [--port N] MCP over HTTP on 127.0.0.1 (bearer token: `token`)
-  helper                  the shell's: its quick commands on stdin (JSON lines), and
-                          the privacy hooks over HTTP on 127.0.0.1
+  helper                  the shell's: its quick commands on stdin (JSON lines)
   tools                   the enabled tools, as MCP JSON
   call NAME [JSON]        run one tool; prints its text, exit 1 on refusal
   episode JSON|-          a task done by a client without MCP ({task, actions: [{tool,
@@ -14960,13 +14895,16 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
   privacy mask [--typed] | unmask
                           stdin to stdout: private details as placeholders, or back
                           (--typed: what the user typed, lowercase first names too)
-  privacy hook            Claude Code's PreToolUse/PostToolUse hook for the same
+  privacy mask --json | unmask --json
+                          the same on a JSON value (a tool's input or reply; mask
+                          also blacks out its images' private details): for
+                          nixbook-meta-agent --privacy
   privacy show|clear      the placeholders given so far (JSON), or forget them
   privacy learned | unlearn KEY
                           the strangers' names learned private (JSON), or one not private
   routine list|run ID [EVENT_JSON]|undone ID|on ID|off ID|remove ID|learn suggest|auto
                           the user's routines (the shell runs them on their cue)
-  memory learn [--claude PATH] [--model M] [--delete] [EPISODE.json]
+  memory learn [--model M] [--delete] [EPISODE.json]
                           the memory pass on an agent's task (servers start it
                           in the background), the fading, the weekly tidy-up
                           when due; memory tidy: the tidy-up now
@@ -14974,13 +14912,14 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
                           [QUERY]: the part sent when an agent connects
   personal context [--exclude ID,…] MESSAGE  the entries a message is about
                           (JSON: text, ids), for the shell's AI chat
-  personal learn [--claude PATH] [--model M] [--delete] [FILE | -]
-                          the memory pass: a small model (default haiku) reads a
+  personal learn [--model M] [--delete] [FILE | -]
+                          the memory pass: a small model (default memoryModel,
+                          small; through nixbook-meta-agent) reads a
                           conversation and saves what is worth keeping (JSON:
                           saved, recalled, forgot, faded, tidied, skipped); then
                           forgets what faded and, weekly, tidies the memory up;
                           --delete removes FILE once read
-  personal tidy [--claude PATH] [--model M]  the tidy-up now: merges entries on
+  personal tidy [--model M]  the tidy-up now: merges entries on
                           the same subject, drops what no longer holds
   personal forget ID | clear
   habits [status]         usage habits learned on this machine (JSON), when
@@ -15176,10 +15115,18 @@ def main(argv):
         return 0
     if cmd == "privacy":
         sub = argv[1] if len(argv) > 1 else ""
-        if sub == "hook":
-            return privacy_hook()
         if sub in ("mask", "unmask"):
             data = sys.stdin.read()
+            if "--json" in argv:
+                # A JSON value (a tool's input or reply): its strings
+                # masked or unmasked, its shape kept.
+                try:
+                    obj = json.loads(data)
+                except ValueError:
+                    print("privacy: --json: not JSON", file=sys.stderr)
+                    return 2
+                print(json.dumps(mask_json(obj) if sub == "mask" else unmask_obj(obj), ensure_ascii=False))
+                return 0
             # --typed: what the user typed (lowercase first names too).
             sys.stdout.write(mask_text(data, typed="--typed" in argv) if sub == "mask" else unmask_text(data))
             return 0
@@ -15210,7 +15157,7 @@ def main(argv):
         if sub == "note" and len(argv) in (4, 5):
             # A 5th argument: the model it went to as is (nixbook-quick-ai
             # calls the provider's API itself, provider-prefixed already).
-            sent_note(clean_text(argv[2], 40), argv[4] if len(argv) == 5 else provider_model("claude (chat)"), argv[3])
+            sent_note(clean_text(argv[2], 40), argv[4] if len(argv) == 5 else provider_model("main (chat)"), argv[3])
             return 0
         if sub == "clear":
             with contextlib.suppress(FileNotFoundError):
@@ -15455,7 +15402,8 @@ def personal_command(cfg, argv):
         return 0
     if sub in ("learn", "tidy"):
         rest = argv[1:]
-        opts = {"--claude": claude_path(cfg) or "claude", "--model": "haiku"}
+        # --claude PATH: an old option, still accepted, ignored.
+        opts = {"--claude": None, "--model": cfg.get("memoryModel") or "small"}
         delete = "--delete" in rest
         rest = [a for a in rest if a != "--delete"]
         while len(rest) > 1 and rest[0] in opts:
@@ -15475,7 +15423,7 @@ def personal_command(cfg, argv):
         if "personal" not in cfg["tools"]:
             print(json.dumps({"saved": [], "forgot": [], "skipped": ["the personal tool group is off"]}))
             return 0
-        done = learn_from(cfg, transcript, opts["--claude"], opts["--model"], tidy=True if sub == "tidy" else None)
+        done = learn_from(cfg, transcript, meta_agent(cfg), opts["--model"], tidy=True if sub == "tidy" else None)
         print(json.dumps(done, ensure_ascii=False))
         return 0
     if sub == "forget" and len(argv) > 1:

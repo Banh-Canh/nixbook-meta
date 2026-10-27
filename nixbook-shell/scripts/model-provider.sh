@@ -1,20 +1,22 @@
 # shellcheck shell=bash
-# nixbook-model-provider: which model provider Claude Code talks to. Every
-# Claude Code the shell starts (the side panel, the memory and initiative
-# passes, routines, the equalizer agent, nixbook-improve) is started through
-# `nixbook-model-provider run CLAUDE ARGS…`. With the default provider,
-# Anthropic, that is Claude Code on the user's own Claude login, unchanged;
-# with another one, Claude Code is pointed at its Anthropic-compatible
-# Messages API (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN, never the claude.ai
-# login) and Claude's model names are mapped to the provider's.
+# nixbook-model-provider: which model provider the shell's AI talks to.
+# Everything that calls a model (nixbook-meta-agent: the side panel, the
+# memory and initiative passes, routines, the equalizer agent,
+# nixbook-improve; Quick AI, the voice, the Nix onboarding) is started
+# through `nixbook-model-provider run CMD ARGS…`, which hands it the
+# provider's Messages API (Meta's by default, Muse models), its key and its
+# model names in NIXBOOK_AI_* and runs it unchanged.
 #
 # The setting is the shell's (Settings > Desktop agents > Model provider):
-# ai.provider = {kind: anthropic|meta|custom, baseUrl, model, smallModel,
-# bigModel} in ~/.config/nixbook-shell/config.json. The API key is in the
-# keyring (secret-tool), stored per provider and host: a key saved for one
-# server is never sent to another.
+# ai.provider = {kind: meta|custom, baseUrl, model, smallModel, bigModel} in
+# ~/.config/nixbook-shell/config.json ("custom": another server with a
+# Messages API). The API key is in the keyring (secret-tool), stored per
+# provider and host: a key saved for one server is never sent to another.
 #
-#   run CLAUDE [ARGS…]  exec Claude Code with the provider's environment
+#   run CMD [ARGS…]     exec CMD with the provider's environment:
+#                       NIXBOOK_AI_BASE_URL, NIXBOOK_AI_KEY, NIXBOOK_AI_MODEL,
+#                       NIXBOOK_AI_SMALL_MODEL, NIXBOOK_AI_BIG_MODEL,
+#                       NIXBOOK_AI_PROVIDED=1
 #   status              {kind, label, baseUrl, host, model, smallModel,
 #                        bigModel, keySaved, error}
 #   key set             the key on stdin → {saved} or {error}
@@ -30,12 +32,12 @@ settings() {
   jq -r '
     def presets: {meta: {baseUrl: "https://api.meta.ai", model: "muse-spark-1.3", smallModel: "muse-spark-1.3", bigModel: "muse-wonder-1.0"}};
     (.ai.provider // {}) as $p
-    | (($p.kind // "anthropic") | tostring | ascii_downcase) as $k
+    | (($p.kind // "meta") | tostring | ascii_downcase | if . == "" or . == "anthropic" then "meta" else . end) as $k
     | (presets[$k] // {}) as $preset
     | [ "baseUrl", "model", "smallModel", "bigModel" ]
     | map(($p[.] // "" | tostring) as $v | if $v == "" then ($preset[.] // "") else $v end) as $v
     | $k, ($v[0] | sub("/+$"; "")), $v[1], $v[2], $v[3]
-  ' "$config" 2>/dev/null || printf 'anthropic\n\n\n\n\n'
+  ' "$config" 2>/dev/null || printf 'meta\nhttps://api.meta.ai\nmuse-spark-1.3\nmuse-spark-1.3\nmuse-wonder-1.0\n'
 }
 
 {
@@ -45,9 +47,8 @@ settings() {
   read -r small
   read -r big
 } < <(settings)
-kind=${kind:-anthropic}
+kind=${kind:-meta}
 case "$kind" in
-anthropic) label="Anthropic" ;;
 meta) label="Meta" ;;
 custom) label="Custom" ;;
 *)
@@ -59,7 +60,6 @@ esac
 # gateway); never a key sent in clear over the network.
 url_error() {
   case "$kind" in
-  anthropic) return 0 ;;
   meta | custom) ;;
   *)
     echo "unknown provider \"$kind\""
@@ -82,20 +82,8 @@ lookup_key() {
   secret-tool lookup "${attrs[@]}" 2>/dev/null
 }
 
-# What a Claude model name becomes on the provider: the aliases and full
-# Claude ids by family; the provider's own ids as they are.
-map_model() {
-  local v=$1 to=""
-  case "$v" in
-  *haiku*) to=$small ;;
-  *opus* | *fable*) to=$big ;;
-  sonnet* | claude-* | default) to=$model ;;
-  esac
-  printf '%s' "${to:-$v}"
-}
-
-# A failure the caller can read: Claude Code's own result line when it was
-# asked for JSON, otherwise on stderr.
+# A failure the caller can read: a result line (nixbook-meta-agent's shape)
+# when it was asked for JSON, otherwise on stderr.
 fail_run() {
   local msg="$label: $1"
   if [[ " ${run_args[*]} " =~ \ --output-format[=\ ](stream-)?json\  ]]; then
@@ -106,52 +94,33 @@ fail_run() {
 }
 
 cmd_run() {
-  local claude=${1:-}
+  local cmd=${1:-}
   shift || true
   run_args=("$@")
-  [ -n "$claude" ] || {
-    echo "usage: nixbook-model-provider run CLAUDE [ARGS…]" >&2
+  [ -n "$cmd" ] || {
+    echo "usage: nixbook-model-provider run CMD [ARGS…]" >&2
     exit 2
   }
-  if [ "$kind" = anthropic ]; then
-    exec "$claude" "$@"
-  fi
-  local err key
+  local err key v
   err=$(url_error)
   [ -z "$err" ] || fail_run "$err (Settings > Desktop agents > Model provider)"
   key=$(lookup_key)
   [ -n "$key" ] || fail_run "no API key saved (Settings > Desktop agents > Model provider)"
-  # Only the provider's key: never the claude.ai login, nor an Anthropic
-  # key from the environment (it would be sent to that server).
-  unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_SMALL_FAST_MODEL
-  export ANTHROPIC_BASE_URL=$base ANTHROPIC_AUTH_TOKEN=$key
-  export ANTHROPIC_MODEL=$model ANTHROPIC_DEFAULT_SONNET_MODEL=$model CLAUDE_CODE_SUBAGENT_MODEL=$model
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL=${small:-$model} ANTHROPIC_DEFAULT_OPUS_MODEL=${big:-$model}
-  # No telemetry or update checks to Anthropic while using someone else.
-  export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-  local out=() a next=""
-  for a in "$@"; do
-    if [ -n "$next" ]; then
-      out+=("$(map_model "$a")")
-      next=""
-      continue
-    fi
-    case "$a" in
-    --model | --fallback-model)
-      out+=("$a")
-      next=1
-      ;;
-    --model=* | --fallback-model=*) out+=("${a%%=*}=$(map_model "${a#*=}")") ;;
-    *) out+=("$a") ;;
-    esac
-  done
-  exec "$claude" "${out[@]}"
+  # Only the provider's key: nothing of another vendor's from the
+  # environment (it would be sent along, or used instead).
+  while IFS= read -r v; do
+    unset "$v"
+  done < <(compgen -e | grep -E '^(ANTHROPIC_|CLAUDE_CODE_)' || true)
+  export NIXBOOK_AI_BASE_URL=$base NIXBOOK_AI_KEY=$key NIXBOOK_AI_MODEL=$model
+  export NIXBOOK_AI_SMALL_MODEL=${small:-$model} NIXBOOK_AI_BIG_MODEL=${big:-$model}
+  export NIXBOOK_AI_LABEL=$label NIXBOOK_AI_PROVIDED=1
+  exec "$cmd" "$@"
 }
 
 cmd_status() {
   local saved=false err
   err=$(url_error)
-  [ "$kind" != anthropic ] && [ -z "$err" ] && [ -n "$(lookup_key)" ] && saved=true
+  [ -z "$err" ] && [ -n "$(lookup_key)" ] && saved=true
   jq -cn --arg kind "$kind" --arg label "$label" --arg base "$base" --arg host "$host" --arg model "$model" \
     --arg small "$small" --arg big "$big" --argjson saved "$saved" --arg err "$err" \
     '{kind: $kind, label: $label, baseUrl: $base, host: $host, model: $model, smallModel: $small,
@@ -162,10 +131,6 @@ cmd_key() {
   local err key
   case "${1:-}" in
   set)
-    [ "$kind" != anthropic ] || {
-      jq -cn '{error: "Anthropic uses your Claude login: no key to save"}'
-      return
-    }
     err=$(url_error)
     [ -z "$err" ] || {
       jq -cn --arg e "$err" '{error: $e}'
@@ -196,10 +161,6 @@ cmd_key() {
 
 cmd_test() {
   local err key reply code
-  [ "$kind" != anthropic ] || {
-    jq -cn '{ok: true, model: "claude", answer: "Anthropic: Claude Code on your Claude login"}'
-    return
-  }
   err=$(url_error)
   [ -z "$err" ] || {
     jq -cn --arg e "$err" '{ok: false, error: $e}'
@@ -238,7 +199,7 @@ key)
   ;;
 test) cmd_test ;;
 *)
-  echo "usage: nixbook-model-provider run CLAUDE [ARGS…] | status | key set|forget | test" >&2
+  echo "usage: nixbook-model-provider run CMD [ARGS…] | status | key set|forget | test" >&2
   exit 2
   ;;
 esac

@@ -45,7 +45,7 @@ Item {
     // ── Where it goes ──
     // Edges and corners, the top third more than the bottom, not the
     // middle of the screen.
-    // Never where Claude's speech bubble is (the top-left corner, under the
+    // Never where Muse's speech bubble is (the top-left corner, under the
     // bar): it holds the conversation.
     readonly property rect bubbleZone: Qt.rect(0, 0, 460, 360)
     function pickSpot(small) {

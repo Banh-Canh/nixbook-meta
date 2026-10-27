@@ -1,8 +1,8 @@
 // nixbook-improve: the desktop agent fixing nixbook itself: fixes and
 // polish, and apart from them the features the user asks for. What to do
 // comes in an inbox (what the user reported or asked for, the shell's QML
-// errors, the desktop tools' crashes, fixes found too big); a Claude Code
-// session confined to a clone of the repository makes the change; this program
+// errors, the desktop tools' crashes, fixes found too big); a nixbook-meta-agent
+// session (Meta's Muse) confined to a clone of the repository makes the change; this program
 // checks it (size and paths, the tests, the shell started headless), commits
 // it with a changelog entry, opens a PR and, once CI passes, asks the user
 // (Merge, Look, Drop) or merges a fix on its own (low-risk files only;
@@ -40,7 +40,7 @@ const usage = `nixbook-improve: the desktop agent's fixes and features to nixboo
                                          commit, the PR, then CI and the user's answer;
                                          --auto: the days' limits apply (fixes first,
                                          then features; perDay 0: no limit but each
-                                         run's budget); --no-push: stop at the local
+                                         run's turns); --no-push: stop at the local
                                          commit. With a run going on, --item ID is
                                          queued instead; each run, letting go, starts
                                          the next queued one (--auto takes it first)
@@ -271,7 +271,7 @@ func stop() (any, error) {
 		// Still nixbook-improve (after a reboot the pid is someone else's).
 		cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", r.PID))
 		if r.Outcome == "" && r.PID > 0 && strings.Contains(string(cmdline), "nixbook-improve") {
-			// Its whole process group: the Claude session and the checks too.
+			// Its whole process group: the agent session and the checks too.
 			syscall.Kill(-r.PID, syscall.SIGTERM)
 			syscall.Kill(r.PID, syscall.SIGTERM)
 		}
@@ -302,10 +302,10 @@ func status() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The limits in effect (perDay 0: none, each run's budgetUsd only).
+	// The limits in effect (perDay 0: none, each run's turns only; budgetUsd is unused, kept for older settings).
 	return map[string]any{
 		"available": available(), "token": available() && token() != "",
-		"enable": cfg.Enable, "repo": ghRepo(cfg.Repo), "claude": cfg.claude != "",
+		"enable": cfg.Enable, "repo": ghRepo(cfg.Repo), "agent": cfg.agent != "",
 		"today": runsToday(rs, false), "perDay": cfg.PerDay, "unlimited": cfg.PerDay == 0, "budgetUsd": cfg.BudgetUsd,
 		"inbox": in.Items, "runs": rs,
 		"features": map[string]any{

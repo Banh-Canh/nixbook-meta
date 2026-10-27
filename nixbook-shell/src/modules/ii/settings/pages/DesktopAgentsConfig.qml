@@ -8,8 +8,8 @@ import qs.modules.common
 import qs.modules.common.widgets
 
 // Settings > Desktop agents (services/DesktopControl.qml): whether AI agents
-// may drive the desktop (nixbook-desktop-mcp), Claude in the AI chat
-// (ai.claudeCode, services/Ai.qml), the fixes it makes to nixbook itself
+// may drive the desktop (nixbook-desktop-mcp), Muse in the AI chat
+// (ai.agent, services/Ai.qml, nixbook-meta-agent), the fixes it makes to nixbook itself
 // (ai.improve, services/SelfImprove.qml), and the memory agents keep of the
 // desktop — notes they wrote, app aliases and usage learned — to review,
 // prune or clear.
@@ -80,9 +80,9 @@ ContentPage {
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
                 text: Config.options.policies.ai === 0
-                    ? Translation.tr("Off: no AI anywhere. No chat in the side panel, Claude never speaks on its own, no routine runs, no memory pass, no fix made, the equalizer agent rests, and every agent's desktop tools are refused (desktop control). What it remembers stays, unused.")
+                    ? Translation.tr("Off: no AI anywhere. No chat in the side panel, Muse never speaks on its own, no routine runs, no memory pass, no fix made, the equalizer agent rests, and every agent's desktop tools are refused (desktop control). What it remembers stays, unused.")
                     : Config.options.policies.ai === 2
-                    ? Translation.tr("Local models only: nothing goes to an online model like Claude (no Claude chat, speaking on its own, memory pass, fix or equalizer agent); local agents keep the desktop tools, and fixed routines run.")
+                    ? Translation.tr("Local models only: nothing goes to an online model like Muse (no Muse chat, speaking on its own, memory pass, fix or equalizer agent); local agents keep the desktop tools, and fixed routines run.")
                     : Translation.tr("On: the features below, each with its own switch. Turn this off to stop all of them at once (Settings > Panels also has \"Local\": local models only).")
             }
             GroupedList {
@@ -101,7 +101,7 @@ ContentPage {
         }
 
         // Quick AI (services/QuickAi.qml): answering and acting in a couple of
-        // seconds in Claude's speech bubble: typed, said, from the screenshot
+        // seconds in Muse's speech bubble: typed, said, from the screenshot
         // app, the launcher, notifications.
         ContentSection {
             icon: "bolt"
@@ -111,7 +111,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("One place to talk to the AI: Claude's speech bubble (Mod+C, or Mod+T to talk). What you ask there is answered in a couple of seconds by the model provider's small model called directly (Meta: Muse Spark), without starting an agent: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step in the bubble, with Allow / No before anything destructive. Expand the bubble to go on in the side panel with Claude Code. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
+                text: Translation.tr("One place to talk to the AI: Muse's speech bubble (Mod+C, or Mod+T to talk). What you ask there is answered in a couple of seconds by the model provider's small model called directly (Meta: Muse Spark), without starting an agent: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step in the bubble, with Allow / No before anything destructive. Expand the bubble to go on in the side panel with the Muse agent. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -259,7 +259,7 @@ ContentPage {
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
                 font.pixelSize: Appearance.font.pixelSize.small
-                text: Translation.tr("Acting goes through the desktop tools' own rules: paused with Mod+Shift+Escape, never in terminals or password managers, every step in the audit log. Text is sent with the private details hidden (the privacy mask below). With Anthropic as the provider, Claude Code (Haiku) answers instead, a little slower.")
+                text: Translation.tr("Acting goes through the desktop tools' own rules: paused with Mod+Shift+Escape, never in terminals or password managers, every step in the audit log. Text is sent with the private details hidden (the privacy mask below).")
             }
             RowLayout {
                 spacing: 8
@@ -299,7 +299,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Your name, your contacts' names, emails, phones and addresses, card numbers, IBANs and the words below reach Claude as placeholders (⟦Person 2⟧, ⟦Email 1⟧), the same one each time, so it still follows who is who. They become the real values again on this computer when it types, sends or answers you. Done on this computer in a fraction of a millisecond: answers lose nothing but who those people are. Public names and sites stay as they are. For Claude here, its desktop tools and the small model's passes; not for what you paste into other apps.")
+                text: Translation.tr("Your name, your contacts' names, emails, phones and addresses, card numbers, IBANs and the words below reach Muse as placeholders (⟦Person 2⟧, ⟦Email 1⟧), the same one each time, so it still follows who is who. They become the real values again on this computer when it types, sends or answers you. Done on this computer in a fraction of a millisecond: answers lose nothing but who those people are. Public names and sites stay as they are. For Muse here, its desktop tools and the small model's passes; not for what you paste into other apps.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -313,7 +313,7 @@ ContentPage {
                     configKey: "ai.privacy.screenshots"
                     buttonIcon: "screenshot_monitor"
                     enabled: Config.options.ai.privacy.mask
-                    text: Translation.tr("In screenshots too: the details are read (OCR, on this computer) and blacked out, Claude told where they are. About a second more per screenshot; text the OCR misses, faces and photos still show")
+                    text: Translation.tr("In screenshots too: the details are read (OCR, on this computer) and blacked out, Muse told where they are. About a second more per screenshot; text the OCR misses, faces and photos still show")
                     checked: Config.options.ai.privacy.screenshots
                     onCheckedChanged: Config.options.ai.privacy.screenshots = checked
                 }
@@ -414,7 +414,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Claude speaks first when it can help, not on a schedule: when you come back (your day, a plan coming up or just past, your usual setup), when an app it has a broken recipe for is in front, when it learned something. Time-critical things come as its own speech bubble on the left, in the theme's look: answer right in it and Claude answers there (the expand button moves the talk to the side panel; quick answers, Not now, Don't tell me this; at most 8 a day, none at night, in a meeting or fullscreen); the rest waits as a bubble beside the robot in the bar. Now and then, at random and up to four times a day, it says a light word in the bar: a break after a long stretch, a tip for the app you're in, a plan coming up, a question about something you care about. It learns from your answers what is worth saying. Plain code decides; a small model only reads notifications and words tips and questions.")
+                text: Translation.tr("Muse speaks first when it can help, not on a schedule: when you come back (your day, a plan coming up or just past, your usual setup), when an app it has a broken recipe for is in front, when it learned something. Time-critical things come as its own speech bubble on the left, in the theme's look: answer right in it and Muse answers there (the expand button moves the talk to the side panel; quick answers, Not now, Don't tell me this; at most 8 a day, none at night, in a meeting or fullscreen); the rest waits as a bubble beside the robot in the bar. Now and then, at random and up to four times a day, it says a light word in the bar: a break after a long stretch, a tip for the app you're in, a plan coming up, a question about something you care about. It learns from your answers what is worth saying. Plain code decides; a small model only reads notifications and words tips and questions.")
             }
 
             GroupedList {
@@ -493,7 +493,7 @@ ContentPage {
                     configKey: "ai.initiative.terminal"
                     buttonIcon: "terminal"
                     enabled: Config.options.ai.initiative.enable
-                    text: Translation.tr("Help when a terminal command keeps failing: the same command failing twice in 10 minutes offers \"Explain it\" (zsh and bash; only the command and its exit code, never its output; a command starting with a space is never seen). Nothing goes to Claude until I click")
+                    text: Translation.tr("Help when a terminal command keeps failing: the same command failing twice in 10 minutes offers \"Explain it\" (zsh and bash; only the command and its exit code, never its output; a command starting with a space is never seen). Nothing goes to Muse until I click")
                     checked: Config.options.ai.initiative.terminal
                     onCheckedChanged: Config.options.ai.initiative.terminal = checked
                 }
@@ -501,7 +501,7 @@ ContentPage {
                     configKey: "ai.initiative.clipboardErrors"
                     buttonIcon: "content_paste_search"
                     enabled: Config.options.ai.initiative.enable
-                    text: Translation.tr("Help with an error I copy: copying an error or a stack trace offers \"Explain it\" (never what a password manager copied). Nothing goes to Claude until I click")
+                    text: Translation.tr("Help with an error I copy: copying an error or a stack trace offers \"Explain it\" (never what a password manager copied). Nothing goes to Muse until I click")
                     checked: Config.options.ai.initiative.clipboardErrors
                     onCheckedChanged: Config.options.ai.initiative.clipboardErrors = checked
                 }
@@ -685,7 +685,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Ask Claude \"whenever the music ends, play something I like\", \"when my headphones connect, resume the music\", \"when a PDF lands in Downloads, open it\": it does it on its own when that happens. Cues: music, apps, window titles, notifications, coming back, the lock, a time, battery and power, Wi-Fi, VPN, audio output, monitors, Downloads, calendar events. A fixed action costs nothing; one that takes judgment is a short Claude run. It never fights you: music you stop stays stopped, and a routine you undo twice turns itself off. Desktop control's pause stops routines too.")
+                text: Translation.tr("Ask Muse \"whenever the music ends, play something I like\", \"when my headphones connect, resume the music\", \"when a PDF lands in Downloads, open it\": it does it on its own when that happens. Cues: music, apps, window titles, notifications, coming back, the lock, a time, battery and power, Wi-Fi, VPN, audio output, monitors, Downloads, calendar events. A fixed action costs nothing; one that takes judgment is a short Muse run. It never fights you: music you stop stays stopped, and a routine you undo twice turns itself off. Desktop control's pause stops routines too.")
             }
 
             GroupedList {
@@ -789,9 +789,9 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Claude fixes nixbook itself: fixes and polish only (a bug, a rough edge, wording); a new feature, or a fix found too big, goes to Features it builds (below). What to fix: what you tell an agent is broken (\"report this\") or write below (your words stay on this computer: the PR says it in its own), the errors the shell prints, the desktop tools' crashes, failed units and errors in the logs of what nixbook defines, a failed update or Nix warning, CI red on main, crashes of nixbook's programs (only what you can already read; what isn't nixbook's is listed below, never sent unasked). Each fix is made in a clone of the repository by a Claude Code session that can only edit files there (no commands, none of your files or logins), checked (its size and files, the tests, the shell started headless with no new error), committed with a changelog entry and opened as a pull request. Once CI passes you get Merge, Look, Drop; nothing reaches main without you, but what you let merge on its own. After a merge, main's checks and the updated shell are watched: what it broke is queued as a fix of its own, never reverted. One it can't do (a place off limits, credentials, hardware, or its change failing twice) is dropped with why and what would make it doable; you're told, and Retry tries again. Its sandbox, the tests, CI and its own code are off limits; what agents may do is never merged on its own. It reaches GitHub only with its own token, below (never your gh login or ssh key; Claude never sees it), and uses your Claude Code; %1.").arg(Config.options.ai.improve.perDay > 0
-                    ? Translation.tr("at most %1 a day on its own, each at most $%2").arg(Config.options.ai.improve.perDay).arg(Config.options.ai.improve.budgetUsd)
-                    : Translation.tr("no daily limit, each at most $%1").arg(Config.options.ai.improve.budgetUsd))
+                text: Translation.tr("Muse fixes nixbook itself: fixes and polish only (a bug, a rough edge, wording); a new feature, or a fix found too big, goes to Features it builds (below). What to fix: what you tell an agent is broken (\"report this\") or write below (your words stay on this computer: the PR says it in its own), the errors the shell prints, the desktop tools' crashes, failed units and errors in the logs of what nixbook defines, a failed update or Nix warning, CI red on main, crashes of nixbook's programs (only what you can already read; what isn't nixbook's is listed below, never sent unasked). Each fix is made in a clone of the repository by a Muse agent session (nixbook-meta-agent) that can only edit files there (no commands, none of your files or logins), checked (its size and files, the tests, the shell started headless with no new error), committed with a changelog entry and opened as a pull request. Once CI passes you get Merge, Look, Drop; nothing reaches main without you, but what you let merge on its own. After a merge, main's checks and the updated shell are watched: what it broke is queued as a fix of its own, never reverted. One it can't do (a place off limits, credentials, hardware, or its change failing twice) is dropped with why and what would make it doable; you're told, and Retry tries again. Its sandbox, the tests, CI and its own code are off limits; what agents may do is never merged on its own. It reaches GitHub only with its own token, below (never your gh login or ssh key; the model never sees it), and uses your model provider; %1.").arg(Config.options.ai.improve.perDay > 0
+                    ? Translation.tr("at most %1 a day on its own").arg(Config.options.ai.improve.perDay)
+                    : Translation.tr("no daily limit"))
             }
 
             // What it is doing now, or why nothing: always shown.
@@ -914,8 +914,8 @@ ContentPage {
                 currentValue: Config.options.ai.improve.model
                 onSelected: newValue => { Config.options.ai.improve.model = newValue }
                 options: [
-                    { displayName: "Sonnet", icon: "speed", value: "sonnet" },
-                    { displayName: "Opus", icon: "psychology", value: "opus" }
+                    { displayName: ModelProvider.kind === "meta" ? "Muse Spark" : Translation.tr("Main"), icon: "speed", value: "main" },
+                    { displayName: ModelProvider.kind === "meta" ? "Muse Wonder" : Translation.tr("Big"), icon: "psychology", value: "big" }
                 ]
             }
 
@@ -928,14 +928,6 @@ ContentPage {
                 value: Config.options.ai.improve.perDay
                 from: 0; to: 50; stepSize: 1
                 onValueChanged: Config.options.ai.improve.perDay = value
-            }
-            ConfigSpinBox {
-                configKey: "ai.improve.budgetUsd"
-                icon: "payments"
-                text: Translation.tr("Most a fix may spend ($)")
-                value: Config.options.ai.improve.budgetUsd
-                from: 1; to: 50; stepSize: 1
-                onValueChanged: Config.options.ai.improve.budgetUsd = value
             }
 
             RowLayout {
@@ -1115,13 +1107,13 @@ ContentPage {
                 delegate: inboxItem
             }
             // What isn't nixbook's (another app's crash, the kernel, a unit it
-            // doesn't define): to know; sent to Claude only by Fix now.
+            // doesn't define): to know; sent to the model only by Fix now.
             StyledText {
                 Layout.fillWidth: true
                 visible: SelfImprove.inbox.some(i => i.kind === "info" && ["new", "failed", "skipped", "too_big"].includes(i.status))
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colOnLayer1
-                text: Translation.tr("Seen, not nixbook's (never sent to Claude unless you press Fix now)")
+                text: Translation.tr("Seen, not nixbook's (never sent to the model unless you press Fix now)")
             }
             Repeater {
                 model: SelfImprove.inbox.filter(i => i.kind === "info" && ["new", "failed", "skipped", "too_big"].includes(i.status)).slice(0, 10)
@@ -1176,11 +1168,11 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Claude builds what you ask nixbook to do: a new widget, setting, shortcut or behaviour. Ask an agent (\"I wish the bar showed…\": its request_feature tool files it) or type it below; a fix Claude finds too big for a fix comes here too, with what it found, and with Propose fixes and features on, the agent may offer one itself from what it saw get in your way. Each is built like a fix (a clone, a session that can only edit files there, the same checks and off-limits places) but may be bigger (up to %1 files and %2 lines, new files allowed), committed as feat(…) and opened as a pull request. It is never merged on its own: once CI passes you get Merge, Look, Drop. One it can't do (a design choice only you can make, more than that, a place off limits, credentials, hardware, or its change failing twice) is dropped with why and what would make it doable; you're told, and Retry tries again. It uses the GitHub token and model of Fixes it makes itself; %3, Build now starts one at once.")
+                text: Translation.tr("Muse builds what you ask nixbook to do: a new widget, setting, shortcut or behaviour. Ask an agent (\"I wish the bar showed…\": its request_feature tool files it) or type it below; a fix Muse finds too big for a fix comes here too, with what it found, and with Propose fixes and features on, the agent may offer one itself from what it saw get in your way. Each is built like a fix (a clone, a session that can only edit files there, the same checks and off-limits places) but may be bigger (up to %1 files and %2 lines, new files allowed), committed as feat(…) and opened as a pull request. It is never merged on its own: once CI passes you get Merge, Look, Drop. One it can't do (a design choice only you can make, more than that, a place off limits, credentials, hardware, or its change failing twice) is dropped with why and what would make it doable; you're told, and Retry tries again. It uses the GitHub token and model of Fixes it makes itself; %3, Build now starts one at once.")
                     .arg(Config.options.ai.improve.features.maxFiles).arg(Config.options.ai.improve.features.maxLines)
                     .arg(Config.options.ai.improve.features.perDay > 0
-                        ? Translation.tr("at most %1 a day on its own, each at most $%2").arg(Config.options.ai.improve.features.perDay).arg(Config.options.ai.improve.features.budgetUsd)
-                        : Translation.tr("no daily limit, each at most $%1").arg(Config.options.ai.improve.features.budgetUsd))
+                        ? Translation.tr("at most %1 a day on its own").arg(Config.options.ai.improve.features.perDay)
+                        : Translation.tr("no daily limit"))
             }
 
             Rectangle {
@@ -1239,14 +1231,6 @@ ContentPage {
                 value: Config.options.ai.improve.features.perDay
                 from: 0; to: 50; stepSize: 1
                 onValueChanged: Config.options.ai.improve.features.perDay = value
-            }
-            ConfigSpinBox {
-                configKey: "ai.improve.features.budgetUsd"
-                icon: "payments"
-                text: Translation.tr("Most a feature may spend ($)")
-                value: Config.options.ai.improve.features.budgetUsd
-                from: 1; to: 100; stepSize: 1
-                onValueChanged: Config.options.ai.improve.features.budgetUsd = value
             }
 
             RowLayout {
@@ -1312,7 +1296,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("AI agents (Claude Code, the AI chat, any MCP client using nixbook-desktop-mcp) can see and drive the desktop. Pausing refuses every tool to every agent until you allow them again; the Desktop Control bar widget and Mod+Shift+Escape do the same. It starts paused and keeps its position across reboots.")
+                text: Translation.tr("AI agents (Muse in the AI chat and the speech bubble, any MCP client using nixbook-desktop-mcp) can see and drive the desktop. Pausing refuses every tool to every agent until you allow them again; the Desktop Control bar widget and Mod+Shift+Escape do the same. It starts paused and keeps its position across reboots.")
             }
 
             GroupedList {
@@ -1389,57 +1373,55 @@ ContentPage {
         }
 
         ContentSection {
-            id: claudeSection
+            id: agentSection
             icon: "neurology"
-            title: Translation.tr("Claude in the side panel")
+            title: Translation.tr("Muse in the side panel")
             shape: MaterialShape.Shape.Ghostish
 
-            readonly property var tools: Config.options.ai.claudeCode.allowedTools ?? []
+            readonly property var tools: Config.options.ai.agent.allowedTools ?? []
             function hasAll(names) {
-                return names.every(n => claudeSection.tools.includes(n))
+                return names.every(n => agentSection.tools.includes(n))
             }
             function setTools(names, on) {
-                const hasNone = !names.some(n => claudeSection.tools.includes(n))
-                if ((on && claudeSection.hasAll(names)) || (!on && hasNone)) return
-                const rest = claudeSection.tools.filter(t => !names.includes(t))
-                Config.options.ai.claudeCode.allowedTools = on ? [...rest, ...names] : rest
+                const hasNone = !names.some(n => agentSection.tools.includes(n))
+                if ((on && agentSection.hasAll(names)) || (!on && hasNone)) return
+                const rest = agentSection.tools.filter(t => !names.includes(t))
+                Config.options.ai.agent.allowedTools = on ? [...rest, ...names] : rest
             }
 
             StyledText {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("The AI chat's Claude model runs Claude Code on your own Claude account (no API key, unless you pick another model provider below), with the desktop tools. It can't run commands, reads none of your files but the folders you allow below (and a file you attach to a message) and writes only in the folders you let it write; below, what else it may do.")
+                text: Translation.tr("The AI chat's Muse model is nixbook's own agent (nixbook-meta-agent) on Meta's Model API, with the desktop tools. It can't run commands, reads none of your files but the folders you allow below (and a file you attach to a message) and writes only in the folders you let it write; below, what else it may do.")
             }
 
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
                 MaterialSymbol {
-                    text: Ai.claudeCodePath.length > 0 ? "check_circle" : "error"
+                    text: ModelProvider.ready ? "check_circle" : "error"
                     iconSize: Appearance.font.pixelSize.larger
-                    color: Ai.claudeCodePath.length > 0 ? Appearance.colors.colPrimary : Appearance.m3colors.m3error
+                    color: ModelProvider.ready ? Appearance.colors.colPrimary : Appearance.m3colors.m3error
                 }
                 StyledText {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Appearance.colors.colOnLayer1
-                    text: Ai.claudeCodePath.length > 0
-                        ? Translation.tr("Claude Code found: %1").arg(Ai.claudeCodePath)
-                        : Translation.tr("Claude Code not found. Install it, run `claude` once in a terminal to log in, or give its path below.")
+                    text: ModelProvider.ready
+                        ? Translation.tr("Ready: %1").arg(ModelProvider.chatName)
+                        : Translation.tr("No API key yet: add one under Model provider below.")
                 }
                 SmallButton {
-                    visible: Ai.claudeCodePath.length > 0
-                    materialIcon: Ai.currentModelId === "claude" ? "check" : "chat"
-                    mainText: Ai.currentModelId === "claude" ? Translation.tr("In use") : Translation.tr("Use in the side panel")
-                    enabled: Ai.currentModelId !== "claude"
-                    onClicked: Ai.setModel("claude")
+                    materialIcon: Ai.currentModelId === "muse" ? "check" : "chat"
+                    mainText: Ai.currentModelId === "muse" ? Translation.tr("In use") : Translation.tr("Use in the side panel")
+                    enabled: Ai.currentModelId !== "muse"
+                    onClicked: Ai.setModel("muse")
                 }
             }
 
-            // The model behind Claude Code (services/ModelProvider.qml): the
-            // user's Claude account, Meta's Model API or another
-            // Anthropic-compatible server. Claude Code stays the agent.
+            // The model behind every agent (services/ModelProvider.qml):
+            // Meta's Model API or another server with a Messages API.
             ContentSubsection {
                 title: Translation.tr("Model provider")
 
@@ -1447,7 +1429,7 @@ ContentPage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Appearance.colors.colSubtext
-                    text: Translation.tr("Anthropic: Claude, on your Claude account. Meta: Meta's Muse models, with a Model API key. Other: any server with an Anthropic-compatible API. The provider answers everywhere Claude Code works for you (here, speaking on its own, the memory passes, routines, the equalizer agent, the fixes it makes); Claude Code stays the agent, with the same tools and limits, and the privacy mask applies. Keys stay in your keyring. The claude.ai connectors work with Anthropic only.")
+                    text: Translation.tr("Meta: Meta's Muse models, with a Model API key. Other: any server with a compatible Messages API. The provider answers everywhere an agent works for you (here, the speech bubble, speaking on its own, the memory passes, routines, the equalizer agent, the fixes it makes), with the same tools and limits, and the privacy mask applies. Keys stay in your keyring.")
                 }
 
                 ConfigSelectionArray {
@@ -1458,14 +1440,12 @@ ContentPage {
                     currentValue: ModelProvider.kind
                     onSelected: newValue => { Config.options.ai.provider.kind = newValue }
                     options: [
-                        { displayName: "Anthropic", icon: "auto_awesome", value: "anthropic" },
                         { displayName: "Meta", icon: "all_inclusive", value: "meta" },
                         { displayName: Translation.tr("Other"), icon: "dns", value: "custom" }
                     ]
                 }
 
                 ColumnLayout {
-                    visible: !ModelProvider.isAnthropic
                     Layout.fillWidth: true
                     spacing: 6
 
@@ -1474,14 +1454,14 @@ ContentPage {
                         visible: ModelProvider.kind === "meta"
                         wrapMode: Text.WordWrap
                         color: Appearance.colors.colSubtext
-                        text: Translation.tr("Meta's Model API (dev.meta.ai): create a key in its dashboard and paste it below. The main model takes Sonnet's place (muse-spark-1.3), the small one Haiku's (muse-spark-1.3: the background passes) and the big one Opus's (muse-wonder-1.0), unless you name others.")
+                        text: Translation.tr("Meta's Model API (dev.meta.ai): create a key in its dashboard and paste it below. The main model is muse-spark-1.3, the small one muse-spark-1.3 (quick answers and the background passes) and the big one muse-wonder-1.0, unless you name others.")
                     }
                     StyledText {
                         Layout.fillWidth: true
                         visible: ModelProvider.kind === "custom"
                         wrapMode: Text.WordWrap
                         color: Appearance.colors.colSubtext
-                        text: Translation.tr("A server with an Anthropic Messages API (https://, without /v1). The main model takes Sonnet's place, the small one Haiku's (the background passes) and the big one Opus's; empty, the main one.")
+                        text: Translation.tr("A server with a compatible Messages API (https://, or http:// on this computer; without /v1). The small model makes the quick answers and the background passes, the big one the hardest tasks; empty, the main one.")
                     }
                     ConfigTextArea {
                         visible: ModelProvider.kind === "custom"
@@ -1535,7 +1515,7 @@ ContentPage {
                         color: ModelProvider.error !== "" ? Appearance.m3colors.m3error : Appearance.colors.colOnLayer1
                         text: ModelProvider.error !== "" ? ModelProvider.error
                             : ModelProvider.keySaved ? Translation.tr("A key is saved for %1.").arg(ModelProvider.status.host ?? "")
-                            : Translation.tr("No key yet: until you add one, Claude Code can't answer (nothing falls back to Claude).")
+                            : Translation.tr("No key yet: until you add one, no agent can answer.")
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -1583,27 +1563,26 @@ ContentPage {
             }
 
             ConfigSelectionArray {
-                configKey: "ai.claudeCode.model"
+                configKey: "ai.agent.model"
                 enabled: !nixManaged
                 text: Translation.tr("Model")
                 icon: "neurology"
-                currentValue: Config.options.ai.claudeCode.model
-                onSelected: newValue => { Config.options.ai.claudeCode.model = newValue }
+                currentValue: Config.options.ai.agent.model
+                onSelected: newValue => { Config.options.ai.agent.model = newValue }
                 options: [
-                    { displayName: Translation.tr("Default"), icon: "auto_awesome", value: "" },
-                    { displayName: ModelProvider.isAnthropic ? "Sonnet" : Translation.tr("Main"), icon: "bolt", value: "sonnet" },
-                    { displayName: ModelProvider.isAnthropic ? "Opus" : Translation.tr("Big"), icon: "psychology", value: "opus" },
-                    { displayName: ModelProvider.isAnthropic ? "Haiku" : Translation.tr("Small"), icon: "speed", value: "haiku" }
+                    { displayName: ModelProvider.kind === "meta" ? "Muse Spark" : Translation.tr("Main"), icon: "bolt", value: "main" },
+                    { displayName: ModelProvider.kind === "meta" ? "Muse Wonder" : Translation.tr("Big"), icon: "psychology", value: "big" },
+                    { displayName: ModelProvider.kind === "meta" ? Translation.tr("Muse Spark (small)") : Translation.tr("Small"), icon: "speed", value: "small" }
                 ]
             }
 
             ConfigSelectionArray {
-                configKey: "ai.claudeCode.effort"
+                configKey: "ai.agent.effort"
                 enabled: !nixManaged
                 text: Translation.tr("Thinking effort (low: quicker steps on the desktop)")
                 icon: "speed"
-                currentValue: Config.options.ai.claudeCode.effort
-                onSelected: newValue => { Config.options.ai.claudeCode.effort = newValue }
+                currentValue: Config.options.ai.agent.effort
+                onSelected: newValue => { Config.options.ai.agent.effort = newValue }
                 options: [
                     { displayName: Translation.tr("Low"), icon: "bolt", value: "low" },
                     { displayName: Translation.tr("Medium"), icon: "tune", value: "medium" },
@@ -1614,75 +1593,45 @@ ContentPage {
 
             GroupedList {
                 ConfigSwitch {
-                    configKey: "ai.claudeCode.allowedTools"
+                    configKey: "ai.agent.allowedTools"
                     enabled: !nixManaged
                     buttonIcon: "travel_explore"
                     text: Translation.tr("Search and read the web")
-                    checked: claudeSection.hasAll(["WebSearch", "WebFetch"])
-                    onCheckedChanged: claudeSection.setTools(["WebSearch", "WebFetch"], checked)
+                    checked: agentSection.hasAll(["WebSearch", "WebFetch"])
+                    onCheckedChanged: agentSection.setTools(["WebSearch", "WebFetch"], checked)
                 }
                 ConfigSwitch {
-                    configKey: "ai.claudeCode.commandLine"
+                    configKey: "ai.agent.commandLine"
                     enabled: !nixManaged
                     buttonIcon: "terminal"
                     text: Translation.tr("Command line")
-                    checked: Config.options.ai.claudeCode.commandLine
-                    onCheckedChanged: Config.options.ai.claudeCode.commandLine = checked
+                    checked: Config.options.ai.agent.commandLine
+                    onCheckedChanged: Config.options.ai.agent.commandLine = checked
                     StyledToolTip {
-                        text: Translation.tr("Claude may run commands as you (Bash); it asks in the chat before anything that changes the system or your files")
+                        text: Translation.tr("Muse may run commands as you (Bash); it asks in the chat before anything that changes the system or your files")
                     }
                 }
                 ConfigSwitch {
-                    configKey: "ai.claudeCode.commandLineFolders"
-                    enabled: !nixManaged && Config.options.ai.claudeCode.commandLine
+                    configKey: "ai.agent.commandLineFolders"
+                    enabled: !nixManaged && Config.options.ai.agent.commandLine
                     buttonIcon: "folder_managed"
                     text: Translation.tr("Only in the allowed folders")
-                    checked: Config.options.ai.claudeCode.commandLineFolders
-                    onCheckedChanged: Config.options.ai.claudeCode.commandLineFolders = checked
+                    checked: Config.options.ai.agent.commandLineFolders
+                    onCheckedChanged: Config.options.ai.agent.commandLineFolders = checked
                     StyledToolTip {
                         text: Translation.tr("On: its commands, and what they start, run in a sandbox where only the folders below can be read and the writable ones written. Off: they have your full access")
                     }
                 }
                 ConfigSwitch {
-                    configKey: "ai.claudeCode.asComputer"
+                    configKey: "ai.agent.asComputer"
                     enabled: !nixManaged
                     buttonIcon: "computer"
                     text: Translation.tr("Speak as this computer")
-                    checked: Config.options.ai.claudeCode.asComputer
-                    onCheckedChanged: Config.options.ai.claudeCode.asComputer = checked
+                    checked: Config.options.ai.agent.asComputer
+                    onCheckedChanged: Config.options.ai.agent.asComputer = checked
                     StyledToolTip {
-                        text: Translation.tr("Claude answers as the machine itself, from its live hardware, OS and kernel readings")
+                        text: Translation.tr("Muse answers as the machine itself, from its live hardware, OS and kernel readings")
                     }
-                }
-                ConfigSwitch {
-                    configKey: "ai.claudeCode.connectors"
-                    enabled: !nixManaged && ModelProvider.isAnthropic
-                    buttonIcon: "hub"
-                    text: Translation.tr("Use your claude.ai connectors")
-                    checked: Config.options.ai.claudeCode.connectors
-                    onCheckedChanged: Config.options.ai.claudeCode.connectors = checked
-                    StyledToolTip {
-                        text: Translation.tr("Gmail, Calendar, Drive… as connected on claude.ai, without asking before each use")
-                    }
-                }
-            }
-
-            StyledText {
-                visible: Config.options.ai.claudeCode.connectors
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Appearance.colors.colSubtext
-                text: Ai.claudeConnectors.length > 0
-                    ? Translation.tr("Connectors: %1").arg(Ai.claudeConnectors.map(c => c.replace(/^mcp__(claude_ai|plugin)_/, "").replace(/_/g, " ")).join(", "))
-                    : Translation.tr("No connectors found. Add them on claude.ai (Settings → Connectors).")
-            }
-            SmallButton {
-                visible: Config.options.ai.claudeCode.connectors
-                materialIcon: "refresh"
-                mainText: Translation.tr("Reload connectors")
-                onClicked: Ai.reloadClaudeConnectors()
-                StyledToolTip {
-                    text: Translation.tr("After adding or signing in to a connector on claude.ai: Claude starts again with it, keeping the conversation")
                 }
             }
 
@@ -1725,15 +1674,15 @@ ContentPage {
                                     phone: ["smartphone", Translation.tr("Phone (KDE Connect): send texts, share links, ring it")]
                                 })[serverRow.modelData] ?? ["extension", serverRow.modelData]
                                 anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 8 }
-                                configKey: "ai.claudeCode.mcpServersOff"
+                                configKey: "ai.agent.mcpServersOff"
                                 enabled: !nixManaged
                                 buttonIcon: serverSwitch.known[0]
                                 text: serverSwitch.known[1]
-                                checked: !(Config.options.ai.claudeCode.mcpServersOff ?? []).includes(serverRow.modelData)
+                                checked: !(Config.options.ai.agent.mcpServersOff ?? []).includes(serverRow.modelData)
                                 onCheckedChanged: {
-                                    const off = Config.options.ai.claudeCode.mcpServersOff ?? []
+                                    const off = Config.options.ai.agent.mcpServersOff ?? []
                                     if (checked === !off.includes(serverRow.modelData)) return
-                                    Config.options.ai.claudeCode.mcpServersOff = checked
+                                    Config.options.ai.agent.mcpServersOff = checked
                                         ? off.filter(n => n !== serverRow.modelData) : [...off, serverRow.modelData]
                                 }
                             }
@@ -1748,7 +1697,7 @@ ContentPage {
                     visible: Ai.assistantMcpServers.linkedin !== undefined
                     wrapMode: Text.WordWrap
                     color: Appearance.colors.colSubtext
-                    text: Translation.tr("LinkedIn works through your own session in a browser of its own (~/.linkedin-mcp). LinkedIn's terms forbid automated access and it may restrict accounts using it: use it lightly. Before sending a message or an invitation, Claude shows it and waits for your yes.")
+                    text: Translation.tr("LinkedIn works through your own session in a browser of its own (~/.linkedin-mcp). LinkedIn's terms forbid automated access and it may restrict accounts using it: use it lightly. Before sending a message or an invitation, Muse shows it and waits for your yes.")
                 }
                 SmallButton {
                     visible: Ai.assistantMcpServers.linkedin !== undefined
@@ -1763,9 +1712,9 @@ ContentPage {
                     Layout.topMargin: 6
                     visible: Ai.assistantMcpServers.phone !== undefined
                     configKey: "ai.phone.readMessages"
-                    enabled: !nixManaged && !(Config.options.ai.claudeCode.mcpServersOff ?? []).includes("phone")
+                    enabled: !nixManaged && !(Config.options.ai.agent.mcpServersOff ?? []).includes("phone")
                     buttonIcon: "sms"
-                    text: Translation.tr("Let it read my phone's texts, notifications and contacts (what they say goes to Claude)")
+                    text: Translation.tr("Let it read my phone's texts, notifications and contacts (what they say goes to Muse)")
                     checked: Config.options.ai.phone.readMessages
                     onCheckedChanged: Config.options.ai.phone.readMessages = checked
                 }
@@ -1833,7 +1782,7 @@ ContentPage {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: Appearance.colors.colSubtext
-                        text: Translation.tr("Immich: your photo library, through its API. Create an API key in Immich (Account Settings > API Keys); it is kept in your keyring. Before deleting photos or making a public link, Claude says what it would do and waits for your yes.")
+                        text: Translation.tr("Immich: your photo library, through its API. Create an API key in Immich (Account Settings > API Keys); it is kept in your keyring. Before deleting photos or making a public link, Muse says what it would do and waits for your yes.")
                     }
                     ConfigTextArea {
                         id: immichUrl
@@ -1902,7 +1851,7 @@ ContentPage {
             }
 
 
-            // The folders AI agents may read (Claude here, and the apps on
+            // The folders AI agents may read (Muse here, and the apps on
             // their own desktop): none unless listed. Saved when editing ends,
             // so typing a comma isn't undone.
             ConfigTextArea {
@@ -1928,10 +1877,10 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Read-only, for Claude here and for the apps on the agents' own desktop (from its next start). Absolute paths or ~/…, separated by commas. Other agents (Claude Code in a terminal…) follow their own permissions.")
+                text: Translation.tr("Read-only, for Muse here and for the apps on the agents' own desktop (from its next start). Absolute paths or ~/…, separated by commas. Other agents (a coding agent in a terminal…) follow their own permissions.")
             }
 
-            // The folders Claude here and the apps on the agents' desktop may
+            // The folders Muse here and the apps on the agents' desktop may
             // write too: the first is where its browser downloads.
             ConfigTextArea {
                 id: writableField
@@ -1956,19 +1905,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Claude here can create and edit files there (nowhere else), and so can the apps on the agents' own desktop (from its next start), whose browser downloads into the first one, so an agent can fetch a file for you, a wallpaper say. Made if missing; not your whole home.")
-            }
-
-            ConfigTextArea {
-                configKey: "ai.claudeCode.command"
-                enabled: !nixManaged
-                Layout.fillWidth: true
-                fieldWidth: 320
-                buttonIcon: "terminal"
-                text: Translation.tr("Claude Code command")
-                placeholderText: Translation.tr("found automatically")
-                value: Config.options.ai.claudeCode.command
-                onValueChanged: Config.options.ai.claudeCode.command = value.trim()
+                text: Translation.tr("Muse here can create and edit files there (nowhere else), and so can the apps on the agents' own desktop (from its next start), whose browser downloads into the first one, so an agent can fetch a file for you, a wallpaper say. Made if missing; not your whole home.")
             }
         }
 
@@ -1981,13 +1918,13 @@ ContentPage {
             GroupedList {
                 ConfigSwitch {
                     configKey: "equalizer.agent"
-                    enabled: !nixManaged && Ai.claudeCodePath !== ""
+                    enabled: !nixManaged
                     buttonIcon: "smart_toy"
                     text: Translation.tr("Tune the equalizer for each song")
                     checked: Config.options.equalizer.agent
                     onCheckedChanged: Config.options.equalizer.agent = checked
                     StyledToolTip {
-                        text: Translation.tr("When a new song has played a few seconds, Claude (Claude Code, your account) reads what it is and sets the equalizer for it. Replaces Auto.")
+                        text: Translation.tr("When a new song has played a few seconds, Muse (the model provider's model) reads what it is and sets the equalizer for it. Replaces Auto.")
                     }
                 }
                 ConfigSelectionArray {
@@ -1998,9 +1935,8 @@ ContentPage {
                     currentValue: Config.options.equalizer.agentModel
                     onSelected: newValue => Config.options.equalizer.agentModel = newValue
                     options: [
-                        { displayName: Translation.tr("Haiku (fast)"), icon: "bolt", value: "haiku" },
-                        { displayName: "Sonnet", icon: "auto_awesome", value: "sonnet" },
-                        { displayName: Translation.tr("Default"), icon: "tune", value: "" }
+                        { displayName: Translation.tr("Small (fast)"), icon: "bolt", value: "small" },
+                        { displayName: Translation.tr("Main"), icon: "auto_awesome", value: "main" }
                     ]
                 }
             }
@@ -2312,17 +2248,17 @@ ContentPage {
             }
 
             ConfigSwitch {
-                configKey: "ai.claudeCode.autoMemory"
+                configKey: "ai.agent.autoMemory"
                 buttonIcon: "auto_awesome"
                 text: Translation.tr("Remember on their own: after a chat in the side panel, a small model keeps what matters")
-                checked: Config.options.ai.claudeCode.autoMemory
-                onCheckedChanged: Config.options.ai.claudeCode.autoMemory = checked
+                checked: Config.options.ai.agent.autoMemory
+                onCheckedChanged: Config.options.ai.agent.autoMemory = checked
             }
 
             StyledText {
                 visible: DesktopControl.personal.length === 0
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Nothing yet. Tell Claude in the side panel about yourself, or ask it to remember something.")
+                text: Translation.tr("Nothing yet. Tell Muse in the side panel about yourself, or ask it to remember something.")
             }
 
             Repeater {

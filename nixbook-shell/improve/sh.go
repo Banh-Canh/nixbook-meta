@@ -74,7 +74,7 @@ func gitNet(dir string, args ...string) (string, error) {
 // proxies don't get in the way of the token.
 var gitIsolated = []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
 
-// unsigned: a commit of the fixer's (Claude's work, not one the user
+// unsigned: a commit of the fixer's (the agent's work, not one the user
 // signed): never signed with the user's key, so no pinentry prompt from a
 // background job either.
 func unsigned(args ...string) []string {

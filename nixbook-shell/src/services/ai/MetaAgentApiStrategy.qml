@@ -1,12 +1,13 @@
 import QtQuick
 
-// Claude through Claude Code (`claude -p … --output-format stream-json`), on
-// the user's own Claude login: no API key. Claude Code runs the tools itself
-// (the desktop MCP server, web search, reading files), so this only turns its
-// event stream into the chat message: text as it streams, thinking and each
-// tool call with its result in one collapsible <think> block, the session id
-// (the next message resumes it) and the token usage. The command line is
-// built by Ai.qml (claudeCodeScript).
+// Muse through nixbook-meta-agent (`nixbook-meta-agent -p … --output-format
+// stream-json`, scripts/meta-agent.py), on Meta's Model API with the user's
+// key (nixbook-model-provider). The agent runs the tools itself (the desktop
+// MCP server, web search, reading files), so this only turns its event
+// stream into the chat message: text as it streams, thinking and each tool
+// call with its result in one collapsible <think> block, the session id (the
+// next message resumes it) and the token usage. The command line is built by
+// Ai.qml (agentScript).
 QtObject {
     // Tool calls of the current answer, by id: "name input", shown with
     // their result in one block.
@@ -108,8 +109,8 @@ QtObject {
 
     function onRequestFinished(message) {
         flush(message);
-        // Claude Code exited without a result: say so (not logged in, crashed…).
+        // The agent exited without a result: say so (no key, crashed…).
         if (!finished && message.rawContent.trim().length === 0)
-            append(message, "**Error**: Claude Code stopped without an answer. Is it installed and logged in (`claude`, then /login)?");
+            append(message, "**Error**: Muse's agent (nixbook-meta-agent) stopped without an answer. Is your Meta API key saved (Settings > Desktop agents > Model provider)?");
     }
 }

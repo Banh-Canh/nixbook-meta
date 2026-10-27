@@ -480,3 +480,29 @@ func TestGiveUp(t *testing.T) {
 		t.Error("what a merge broke waits")
 	}
 }
+
+func TestModelAlias(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "main", "sonnet": "main", "Sonnet": "main", "default": "main",
+		"haiku": "small", "opus": "big", "small": "small", "big": "big",
+		"muse-spark-1.3": "muse-spark-1.3",
+	} {
+		if got := modelAlias(in); got != want {
+			t.Errorf("modelAlias(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if defaults().Model != "main" {
+		t.Error("the default model is main")
+	}
+}
+
+func TestPRFooter(t *testing.T) {
+	body := prBody(Answer{Body: "b"}, Item{Kind: "user"}, nil, nil, false)
+	if !strings.Contains(body, "Made by nixbook-improve (Meta Muse)") || strings.Contains(strings.ToLower(body), "claude") {
+		t.Errorf("the PR's footer: %s", body)
+	}
+	msg := commitMessage(Answer{Type: "fix", Scope: "docs", Title: "a title", Body: "b"}, Item{ID: "0123abcd", Kind: "user"})
+	if strings.Contains(strings.ToLower(msg), "anthropic") {
+		t.Errorf("the commit names Anthropic: %s", msg)
+	}
+}

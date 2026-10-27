@@ -38,7 +38,7 @@ Singleton {
     // On this machine at all: programs.nixbook-shell.selfImprove.enable,
     // "improve" in desktop-mcp.json (Nix's). Otherwise no section, no runs.
     property bool available: false
-    readonly property bool aiAllowed: (Config.options?.policies?.ai ?? 1) === 1 // AI off, or local models only: no Claude
+    readonly property bool aiAllowed: (Config.options?.policies?.ai ?? 1) === 1 // AI off, or local models only: no Muse
     readonly property bool enabled: root.available && (Config.options?.ai?.improve?.enable ?? false) && root.aiAllowed
     readonly property bool featuresEnabled: root.available && (Config.options?.ai?.improve?.features?.enable ?? false) && root.aiAllowed
     // Its GitHub token is in the keyring; what the last save said.
@@ -80,8 +80,8 @@ Singleton {
     function stageText(stage) {
         return ({
             clone: Translation.tr("getting the repository up to date"),
-            fix: Translation.tr("Claude looks for the cause"),
-            build: Translation.tr("Claude builds the feature"),
+            fix: Translation.tr("Muse looks for the cause"),
+            build: Translation.tr("Muse builds the feature"),
             check: Translation.tr("checking the change"),
             push: Translation.tr("opening the pull request"),
             ci: Translation.tr("waiting for CI")
@@ -228,14 +228,14 @@ Singleton {
         }
     }
 
-    // Its own unit, the shell's PATH (nix, devenv) and Claude Code with it.
+    // Its own unit, the shell's PATH (nix, devenv, nixbook-meta-agent: its
+    // NIXBOOK_IMPROVE_AGENT default).
     // Named per call: a run waiting on CI or the user's answer keeps its
     // unit for hours, and a second one by the same name wouldn't start
     // (nixbook-improve's run lock keeps it to one fix at a time).
     function _start(name, args) {
         const unit = `${name}-${Date.now()}`
         const env = [`--setenv=PATH=${Quickshell.env("PATH")}`]
-        if (Ai.claudeCodePath.length > 0) env.push(`--setenv=NIXBOOK_IMPROVE_CLAUDE=${Ai.claudeCodePath}`)
         // At the lowest CPU and disk priority: a fix's tests and headless
         // shell take only what the user's own work leaves.
         Quickshell.execDetached(["systemd-run", "--user", "--collect", "--quiet", `--unit=${unit}`,

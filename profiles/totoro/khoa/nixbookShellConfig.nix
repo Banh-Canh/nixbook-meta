@@ -18,7 +18,6 @@
         "kdeConnect"
         "resources"
         "networkSpeed"
-        "anthropicUsage"
       ];
       rightLayout = [
         "sysTray"

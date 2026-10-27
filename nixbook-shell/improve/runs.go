@@ -20,7 +20,7 @@ type Run struct {
 	// clone, fix (build for a feature), check, push, ci, ready, merged,
 	// health; done once over.
 	Stage string `json:"stage"`
-	// What it does right now, live: "Claude reads …", a check running.
+	// What it does right now, live: "Muse reads …", a check running.
 	Doing string `json:"doing,omitempty"`
 	// "" (going on), pr (open, waiting for the user), merged, skipped,
 	// ignored, too_big, failed, unable (given up: not counted in the day's

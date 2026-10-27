@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for Quick AI's engine (scripts/quick-ai.py), against a fake
-# Anthropic-compatible Messages API (tests/fake-messages.py) and a stub
+# Messages API (tests/fake-messages.py) and a stub
 # nixbook-desktop-mcp (tools, call, privacy mask, sent note):
 #   - a streamed answer (deltas, then the whole answer);
 #   - suggested replies (JSON → the replies, no raw JSON shown);
@@ -72,9 +72,9 @@ for _ in $(seq 50); do
   [ -s "$port_file" ] && break
   sleep 0.1
 done
-ANTHROPIC_BASE_URL="http://127.0.0.1:$(cat "$port_file")"
-export ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN=test-key
-export ANTHROPIC_MODEL=main-model ANTHROPIC_DEFAULT_HAIKU_MODEL=small-model
+NIXBOOK_AI_BASE_URL="http://127.0.0.1:$(cat "$port_file")"
+export NIXBOOK_AI_BASE_URL NIXBOOK_AI_KEY=test-key
+export NIXBOOK_AI_MODEL=main-model NIXBOOK_AI_SMALL_MODEL=small-model
 
 ask() { # ask NAME JSON [STDIN] → the events in $tmp/NAME.out
   printf '%s' "$2" >"$tmp/$1.json"
@@ -89,7 +89,7 @@ expect_eq "stream: deltas" '"Hello "
 expect_eq "stream: the whole answer" '"Hello world"' "$(event explain answer .text)"
 expect_eq "stream: the small model" '"small-model"' "$(event explain start .model)"
 expect_eq "stream: the effort settings sent" '"low"' "$(jq -c 'select(.body.stream == true) | .body.output_config.effort' "$tmp/requests.log" | head -n1)"
-expect_eq "stream: recorded as sent" "Quick AI: explain|api:small-model" "$(head -n1 "$tmp/sent.log")"
+expect_eq "stream: recorded as sent" "Quick AI: explain|custom:small-model" "$(head -n1 "$tmp/sent.log")"
 
 # The OpenAI-style chat endpoint, when the server has it: tried first.
 ask chat '{"mode": "explain", "text": "CHATOK this", "lang": "en"}'
@@ -161,10 +161,32 @@ expect_contains_ "do: the tools' own instructions, for this task" "$(jq -c 'sele
 : >"$tmp/calls.log"
 ask look '{"mode": "do", "question": "LOOKSCREEN what is on my screen?", "lang": "en"}'
 expect_contains_ "eyes: the image in the tool result" "$(jq -c 'select(.body.tools) | .body.messages[-1].content' "$tmp/requests.log" | grep tool_result | tail -n1)" '"type":"image"'
-# The whole assistant: a task handed over to Claude Code.
-ask handoff '{"mode": "do", "question": "DELEGATE find the news", "lang": "en", "claude": "/bin/true"}'
-expect_eq "ask_claude: handed over" '"search the web for the news"' "$(event handoff delegate .task)"
-expect_eq "ask_claude: offered only with Claude Code" "" "$(jq -c 'select(.body.tools) | [.body.tools[].name] | index("ask_claude")' "$tmp/requests.log" | head -n1 | grep -v null)"
+# The whole assistant: a task handed over to the side panel's agent.
+: >"$tmp/requests.log"
+ask handoff '{"mode": "do", "question": "DELEGATE find the news", "lang": "en", "agent": true}'
+expect_eq "ask_agent: handed over" '"search the web for the news"' "$(event handoff delegate .task)"
+expect_eq "ask_agent: offered when the agent is there" "true" \
+  "$(jq -c 'select(.body.tools) | [.body.tools[].name] | index("ask_agent") != null' "$tmp/requests.log" | head -n1)"
+: >"$tmp/requests.log"
+ask nohandoff '{"mode": "do", "question": "open firefox", "lang": "en"}'
+expect_eq "ask_agent: not offered without it" "false" \
+  "$(jq -c 'select(.body.tools) | [.body.tools[].name] | index("ask_agent") != null' "$tmp/requests.log" | head -n1)"
+# The provider's key never reaches the desktop tools.
+expect_eq "child env: no NIXBOOK_AI_ variable for the tools" "" \
+  "$(python3 -I -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("q",sys.argv[1]); q=importlib.util.module_from_spec(s); s.loader.exec_module(q); print(" ".join(k for k in q.child_env() if k.startswith("NIXBOOK_AI_")))' "$script")"
+# No key: through the provider (a stub that sets it).
+cat >"$tmp/bin/nixbook-model-provider" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = run ] && shift
+export NIXBOOK_AI_KEY=test-key NIXBOOK_AI_PROVIDED=1 NIXBOOK_AI_LABEL=Meta
+exec "\$@"
+EOF
+chmod +x "$tmp/bin/nixbook-model-provider"
+printf '%s' '{"mode": "explain", "text": "error: foo", "lang": "en"}' >"$tmp/viaprov.json"
+NIXBOOK_AI_KEY='' python3 -I "$script" ask "$tmp/viaprov.json" >"$tmp/viaprov.out" 2>"$tmp/viaprov.err" || true
+expect_eq "no key: run through nixbook-model-provider" '"Hello world" "Meta"' \
+  "$(event viaprov answer .text) $(event viaprov start .provider)"
+rm "$tmp/bin/nixbook-model-provider"
 # What the machine is (system-context.md) and what the user just did.
 mkdir -p "$tmp/cfg/nixbook-shell"
 printf '# About\n## This machine\nHost testhost\n## Packages installed\nhuge list\n' >"$tmp/cfg/nixbook-shell/system-context.md"

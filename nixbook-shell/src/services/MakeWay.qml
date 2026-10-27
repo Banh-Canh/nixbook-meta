@@ -8,7 +8,7 @@ import Quickshell.Io
 import QtQuick
 
 /**
- * The shell's own windows over the apps (the side panel, Claude's speech
+ * The shell's own windows over the apps (the side panel, Muse's speech
  * bubble, notification popups, a theme's cut-in) making way for an agent
  * working underneath, so its clicks, keys and screenshots reach the app
  * windows while the user still follows the chat:
@@ -18,7 +18,7 @@ import QtQuick
  *   - with any on screen, it writes `make-way.json` {seq, until, capture}:
  *     until `until` (ms; while each action or screenshot of the agent goes
  *     on, and a moment after), they let clicks through and give up the keyboard, faded a
- *     little, with a word that Claude works underneath; `capture` (its
+ *     little, with a word that Muse works underneath; `capture` (its
  *     screenshot being taken) makes them invisible for that moment. Then
  *     they are back as they were: nothing is dismissed or put away. `make-way.ack` says when that is
  *     on screen (a couple of frames after), the server waits for it;

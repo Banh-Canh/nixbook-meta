@@ -5,7 +5,7 @@ import qs.modules.common
 import qs.modules.common.functions
 import qs.services
 
-// What can go with a message to Claude: the image or file copied (Ctrl+V),
+// What can go with a message to Muse: the image or file copied (Ctrl+V),
 // a file dropped, or an image picked. `attached` gives its path, for the
 // chat to attach (AiChatSession.attachFile). The side panel's and the
 // bubble's (AgentSpeech) input.

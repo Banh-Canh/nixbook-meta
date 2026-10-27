@@ -11,16 +11,20 @@ import (
 // agents > "Fixes it makes itself"), with what it borrows elsewhere.
 type Config struct {
 	Enable bool `json:"enable"`
-	// Model of the fixing session (Claude Code's alias or full name).
+	// Model of the fixing session: small, main or big (the provider's
+	// models, Settings > Desktop agents > Model provider) or a provider
+	// model id. Claude Code's old aliases are read as these (modelAlias).
 	Model string `json:"model"`
 	// Runs started on its own per day ("Fix now" isn't counted); 0: no
-	// limit but BudgetUsd per run.
+	// limit but the session's turns.
 	PerDay int `json:"perDay"`
 	// The size a change may have: beyond, it is a feature or a refactor,
 	// not a fix, and is refused.
 	MaxFiles int `json:"maxFiles"`
 	MaxLines int `json:"maxLines"`
-	// The most a fixing session may spend (Claude Code's --max-budget-usd).
+	// Unused, kept so older settings still read: nixbook-meta-agent reports
+	// no cost, so a session is bounded by its turns (sessionTurns) and its
+	// time, not by money.
 	BudgetUsd float64 `json:"budgetUsd"`
 	// Merged without asking once its checks pass, when every changed file
 	// matches AutoMergePaths and none is sensitive.
@@ -38,7 +42,8 @@ type Config struct {
 	// repository; never merged on its own.
 	Features Features `json:"features"`
 
-	claude string
+	// nixbook-meta-agent, the session's engine (findAgent).
+	agent string
 	// policies.ai of the shell: 0 no AI, 1 yes, 2 local models only.
 	aiPolicy int
 }
@@ -47,15 +52,16 @@ type Features struct {
 	Enable bool `json:"enable"`
 	// Features started on its own per day ("Build now" isn't counted); 0:
 	// no limit.
-	PerDay    int     `json:"perDay"`
-	MaxFiles  int     `json:"maxFiles"`
-	MaxLines  int     `json:"maxLines"`
+	PerDay   int `json:"perDay"`
+	MaxFiles int `json:"maxFiles"`
+	MaxLines int `json:"maxLines"`
+	// Unused, as Config.BudgetUsd.
 	BudgetUsd float64 `json:"budgetUsd"`
 }
 
 func defaults() Config {
 	return Config{
-		Model: "sonnet", PerDay: 2, MaxFiles: 5, MaxLines: 150, BudgetUsd: 3,
+		Model: "main", PerDay: 2, MaxFiles: 5, MaxLines: 150, BudgetUsd: 3,
 		AutoMergePaths: []string{"docs/**", "**/*.md"}, CIIgnoreJobs: []string{"push-cache"},
 		Features: Features{PerDay: 1, MaxFiles: 15, MaxLines: 600, BudgetUsd: 8},
 	}
@@ -94,10 +100,7 @@ func (c Config) on(feature bool) bool {
 func loadConfig() (Config, error) {
 	var raw struct {
 		Ai struct {
-			Improve    *Config `json:"improve"`
-			ClaudeCode struct {
-				Command string `json:"command"`
-			} `json:"claudeCode"`
+			Improve *Config `json:"improve"`
 		} `json:"ai"`
 		Updates struct {
 			RepoURL string `json:"repoUrl"`
@@ -112,9 +115,7 @@ func loadConfig() (Config, error) {
 		return cfg, errorf("the shell's config: %v", err)
 	}
 	d := defaults()
-	if cfg.Model == "" {
-		cfg.Model = d.Model
-	}
+	cfg.Model = modelAlias(cfg.Model)
 	if cfg.PerDay < 0 {
 		cfg.PerDay = 0
 	}
@@ -142,7 +143,7 @@ func loadConfig() (Config, error) {
 	if cfg.Repo == "" {
 		cfg.Repo = raw.Updates.RepoURL
 	}
-	cfg.claude = findClaude(raw.Ai.ClaudeCode.Command)
+	cfg.agent = findAgent()
 	cfg.aiPolicy = 1
 	if raw.Policies.Ai != nil {
 		cfg.aiPolicy = *raw.Policies.Ai
@@ -166,15 +167,26 @@ func available() bool {
 
 var errUnavailable = errorf("not available on this machine (programs.nixbook-shell.selfImprove.enable)")
 
-// findClaude looks where Ai.qml and desktop-mcp.py look.
-func findClaude(hint string) string {
-	home, _ := os.UserHomeDir()
-	onPath, _ := exec.LookPath("claude")
-	for _, c := range []string{
-		hint, os.Getenv("NIXBOOK_IMPROVE_CLAUDE"), onPath,
-		filepath.Join(home, ".local/bin/claude"), filepath.Join(home, ".nix-profile/bin/claude"),
-		"/etc/profiles/per-user/" + os.Getenv("USER") + "/bin/claude", "/run/current-system/sw/bin/claude",
-	} {
+// modelAlias: the model as nixbook-meta-agent names them. Settings written
+// for Claude Code said sonnet (the old default), haiku or opus.
+func modelAlias(m string) string {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "", "default", "sonnet":
+		return "main"
+	case "haiku":
+		return "small"
+	case "opus", "fable":
+		return "big"
+	}
+	return strings.TrimSpace(m)
+}
+
+// findAgent: nixbook-meta-agent, NIXBOOK_IMPROVE_AGENT first (the shell and
+// the tests), else on PATH (the package puts it there). It reaches the
+// model provider through nixbook-model-provider itself.
+func findAgent() string {
+	onPath, _ := exec.LookPath("nixbook-meta-agent")
+	for _, c := range []string{os.Getenv("NIXBOOK_IMPROVE_AGENT"), onPath} {
 		if c == "" {
 			continue
 		}

@@ -22,7 +22,7 @@ let
   quickshell = import ./quickshell.nix { inherit pkgs quickshellSrc; };
   accounts = import ./accounts.nix { inherit pkgs; };
   # The desktop agent's fixes to nixbook (`nixbook-improve`, services/SelfImprove.qml).
-  improve = import ./improve.nix { inherit pkgs modelProvider; };
+  improve = import ./improve.nix { inherit pkgs modelProvider metaAgent; };
   # The notes' sync with Google Keep (`nixbook-keep`, services/KeepSync.qml).
   keep = import ./keep.nix { inherit pkgs gkeepapiSrc; };
   settingsLib = import ./lib.nix { inherit lib; };
@@ -48,10 +48,11 @@ let
     exec ${pkgs.bash}/bin/bash ${./scripts/update-check.sh} "$@"
   '';
 
-  # The model provider Claude Code talks to (scripts/model-provider.sh): every
-  # Claude Code the shell, desktop-mcp and nixbook-improve start goes through
-  # `nixbook-model-provider run`; Anthropic (the user's Claude login) or an
-  # Anthropic-compatible API such as Meta's, its key in the keyring.
+  # The model provider the shell's AI talks to (scripts/model-provider.sh):
+  # every agent the shell, desktop-mcp and nixbook-improve start, and Quick
+  # AI, go through `nixbook-model-provider run`, which hands them Meta's
+  # Model API (or another server with a Messages API) and its key from the
+  # keyring in NIXBOOK_AI_*.
   modelProvider = pkgs.writeShellScriptBin "nixbook-model-provider" ''
     export PATH=${
       lib.makeBinPath (
@@ -68,9 +69,27 @@ let
     ${builtins.readFile ./scripts/model-provider.sh}
   '';
 
+  # The headless agent on Meta's Model API (scripts/meta-agent.py,
+  # `nixbook-meta-agent`): a print-mode command line and stream-json
+  # events, built-in tools (files, Bash, the web) and MCP servers. Every
+  # agent the shell starts runs it (the side panel's Muse, the equalizer
+  # agent, desktop-mcp's passes and routines, nixbook-improve); it re-runs
+  # itself through nixbook-model-provider for the key.
+  metaAgent = pkgs.writeShellScriptBin "nixbook-meta-agent" ''
+    export PATH=${
+      lib.makeBinPath [
+        modelProvider
+        pkgs.bubblewrap # the Bash sandbox (--sandbox)
+        pkgs.bash
+        pkgs.coreutils
+      ]
+    }:$PATH
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/meta-agent.py} "$@"
+  '';
+
   # Quick AI's answers (scripts/quick-ai.py, services/QuickAi.qml): the
   # provider's Messages API called directly with its small model, run
-  # through nixbook-model-provider for the key (Anthropic: `claude -p`).
+  # through nixbook-model-provider for the key.
   quickAi = pkgs.writeShellScriptBin "nixbook-quick-ai" ''
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/quick-ai.py} "$@"
   '';
@@ -213,11 +232,6 @@ let
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/nix-onboard.py} "$@"
   '';
 
-  # Claude usage reader for the AnthropicUsage bar widget (OpenCode OAuth).
-  anthropicUsage = pkgs.writeShellScriptBin "anthropic-usage" (
-    builtins.readFile ./scripts/anthropic-usage.sh
-  );
-
   # Desktop control for AI agents (scripts/desktop-mcp.py): an MCP server
   # (`nixbook-desktop-mcp`, also `nixbook-shell mcp`) and the command line
   # the shell's AI chat calls, with the tools it drives on its PATH.
@@ -239,7 +253,8 @@ let
           playerctl # the music every player plays (usage habits: music taste)
           accounts # nixbook-accounts: the contacts tool
           improve # nixbook-improve: report_problem
-          modelProvider # nixbook-model-provider: Claude Code's model provider
+          modelProvider # nixbook-model-provider: the provider's key for the passes
+          metaAgent # nixbook-meta-agent: the memory/news passes and routine runs
           libarchive # bsdtar: `extract`, a download extracted from its bubble
           procps # pgrep: a watched process
         ]
@@ -376,8 +391,8 @@ let
       accounts # `nixbook-accounts` — the accounts, contacts and tasks (services/Accounts.qml)
       keep # `nixbook-keep` — the notes' sync with Google Keep (services/KeepSync.qml)
       shell.passthru.pythonEnv
-      anthropicUsage # `anthropic-usage` — AnthropicUsage bar widget
-      modelProvider # `nixbook-model-provider` — the model provider Claude Code talks to
+      modelProvider # `nixbook-model-provider` — the model provider the shell's AI talks to
+      metaAgent # `nixbook-meta-agent` — the side panel's Muse and every other agent (Meta's Model API)
       quickAi # `nixbook-quick-ai` — Quick AI's instant answers (services/QuickAi.qml)
       nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
@@ -501,6 +516,7 @@ launcher.overrideAttrs (old: {
       accounts
       improve
       modelProvider
+      metaAgent
       quickAi
       voiceTranscribe
       voiceStream

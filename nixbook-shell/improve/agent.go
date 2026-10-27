@@ -12,10 +12,11 @@ import (
 	"time"
 )
 
-// The fixing session: Claude Code in --restricted mode in the clone. Its
-// file tools stay inside the clone, it runs nothing (no Bash, no web), reads
-// no settings, hooks or MCP servers. It only edits; this program checks,
-// commits and pushes, so it never holds a credential.
+// The fixing session: nixbook-meta-agent (Meta's Muse, through
+// nixbook-model-provider) in the clone. It loads only the file tools, which
+// stay inside the clone (the working directory, writable with acceptEdits);
+// it runs nothing (no Bash, no web) and has no MCP servers. It only edits;
+// this program checks, commits and pushes, so it never holds a credential.
 
 const agentRules = `You fix nixbook, a NixOS configuration with its own desktop shell
 (nixbook-shell, Quickshell/QML). The repository is your working directory.
@@ -175,7 +176,7 @@ type session struct {
 }
 
 // maskPrivate is the shell's privacy mask (Settings > Desktop agents >
-// Private details) on what goes to Claude: logs and the user's reports may
+// Private details) on what goes to the model: logs and the user's reports may
 // name people. `privacy mask` gives the text back as it is while the mask
 // is off. Nothing is sent when it can't run. The answer keeps the
 // placeholders: it goes to a public pull request.
@@ -190,29 +191,30 @@ func maskPrivate(text string) (string, error) {
 // ask runs the session, a fix's or a feature's (resume: the earlier one,
 // told what went wrong).
 func ask(cfg Config, dir, prompt, resume string, feature bool) (session, error) {
-	if cfg.claude == "" {
-		return session{}, errorf("no Claude Code (claude) found")
+	if cfg.agent == "" {
+		return session{}, errorf("no nixbook-meta-agent found")
 	}
 	prompt, err := maskPrivate(prompt)
 	if err != nil {
 		return session{}, err
 	}
 	lim := cfg.limits(feature)
-	rules, schema, turns, budget, limit := agentRules, answerSchema, "60", cfg.BudgetUsd, 40*time.Minute
+	// Bounded by turns and time: the agent reports no cost (budgetUsd is
+	// unused).
+	rules, schema, turns, limit := agentRules, answerSchema, sessionTurns, 40*time.Minute
 	if feature {
-		rules, schema, turns, budget, limit = featureRules, featureSchema, "150", cfg.Features.BudgetUsd, 90*time.Minute
+		rules, schema, turns, limit = featureRules, featureSchema, featureTurns, 90*time.Minute
 	}
 	args := []string{
-		"-p", "--restricted", "--safe-mode", "--strict-mcp-config", "--output-format", "stream-json", "--verbose",
+		"-p", "--output-format", "stream-json", "--verbose",
 		"--tools", "Read,Edit,Write,Glob,Grep", "--permission-mode", "acceptEdits",
-		"--model", cfg.Model, "--max-turns", turns, "--max-budget-usd", fmt.Sprintf("%.2f", budget),
+		"--model", cfg.Model, "--max-turns", turns,
 		"--append-system-prompt", fmt.Sprintf(rules, lim.Files, lim.Lines),
 		"--json-schema", schema,
 	}
 	if resume != "" {
 		args = append(args, "--resume", resume)
 	}
-	claude := claudeCommand(cfg.claude, args)
 	// Streamed: each tool call shows live (doing), the result comes last.
 	out, err := stream(dir, limit, prompt, func(line string) {
 		var ev struct {
@@ -233,7 +235,7 @@ func ask(cfg Config, dir, prompt, resume string, feature bool) (session, error) 
 				doing(describeTool(c.Name, c.Input, dir))
 			}
 		}
-	}, claude[0], claude[1:]...)
+	}, cfg.agent, args...)
 	var res struct {
 		IsError    bool            `json:"is_error"`
 		Subtype    string          `json:"subtype"`
@@ -260,16 +262,11 @@ func ask(cfg Config, dir, prompt, resume string, feature bool) (session, error) 
 	return s, nil
 }
 
-// claudeCommand is Claude Code started through nixbook-model-provider,
-// which points it at the model provider chosen in the shell's settings
-// (Anthropic: the user's own login, unchanged); Claude Code as it is
-// without the launcher.
-func claudeCommand(claude string, args []string) []string {
-	if provider, err := exec.LookPath("nixbook-model-provider"); err == nil {
-		return append([]string{provider, "run", claude}, args...)
-	}
-	return append([]string{claude}, args...)
-}
+// The most turns a session may take, a fix's and a feature's.
+const (
+	sessionTurns = "60"
+	featureTurns = "150"
+)
 
 // stream runs a command, handing each line of its output to onLine as it
 // comes; the output whole, and an error with its end.

@@ -9,14 +9,14 @@ customHomeManagerModules.nixbookShellConfig.selfImprove.enable = true;
 # outside nixbook: programs.nixbook-shell.selfImprove.enable = true;
 ```
 
-Elsewhere there are no Settings sections, agents don't get the `report_problem`, `request_feature` and `list_requests` tools, and `nixbook-improve` refuses to run. Where it is enabled, it stays off until you turn it on: **Settings → Desktop agents → Fixes it makes itself → Make fixes on its own** (`ai.improve.enable`). It uses your Claude Code login for the fixing session, and its own GitHub token (below) for GitHub.
+Elsewhere there are no Settings sections, agents don't get the `report_problem`, `request_feature` and `list_requests` tools, and `nixbook-improve` refuses to run. Where it is enabled, it stays off until you turn it on: **Settings → Desktop agents → Fixes it makes itself → Make fixes on its own** (`ai.improve.enable`). The fixing session is `nixbook-meta-agent` (Meta's Muse, on the model provider's key: **Settings → Desktop agents → Model provider**), and it uses its own GitHub token (below) for GitHub.
 
 ## Its GitHub token
 
 It reaches GitHub **only with its own token**, never your `gh` login or ssh key. Create a **fine-grained token** (GitHub → Settings → Developer settings → Fine-grained tokens) for the repository only. Set **Contents** and **Pull requests** to _Read and write_ and nothing else (no _Workflows_, no _Administration_). Paste it in the section's **GitHub token** field: **Save and check** checks that it can read the repository, push and open pull requests (a dry-run push and a pull request from a branch that doesn't exist: nothing is created) and names a missing permission; then it keeps it in your keyring (`secret-tool`, service `nixbook-improve`). It warns you about a classic token, which reaches every repository you can, and about an admin token. **Forget the token** removes it. Without a token it opens no pull request.
 
 - `gh` runs with that token and an empty config directory, so it can't fall back to your login. git pushes and fetches over https with the token alone; an ssh repository URL is used as https.
-- Its git calls to GitHub use none of your git config (`GIT_CONFIG_GLOBAL=/dev/null`): your credential helpers or an https-to-ssh rewrite can't get in the way of the token. Its commits are never signed with your key: they're Claude's, and a background job shouldn't raise a pinentry prompt.
+- Its git calls to GitHub use none of your git config (`GIT_CONFIG_GLOBAL=/dev/null`): your credential helpers or an https-to-ssh rewrite can't get in the way of the token. Its commits are never signed with your key: they're the agent's, and a background job shouldn't raise a pinentry prompt.
 - If **Save and check** refuses a token, nothing is saved and the previous token stays in use. "GitHub doesn't accept this token for git" means GitHub doesn't know it (a typo, expired, regenerated), or the organization hasn't approved it yet.
 - The fixing session never has it: it isn't in its environment, and its file tools can't reach the keyring.
 - Without _Workflows_ permission, GitHub itself refuses a push that touches `.github/workflows`, on top of the guard.
@@ -36,16 +36,16 @@ Things to fix arrive in an inbox. Filing them is plain code, with no model call,
 - **CI on `main`.** A workflow whose latest run on `main` failed in a job's step (read with the token); the session gets the failed jobs' logs. One green again is dropped from the list. A failure only in `ciIgnoreJobs` (`push-cache`: uploading to the binary cache), or of a job that lost its runner (no failed step), isn't a bug for a fix.
 - **Crashes of nixbook's programs.** A coredump of a program nixbook packages (`customPkgs/`, the shell).
 
-**Only what nixbook defines is sent to Claude unasked.** Nix writes out what that is: the units of its own module files (system: `/etc/nixbook/owned-units.json`, from `nixosModules/ownedUnits.nix`; user: `~/.config/nixbook-shell/owned.json`) and its packages. The rest is listed under **Seen, not nixbook's**, for you to know: another unit failing, another app's crash, the kernel's errors (from the journal). It never starts a session; **Fix now** sends one anyway, telling Claude it may not be nixbook's to fix.
+**Only what nixbook defines is sent to the model unasked.** Nix writes out what that is: the units of its own module files (system: `/etc/nixbook/owned-units.json`, from `nixosModules/ownedUnits.nix`; user: `~/.config/nixbook-shell/owned.json`) and its packages. The rest is listed under **Seen, not nixbook's**, for you to know: another unit failing, another app's crash, the kernel's errors (from the journal). It never starts a session; **Fix now** sends one anyway, telling Muse it may not be nixbook's to fix.
 
-Logs stay on this computer: they go to the Claude session as context, never into a commit or a pull request.
+Logs stay on this computer: they go to the agent session as context, never into a commit or a pull request.
 
-What you report, a failed update or a red CI get a fix soon. A shell or unit error has to show up 3 times first; a crash, a failed unit (two looks) or a Nix warning (two updates) twice. It makes at most `perDay` fixes on its own (2 by default; **Fixes a day on its own** in the section, `0` for no limit, while **Most a fix may spend**, `budgetUsd`, still caps each run). **Fix now** next to an item starts one at once, without counting toward that limit. Items it tried without fixing them (failed, skipped, too big) stay listed, with why (but those it found harmless and unfixable, which leave on their own), so **Fix now** can try again, after you give the token a missing permission for instance.
+What you report, a failed update or a red CI get a fix soon. A shell or unit error has to show up 3 times first; a crash, a failed unit (two looks) or a Nix warning (two updates) twice. It makes at most `perDay` fixes on its own (2 by default; **Fixes a day on its own** in the section, `0` for no limit, each run still bounded by its turns and time). **Fix now** next to an item starts one at once, without counting toward that limit. Items it tried without fixing them (failed, skipped, too big) stay listed, with why (but those it found harmless and unfixable, which leave on their own), so **Fix now** can try again, after you give the token a missing permission for instance.
 
 ## How a fix is made
 
 1. A clone of the repository (`~/.local/share/nixbook-shell/improve/repo`) is brought to `main`, on an `agent/fix-<item>` branch.
-2. A **Claude Code session** (your Claude Code login) reads the item and changes the files. It runs in `--restricted` mode: its file tools stay inside the clone, and it can't run commands, browse the web, or use settings, hooks or MCP servers. It never sees your files, your logins or a token. It may answer _skip_ (not a bug, or not enough to go on; when nothing here can fix it and it does no harm, such as another app's log noise, it is _ignored_: dropped from the list and never tried again) or _too big_ (a feature or a refactor): the item then moves to the [feature requests](#features-it-builds) with what the session found, and a notification says so. When nothing here can do it (it needs a place off limits, credentials, hardware, a change outside nixbook) it answers _can't_, and the item is [dropped with why](#what-it-cant-do).
+2. A **`nixbook-meta-agent` session** (Meta's Muse, `ai.improve.model`: the provider's main model by default) reads the item and changes the files. It loads only the file tools (`--tools Read,Edit,Write,Glob,Grep --permission-mode acceptEdits`), which stay inside the clone, and it can't run commands, browse the web or use MCP servers. It is bounded by its turns and time (60 turns and 40 minutes for a fix), not by money. It never sees your files, your logins or a token. It may answer _skip_ (not a bug, or not enough to go on; when nothing here can fix it and it does no harm, such as another app's log noise, it is _ignored_: dropped from the list and never tried again) or _too big_ (a feature or a refactor): the item then moves to the [feature requests](#features-it-builds) with what the session found, and a notification says so. When nothing here can do it (it needs a place off limits, credentials, hardware, a change outside nixbook) it answers _can't_, and the item is [dropped with why](#what-it-cant-do).
 3. **The guard** refuses what isn't a fix: more than `maxFiles` files (5) or `maxLines` changed lines (150), a new file (except Markdown), a deleted or binary file, or anything off limits (below).
 4. **The checks** (on this computer):
    - `treefmt`;
@@ -55,18 +55,18 @@ What you report, a failed update or a red CI get a fix soon. A shell or unit err
    When something fails, the session gets the output once and tries again. If it fails a second time, the item is marked failed and nothing is pushed. Failed in a second run as well, it is [dropped](#what-it-cant-do).
 
 5. **The commit** is its changelog entry: `fix(scope): …` or `polish(scope): …`, then what was wrong, the cause, what changed and how to see it. Below that come where the report came from and an `Agent-Fix: <item>` trailer. These titles are what the updates widget lists as the changelog.
-6. The branch is pushed and a **pull request** opened (label `agent-fix`), with what was checked and the files changed.
+6. The branch is pushed and a **pull request** opened (label `agent-fix`), with what was checked and the files changed, signed _🤖 Made by nixbook-improve (Meta Muse)_.
 7. Once **CI** finishes (a cancelled or skipped job isn't a failure; a failure without a log, a lost runner, gets no retry), a notification says **Fix ready** with **Merge**, **Look** and **Drop** (the same buttons are in Settings). If CI fails, the session gets the failed jobs' logs and tries once more, then the PR is left to you. Merge is a rebase merge, made with its token.
 
 ## What it costs
 
-Nothing runs between fixes but the shell's timers: it looks for bugs 10 minutes after the shell starts and then every 6 hours (a few log reads and GitHub calls, seconds of CPU), and checks its open PRs every 30 minutes while one waits. A run waiting on CI or on you is an idle process. A fix itself (at most `perDay` a day on its own, plus each **Fix now**) is a few minutes of work: the Claude Code session, the tests of what it touched, and the shell started headless (a headless sway and a second, software-rendered shell for about 25 seconds). Fixes run at the lowest CPU and disk priority (`Nice=19`, `CPUWeight=idle`, `IOSchedulingClass=idle`), so they only take what your own work leaves; the Nix builds they start are the system's `nix-daemon`'s, at its usual priority.
+Nothing runs between fixes but the shell's timers: it looks for bugs 10 minutes after the shell starts and then every 6 hours (a few log reads and GitHub calls, seconds of CPU), and checks its open PRs every 30 minutes while one waits. A run waiting on CI or on you is an idle process. A fix itself (at most `perDay` a day on its own, plus each **Fix now**) is a few minutes of work: the agent session, the tests of what it touched, and the shell started headless (a headless sway and a second, software-rendered shell for about 25 seconds). Fixes run at the lowest CPU and disk priority (`Nice=19`, `CPUWeight=idle`, `IOSchedulingClass=idle`), so they only take what your own work leaves; the Nix builds they start are the system's `nix-daemon`'s, at its usual priority.
 
 ## Seeing what it does
 
 - **The status line** at the top of the section always says something:
   - _Off_, or that it needs its token;
-  - while fixing, _Fixing "…" — Claude reads ThumbnailImage.qml (3 min)_, live, with a progress bar and **Stop**;
+  - while fixing, _Fixing "…" — Muse reads ThumbnailImage.qml (3 min)_, live, with a progress bar and **Stop**;
   - a PR waiting for CI or for you;
   - otherwise _Idle_, with its last activity.
 - **Activity** lists what it did and decided lately:
@@ -76,7 +76,7 @@ Nothing runs between fixes but the shell's timers: it looks for bugs 10 minutes 
   - CI, merges and what a merge broke;
   - errors.
 - **The bar.** The bar's robot shows a wrench while a fix is being made, and its tooltip says what it is doing.
-- **Stop** ends the fix being made before its PR is out: the Claude session and the checks are stopped, and the item goes back to the inbox.
+- **Stop** ends the fix being made before its PR is out: the agent session and the checks are stopped, and the item goes back to the inbox.
 
 A PR you merge or close on GitHub leaves the list too: it checks its open PRs when the shell starts, every 30 minutes while one waits, and when it looks for bugs (`nixbook-improve sync`). Merged there, it is watched after the update like the others.
 
@@ -104,7 +104,7 @@ CI's **agent-guard** job (`checks.yaml`) runs `nixbook-improve guard` on every `
 
 - **What it builds.** Ask an agent ("I wish the bar showed the week number", "add a way to…"): its `request_feature` tool files it (`report_problem` tells agents to use it for anything bigger than a fix). You can also type it in the section. A fix the session finds too big comes here on its own, with what the session found ("Too big for a fix: …"); one found too big before that has an **As a feature** button.
 - **How it goes.** Ask an agent ("did you file it?", "how's my feature going?"): its read-only `list_requests` tool reads `nixbook-improve status` and gives each fix and feature request, newest first, with when it was filed, by whom (you, through an agent or Settings, or the fixer from what it found), its status (queued, building, pull request with its link and checks, merged, skipped, too big, failed, dropped) and why. It is there while fixes or features are on.
-- **How.** Like a fix, on an `agent/feature-<item>` branch, by a session with the same confinement and off-limits places, but with its own instructions: build it whole but small, reuse what exists, update the settings, docs, `KEYBINDS.md` and the assistant's answers it touches. It may change up to `maxFiles` files (15) and `maxLines` lines (600) and add files (still no deleted or binary file), with up to `budgetUsd` (8) of Claude Code and 90 minutes. It may answer _skip_ (it exists already, with how to use it; too vague; not this repository's) or _too big_ (it needs a design choice or more than that: left to you with what it would take). The same checks run.
+- **How.** Like a fix, on an `agent/feature-<item>` branch, by a session with the same confinement and off-limits places, but with its own instructions: build it whole but small, reuse what exists, update the settings, docs, `KEYBINDS.md` and the assistant's answers it touches. It may change up to `maxFiles` files (15) and `maxLines` lines (600) and add files (still no deleted or binary file), with up to 150 turns and 90 minutes. It may answer _skip_ (it exists already, with how to use it; too vague; not this repository's) or _too big_ (it needs a design choice or more than that: left to you with what it would take). The same checks run.
 - **The commit** is `feat(scope): …` with what it does, how to use it and how it is made, and an `Agent-Feature: <item>` trailer; the pull request has the label `agent-feature`.
 - **Never merged on its own**, whatever the auto-merge switches: once CI passes you get **Feature ready** with **Merge**, **Look** and **Drop**. After a merge, main's checks and the updated shell are watched, as for a fix: what it broke is fixed forward, never reverted.
 - One it can't build (a design choice only you can make, more than it may change, a place off limits, credentials, hardware, or its change failing twice) is [dropped with why](#what-it-cant-do).
@@ -117,7 +117,7 @@ One fix or feature is made at a time. **Fix now**, **Build now** or **Retry** pr
 
 - The item shows **Queued, #N** in Settings > Desktop agents, with **Earlier**, **Later** and **Unqueue**; the status line says how many wait. `list_improvements` gives each one's place (`queued`), `list_requests` says "queued, #N in line to start".
 - When the one being made lets go (its pull request is open, or it ended: skipped, failed, dropped, stopped), the next one starts on its own, in the order asked. **Stop** stops only the current one.
-- Queued items were asked by you, so they start as **Fix now** does: past the day's limit, each still capped by its budget. A queued item whose kind you switch off waits until it is on again; one dropped, merged or moved to the features leaves the queue.
+- Queued items were asked by you, so they start as **Fix now** does: past the day's limit, each still bounded by its turns and time. A queued item whose kind you switch off waits until it is on again; one dropped, merged or moved to the features leaves the queue.
 - After a reboot, the shell's next run takes the queue first.
 
 From a terminal: `nixbook-improve queue ID`, `unqueue ID`, `queue-move ID up|down`.
@@ -151,11 +151,11 @@ A fix or feature it can't do is **dropped** with a short reason: what the sessio
 | Setting                         | Default                  | What                                               |
 | ------------------------------- | ------------------------ | -------------------------------------------------- |
 | `ai.improve.enable`             | `false`                  | Make fixes on its own                              |
-| `ai.improve.model`              | `"sonnet"`               | The fixing session's model (`opus`…)               |
+| `ai.improve.model`              | `"main"`                 | The fixing session's model (`small`, `big`…)       |
 | `ai.improve.perDay`             | `2`                      | Fixes started on their own per day                 |
 | `ai.improve.maxFiles`           | `5`                      | Files a fix may change                             |
 | `ai.improve.maxLines`           | `150`                    | Lines a fix may change                             |
-| `ai.improve.budgetUsd`          | `3`                      | A session's spending limit (`--max-budget-usd`)    |
+| `ai.improve.budgetUsd`          | `3`                      | Unused (kept for older settings)                   |
 | `ai.improve.autoMerge`          | `false`                  | Merge low-risk fixes on its own                    |
 | `ai.improve.autoMergePaths`     | `["docs/**", "**/*.md"]` | What counts as low-risk                            |
 | `ai.improve.autoMergeFixes`     | `false`                  | Merge every fix on its own (never a sensitive one) |
@@ -165,11 +165,11 @@ A fix or feature it can't do is **dropped** with a short reason: what the sessio
 | `ai.improve.features.perDay`    | `1`                      | Features started on their own per day              |
 | `ai.improve.features.maxFiles`  | `15`                     | Files a feature may change                         |
 | `ai.improve.features.maxLines`  | `600`                    | Lines a feature may change                         |
-| `ai.improve.features.budgetUsd` | `8`                      | A feature session's spending limit                 |
+| `ai.improve.features.budgetUsd` | `8`                      | Unused (kept for older settings)                   |
 | `ai.initiative.improveIdeas`    | `true`                   | The agent proposes fixes and features              |
 
 CI's guard always uses the default limits, so raising `maxFiles` or `maxLines` (or the features') here gets a bigger change refused there.
 
 ## Command line
 
-`nixbook-improve status` (the inbox and the runs), `stop`, `sync`, `note TEXT` (a fix), `request TEXT` (a feature), `to-feature ID` (a fix item to the features), `collect`, `run [--item ID] [--no-push]` (`--no-push`: a dry run that stops at the local commit), `merge|drop|look PR`, `token set|forget|status` (`set` reads it on stdin), `health REV`, `guard BASE [HEAD] [--feature]`. State lives in `~/.local/state/nixbook-shell/improve/`; the clone and each run's logs in `~/.local/share/nixbook-shell/improve/`.
+`nixbook-improve status` (the inbox and the runs), `stop`, `sync`, `note TEXT` (a fix), `request TEXT` (a feature), `to-feature ID` (a fix item to the features), `collect`, `run [--item ID] [--no-push]` (`--no-push`: a dry run that stops at the local commit), `merge|drop|look PR`, `token set|forget|status` (`set` reads it on stdin), `health REV`, `guard BASE [HEAD] [--feature]`. State lives in `~/.local/state/nixbook-shell/improve/`; the clone and each run's logs in `~/.local/share/nixbook-shell/improve/`. The session's engine is `nixbook-meta-agent` from `PATH` (`NIXBOOK_IMPROVE_AGENT` points elsewhere); `status` says whether it was found (`agent`).

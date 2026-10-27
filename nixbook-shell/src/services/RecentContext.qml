@@ -9,12 +9,12 @@ import Quickshell.Wayland
 import QtQuick
 
 /**
- * What the user did the last few minutes, for Claude to know without being
+ * What the user did the last few minutes, for Muse to know without being
  * told (ai.initiative.recentContext, off by default): the windows in front,
  * a command that failed in a terminal, an error copied. In memory only,
  * never on disk; `nixbook-desktop-mcp context` filters it (private apps and
  * windows out, secrets redacted) before it is sent: with a question asked
- * in Claude's bubble (the bubble says so, and its × leaves it out), and as
+ * in Muse's bubble (the bubble says so, and its × leaves it out), and as
  * a word when back from a break ("before the break you were on…").
  * Also plain code, with no model call until a click:
  *   - terminal (ai.initiative.terminal): the same command failing twice in

@@ -27,8 +27,8 @@ import QtQuick
  * What it says comes out loud (`speaking`: its own bubble on the left,
  * AgentSpeech.qml) or waits in the bar (`pending`: the robot's bubble),
  * until it expires. The bubble is a small chat: the user answers in it and
- * Claude answers there (`chat`, a thread of its own, the side panel's "From
- * Claude" tab, opened there only on expand()); the answer teaches it what
+ * Muse answers there (`chat`, a thread of its own, the side panel's "From
+ * Muse" tab, opened there only on expand()); the answer teaches it what
  * the user values. Mod+C calls the bubble up to ask anything.
  */
 Singleton {
@@ -37,7 +37,7 @@ Singleton {
     // policies.ai: 1 (online models), or 2 (local only): then only what is
     // plain code (reactions' Open and Show in folder, routines' reports,
     // watches, the brief) and what a local model reads (localModel in
-    // desktop-mcp.json: notifications, pairing); nothing to answer Claude in.
+    // desktop-mcp.json: notifications, pairing); nothing to answer Muse in.
     readonly property bool enabled: (Config.options?.ai?.initiative?.enable ?? false) && [1, 2].includes(Config.options?.policies?.ai ?? 1)
     readonly property bool online: (Config.options?.policies?.ai ?? 1) === 1
     readonly property bool readNotifications: Config.options?.ai?.initiative?.readNotifications ?? false
@@ -198,8 +198,6 @@ Singleton {
     function consider(event) {
         if (!root.enabled) return
         event.busy = event.force === true ? false : root.busy()
-        // The shell's PATH may not have Claude Code: its own, for the small model.
-        if (Ai.claudeCodePath.length > 0) event.claude = Ai.claudeCodePath
         const what = event.force !== true ? "" : event.event === "news" ? "news" : "say"
         if (what !== "") root._askNow(what)
         // Reading the screen (pairing): the eye in the bar meanwhile.
@@ -324,15 +322,15 @@ Singleton {
     // called it: Mod+C) and "done" (a chat of the side panel
     // answered while it was closed) have no id: nothing to learn from.
     property var speaking: null
-    // The conversation in the bubble (an AiChatSession): Claude's own thread
-    // (Ai.claudeThread, the side panel's "From Claude" tab) once the user
+    // The conversation in the bubble (an AiChatSession): Muse's own thread
+    // (Ai.agentThread, the side panel's "From Muse" tab) once the user
     // answers in the bubble, or the panel's tab whose answer it shows. The
     // bubble is the chat: the panel only when asked (expand()).
     property var chat: null
     readonly property bool conversing: root.chat !== null && (root.chat.messageIDs ?? []).some(id => root.chat.messageByID[id]?.role === "user")
     // Put away with its conversation (closed, or left a while): the bar's
-    // bubble brings it back, and so does Claude's next answer in it.
-    // {item, chat, unread}: unread once Claude answered in it put away (not
+    // bubble brings it back, and so does Muse's next answer in it.
+    // {item, chat, unread}: unread once Muse answered in it put away (not
     // brought back then: the user busy), so the bar's bubble lights up.
     property var parked: null
     readonly property bool thinking: (root.chat?.responding ?? false) || (root.parked?.chat?.responding ?? false)
@@ -382,7 +380,7 @@ Singleton {
     // Called up (Mod+C, the bar's robot): its bubble, to ask
     // anything; the conversation put away comes back instead.
     function summon() {
-        // AI off (policies.ai): no bubble to ask Claude in.
+        // AI off (policies.ai): no bubble to ask Muse in.
         if ((Config.options?.policies?.ai ?? 1) !== 1) return
         if (root.parked && !root.speaking) root.resume()
         else if (!root.speaking) root.speaking = root._ask()
@@ -412,7 +410,7 @@ Singleton {
         }
     }
     // Called up by the user (Mod+C), or what it did for them there at once
-    // ("quick"): a new conversation of theirs, not a "From Claude" thread.
+    // ("quick"): a new conversation of theirs, not a "From Muse" thread.
     function isAsk(item) {
         return item?.kind === "ask" || item?.kind === "quick"
     }
@@ -420,15 +418,15 @@ Singleton {
         return { id: "", kind: "ask", text: root._pick([Translation.tr("What can I do for you?"),
             Translation.tr("I'm here. What do you need?"), Translation.tr("Yes? Ask me anything.")]) }
     }
-    // Its threads (the "From Claude" ones of the history), newest first, to
+    // Its threads (the "From Muse" ones of the history), newest first, to
     // go back to one in the bubble.
-    readonly property var threads: Ai.history.filter(c => c.fromClaude).slice(0, 8)
+    readonly property var threads: Ai.history.filter(c => c.fromAgent).slice(0, 8)
     function openThread(id) {
         let chat = Ai.chats.find(c => c.chatId === id)
         if (!chat) {
             if (root.chat?.chatId === id) chat = root.chat
             else {
-                chat = Ai.claudeThread(false)
+                chat = Ai.agentThread(false)
                 if (!Ai.openChatIn(chat, id)) return
             }
         }
@@ -439,14 +437,14 @@ Singleton {
     }
     // A new conversation in the bubble (its new-chat button, /new or
     // /clear): the one before is left as it is, in the side panel's history
-    // (the next message's thread saves it, Ai.claudeThread); one still
+    // (the next message's thread saves it, Ai.agentThread); one still
     // answering goes on in its tab.
     function fresh() {
         const before = root.chat
-        if (before && !root.conversing && before.fromClaude && !before.responding) before.clearMessages()
+        if (before && !root.conversing && before.fromAgent && !before.responding) before.clearMessages()
         if (root.parked?.chat === before) root.parked = null
         root.chat = null
-        if (before && !before.fromClaude) Ai.dropIfEmpty(before)
+        if (before && !before.fromAgent) Ai.dropIfEmpty(before)
         root.speaking = root._ask()
         root.focusWanted()
     }
@@ -459,19 +457,19 @@ Singleton {
         return list[Math.floor(Math.random() * list.length)]
     }
 
-    // The conversation with what it said as Claude's first message, in its
-    // own thread (the "From Claude" tab, not selected): made when the user
-    // starts typing, so Claude Code is warm by the time they send.
+    // The conversation with what it said as Muse's first message, in its
+    // own thread (the "From Muse" tab, not selected): made when the user
+    // starts typing, so the agent is warm by the time they send.
     // Called up by the user for a new conversation (kind "ask"): a normal
-    // one (Ai.askThread), not a "From Claude" thread: Claude said nothing yet.
+    // one (Ai.askThread), not a "From Muse" thread: Muse said nothing yet.
     function prepare() {
         const item = root.speaking
         if (root.chat || !item) return
-        const thread = root.isAsk(item) ? Ai.askThread(false) : Ai.claudeThread(false)
+        const thread = root.isAsk(item) ? Ai.askThread(false) : Ai.agentThread(false)
         if (!root.isAsk(item))
             thread.addMessage(item.chat || item.text, "assistant", true, root._hint(item))
         root.chat = thread
-        if ((Ai.models[Ai.currentModelId]?.api_format ?? "") === "claude-code" && Ai.claudeCodePath.length > 0)
+        if ((Ai.models[Ai.currentModelId]?.api_format ?? "") === "meta-agent" && Ai.agentReady)
             thread.prewarm()
     }
     function _hint(item) {
@@ -485,13 +483,13 @@ Singleton {
         root._opened = { id: item.id, time: Date.now() }
         root.answer(item.id, "replied")
     }
-    // The user's answer, in the bubble: Claude answers there.
+    // The user's answer, in the bubble: Muse answers there.
     function reply(text, attach) {
         const said = String(text ?? "").trim()
         if (said.length === 0) return
         const item = root.speaking
         // A plain command asked for (open an app, pause the music, dark
-        // mode…): done at once, no Claude run; it says what it did.
+        // mode…): done at once, no Muse run; it says what it did.
         if (root.isAsk(item) && !root.conversing && !attach) {
             const did = QuickIntent.run(said)
             if (did.length > 0) {
@@ -501,7 +499,7 @@ Singleton {
         }
         // Quick AI (ai.quick): the user's own conversations answered by the
         // provider's model directly, in a few seconds (the desktop tools
-        // included); Claude Code takes them on once expanded to the panel.
+        // included); Muse's agent takes them on once expanded to the panel.
         if (QuickAi.handle(said, attach ?? "")) {
             root._taken(item)
             return
@@ -524,7 +522,7 @@ Singleton {
         root.answer(item.id, "replied")
     }
     // A button of a reaction: open the file, show it in its folder, or ask
-    // Claude about it (in the bubble, the file attached).
+    // Muse about it (in the bubble, the file attached).
     // `from`: a small bubble's (Initiative.stack); "ask" opens it in the
     // bubble first, the others act from where it is.
     function act(a, from) {
@@ -543,7 +541,7 @@ Singleton {
             root._taken(item)
             return
         }
-        // What needs no thinking, done here at once: no Claude run.
+        // What needs no thinking, done here at once: no Muse run.
         if (!root._direct(a)) {
             const path = String(a.path ?? "")
             if (!path.startsWith("/")) return
@@ -601,14 +599,14 @@ Singleton {
         onExited: (code, status) => {
             const where = extracted.text.trim()
             if (code === 0 && where.startsWith("/")) root._reveal(where)
-            else Quickshell.execDetached(["notify-send", "-a", "Claude", "Claude", extractError.text.trim() || Translation.tr("Couldn't extract it")])
+            else Quickshell.execDetached(["notify-send", "-a", "Muse", "Muse", extractError.text.trim() || Translation.tr("Couldn't extract it")])
         }
     }
     // The conversation (or what it said) in the side panel, for more room.
     function expand() {
         const item = root.speaking
         if (!root.chat && item) {
-            const thread = root.isAsk(item) ? Ai.askThread() : Ai.claudeThread()
+            const thread = root.isAsk(item) ? Ai.askThread() : Ai.agentThread()
             if (!root.isAsk(item))
                 thread.addMessage(item.chat || item.text, "assistant", true, root._hint(item))
             root.chat = thread
@@ -641,7 +639,7 @@ Singleton {
     function holds(c) {
         return c !== null && (root.chat === c || root.parked?.chat === c)
     }
-    // Claude answered in a conversation of the bubble: one put away comes
+    // Muse answered in a conversation of the bubble: one put away comes
     // back to say it (not while the user is busy: the bar's bubble then).
     function chatAnswered(c) {
         if (root.parked?.chat !== c) return
@@ -663,7 +661,7 @@ Singleton {
         const before = root.speaking
         if (root.conversing) root.park()
         else if (before) {
-            if (root.chat && root.chat.fromClaude && !root.chat.responding) root.chat.clearMessages()
+            if (root.chat && root.chat.fromAgent && !root.chat.responding) root.chat.clearMessages()
             if (before.id) root.pending = [...root.pending.filter(p => p.id !== before.id), before]
             // Still waiting for an answer, or not read: a small bubble, not
             // out of sight.
@@ -673,7 +671,7 @@ Singleton {
         root.speaking = null
         root.chat = null
         root.typing = false
-        if (left && !left.fromClaude && !root.holds(left)) Ai.dropIfEmpty(left)
+        if (left && !left.fromAgent && !root.holds(left)) Ai.dropIfEmpty(left)
     }
     function _notify(item) {
         root._aside()
@@ -836,10 +834,10 @@ Singleton {
         }
     }
 
-    // `nixbook-shell ipc call claude toggle` (Mod+C): its bubble, to ask, or
+    // `nixbook-shell ipc call muse toggle` (Mod+C): its bubble, to ask, or
     // put away; `ask`: always called up.
     IpcHandler {
-        target: "claude"
+        target: "muse"
         function ask(): void {
             root.summon()
         }

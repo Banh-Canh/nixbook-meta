@@ -53,7 +53,6 @@ ContentPage {
         { id: "powerButton",       name: Translation.tr("Power Button"),         icon: "power_settings_new" },
         { id: "updatesCount",      name: Translation.tr("Updates"),              icon: "deployed_code_update" },
         { id: "vpnStatus",         name: Translation.tr("VPN"),                   icon: "vpn_lock" },
-        { id: "anthropicUsage",    name: Translation.tr("Claude Usage"),          icon: "data_usage" },
         { id: "desktopControl",    name: Translation.tr("Desktop Control"),       icon: "smart_toy" },
         { id: "musicRecognition",  name: Translation.tr("Music Recognition"),     icon: "music_cast" },
         { id: "kdeConnect",        name: Translation.tr("Phone Connect"),         icon: "devices" },

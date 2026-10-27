@@ -131,11 +131,11 @@ An MCP server (source in `customPkgs/spotify-mcp/`) for the Spotify desktop app.
 
 ## kdeconnect-mcp
 
-An MCP server (Go, source in `customPkgs/kdeconnect-mcp/`) for the phones paired with KDE Connect, talking to `kdeconnectd` on the session bus. `nixbookShellConfig` gives it to the nixbook-shell side panel's Claude, and only to it (and its routines), on every machine with `services.kdeconnect` (on by default): it isn't installed on the PATH, so your terminal Claude Code and other agents don't get it. Turn it off in **Settings → Desktop agents → Apps it can use** (**Phone**).
+An MCP server (Go, source in `customPkgs/kdeconnect-mcp/`) for the phones paired with KDE Connect, talking to `kdeconnectd` on the session bus. `nixbookShellConfig` gives it to the nixbook-shell side panel's Muse, and only to it (and its routines), on every machine with `services.kdeconnect` (on by default): it isn't installed on the PATH, so your terminal coding agents and other agents don't get it. Turn it off in **Settings → Desktop agents → Apps it can use** (**Phone**).
 
 - **Always**: `devices` (reachable, battery, what each can do), `send_sms` (numbers, up to 5, 1600 characters), `share` (an http(s) link opened on the phone, or text to its share sheet; never a local file), `clipboard` (text on the phone's clipboard), `ring`, `ping`.
 - **With Read my phone's texts and notifications** (`ai.phone.readMessages`, off by default; `KDECONNECT_MCP_READ=1`): `conversations` (threads, newest first, named from the contacts KDE Connect synced), `messages` (a thread), `notifications`, `reply_notification` (a messaging app's inline reply) and `contacts`.
-- Claude is told to show the exact text and recipients and send only after your yes. Every send, share, clipboard and reply is logged, without its text, to `~/.local/state/kdeconnect-mcp/actions.log`.
+- Muse is told to show the exact text and recipients and send only after your yes. Every send, share, clipboard and reply is logged, without its text, to `~/.local/state/kdeconnect-mcp/actions.log`.
 
 ## immich-photo-manager
 
@@ -149,7 +149,7 @@ customHomeManagerModules.nixbookShellConfig.settings.ai = {
     url = "https://photos.example.org";
     apiKeyFile = "~/.config/immich/api-key"; # optional, instead of the keyring; or an agenix secret's path
   };
-  claudeCode.mcpServersOff = [ "linkedin" ]; # Immich on
+  agent.mcpServersOff = [ "linkedin" ]; # Immich on
 };
 ```
 

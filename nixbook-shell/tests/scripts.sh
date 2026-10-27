@@ -679,7 +679,7 @@ echo 'not json' >"$uc/version"
 update_check "$repo"
 expect_eq "update-check: unreadable /etc/nixos/version" bad-version "$(jq -r .error "$uc_out")"
 
-# -- model-provider.sh: the model provider Claude Code talks to -----------------------
+# -- model-provider.sh: the model provider the shell's AI talks to -------------------
 mp="$tmp/model-provider"
 mkdir -p "$mp/bin" "$mp/secrets"
 # The keyring: one file per attribute set.
@@ -695,13 +695,13 @@ case $cmd in
   clear) rm -f "$MP_SECRETS/$key" ;;
 esac
 STUB
-# Claude Code: its arguments and the provider's environment.
-cat >"$mp/bin/claude" <<'STUB'
+# What is run: its arguments and the provider's environment.
+cat >"$mp/bin/agent" <<'STUB'
 #!/usr/bin/env bash
 printf 'args:%s\n' "$*"
-env | grep -E '^(ANTHROPIC_[A-Z_]+|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC)=' | sort
+env | grep -E '^(NIXBOOK_AI_[A-Z_]+|ANTHROPIC_[A-Z_]+|CLAUDE_CODE_[A-Z_]+)=' | sort
 STUB
-chmod +x "$mp/bin/secret-tool" "$mp/bin/claude"
+chmod +x "$mp/bin/secret-tool" "$mp/bin/agent"
 model_provider() {
   PATH="$mp/bin:$PATH" MP_SECRETS="$mp/secrets" NIXBOOK_SHELL_CONFIG="$mp/config.json" \
     bash "$scripts/model-provider.sh" "$@"
@@ -709,39 +709,38 @@ model_provider() {
 provider() { echo "{\"ai\":{\"provider\":$1}}" >"$mp/config.json"; }
 
 provider '{}'
-expect_eq "model-provider: Anthropic by default, Claude Code unchanged" "args:-p --model sonnet" \
-  "$(ANTHROPIC_API_KEY=mine model_provider run claude -p --model sonnet | grep -v '^ANTHROPIC_API_KEY=')"
+expect_eq "model-provider: Meta's preset by default" "meta Meta https://api.meta.ai muse-spark-1.3 muse-spark-1.3 muse-wonder-1.0 false" \
+  "$(model_provider status | jq -r '"\(.kind) \(.label) \(.baseUrl) \(.model) \(.smallModel) \(.bigModel) \(.keySaved)"')"
 rm -f "$mp/config.json"
-expect_eq "model-provider: no settings file is Anthropic" anthropic "$(model_provider status | jq -r .kind)"
+expect_eq "model-provider: no settings file is Meta" meta "$(model_provider status | jq -r .kind)"
+provider '{"kind":"anthropic"}'
+expect_eq "model-provider: an old anthropic setting is Meta" "meta https://api.meta.ai" \
+  "$(model_provider status | jq -r '"\(.kind) \(.baseUrl)"')"
 
 provider '{"kind":"meta"}'
-expect_eq "model-provider: Meta's preset" "https://api.meta.ai muse-spark-1.3 muse-spark-1.3 muse-wonder-1.0 false" \
-  "$(model_provider status | jq -r '"\(.baseUrl) \(.model) \(.smallModel) \(.bigModel) \(.keySaved)"')"
-out=$(model_provider run claude -p --output-format stream-json 2>/dev/null) && rc=0 || rc=$?
-expect_eq "model-provider: no key, Claude Code not started, a result line instead" \
+out=$(model_provider run agent -p --output-format stream-json 2>/dev/null) && rc=0 || rc=$?
+expect_eq "model-provider: no key, nothing started, a result line instead" \
   "3 true Meta: no API key saved (Settings > Desktop agents > Model provider)" \
   "$rc $(jq -r '"\(.is_error) \(.result)"' <<<"$out")"
 expect_eq "model-provider: a key saved" true "$(printf 'mk-123\n' | model_provider key set | jq -r .saved)"
 expect_eq "model-provider: the key is in the keyring" true "$(model_provider status | jq -r .keySaved)"
-out=$(ANTHROPIC_API_KEY=anthropic-key CLAUDE_CODE_OAUTH_TOKEN=oauth model_provider run claude -p --model haiku \
-  --model=opus --fallback-model claude-sonnet-5-5 --model muse-x)
-expect_eq "model-provider: Claude's names mapped to Meta's, its own kept" \
-  "args:-p --model muse-spark-1.3 --model=muse-wonder-1.0 --fallback-model muse-spark-1.3 --model muse-x" \
-  "$(head -1 <<<"$out")"
-expect_eq "model-provider: Claude Code pointed at Meta, with the key and nothing of Anthropic's" \
-  "ANTHROPIC_AUTH_TOKEN=mk-123
-ANTHROPIC_BASE_URL=https://api.meta.ai
-ANTHROPIC_DEFAULT_HAIKU_MODEL=muse-spark-1.3
-ANTHROPIC_DEFAULT_OPUS_MODEL=muse-wonder-1.0
-ANTHROPIC_DEFAULT_SONNET_MODEL=muse-spark-1.3
-ANTHROPIC_MODEL=muse-spark-1.3
-CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" "$(tail -n +2 <<<"$out")"
+out=$(ANTHROPIC_API_KEY=other-key ANTHROPIC_BASE_URL=https://elsewhere CLAUDE_CODE_OAUTH_TOKEN=oauth \
+  model_provider run agent -p --model small --model=big)
+expect_eq "model-provider: the command run unchanged" "args:-p --model small --model=big" "$(head -1 <<<"$out")"
+expect_eq "model-provider: Meta's API, its key and models, nothing of another vendor's" \
+  "NIXBOOK_AI_BASE_URL=https://api.meta.ai
+NIXBOOK_AI_BIG_MODEL=muse-wonder-1.0
+NIXBOOK_AI_KEY=mk-123
+NIXBOOK_AI_LABEL=Meta
+NIXBOOK_AI_MODEL=muse-spark-1.3
+NIXBOOK_AI_PROVIDED=1
+NIXBOOK_AI_SMALL_MODEL=muse-spark-1.3" "$(tail -n +2 <<<"$out")"
 
 provider '{"kind":"custom","baseUrl":"https://other.example/","model":"big-1"}'
 expect_eq "model-provider: Meta's key never sent to another server" false "$(model_provider status | jq -r .keySaved)"
 printf 'other-key\n' | model_provider key set >/dev/null
 expect_eq "model-provider: custom models default to the main one" "https://other.example big-1 big-1" \
-  "$(model_provider status | jq -r .baseUrl)$(model_provider run claude -p | grep -E 'HAIKU|OPUS' | sed 's/.*=/ /' | tr -d '\n')"
+  "$(model_provider status | jq -r .baseUrl)$(model_provider run agent -p | grep -E 'SMALL|BIG' | sed 's/.*=/ /' | tr -d '\n')"
 provider '{"kind":"custom","baseUrl":"http://other.example","model":"m"}'
 expect_contains "model-provider: no key sent in clear over the network" "$(model_provider status | jq -r .error)" "must be https://"
 expect_contains "model-provider: nor saved for such a server" "$(printf 'k\n' | model_provider key set | jq -r .error)" "must be https://"

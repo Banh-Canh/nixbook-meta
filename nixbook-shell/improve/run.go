@@ -271,9 +271,9 @@ func run(o runOpts) (map[string]any, error) {
 		switch s.answer.Outcome {
 		case "skip":
 			if s.denials > 0 {
-				// Not the item's fault: Claude Code refused the edits
-				// (a clone in a place it guards, ~/.claude…).
-				return end("failed", "Claude Code refused its edits: "+s.answer.Reason, "new")
+				// Not the item's fault: the agent refused the edits
+				// (a path outside the clone).
+				return end("failed", "Muse's edits were refused: "+s.answer.Reason, "new")
 			}
 			if s.answer.Harmless {
 				// Nothing to fix and no harm left: out of the list for good.
@@ -314,7 +314,7 @@ func run(o runOpts) (map[string]any, error) {
 		if try == 1 {
 			return end("failed", strings.Join(strings.Fields(feedback), " "), "attempt")
 		}
-		logEvent("retry", "Its change didn't pass ("+clip(firstLine(feedback), 120)+"): Claude tries again")
+		logEvent("retry", "Its change didn't pass ("+clip(firstLine(feedback), 120)+"): Muse tries again")
 		stage(work)
 		s, err = ask(cfg, repo, "Your change didn't pass its checks:\n\n"+feedback+
 			"\nFix that (within the same rules), or answer skip or too_big.", s.id, feature)
@@ -443,8 +443,8 @@ func queueItem(cfg Config, id string) (map[string]any, error) {
 }
 
 // startQueued starts the first queued item in a unit of its own, as the
-// shell starts a run (lowest priority, this process's PATH and Claude
-// Code). Its run takes it out of the queue; one that finds the run lock
+// shell starts a run (lowest priority, this process's PATH and
+// nixbook-meta-agent). Its run takes it out of the queue; one that finds the run lock
 // taken again keeps its place. NIXBOOK_IMPROVE_SPAWN in tests: a command
 // given "run --item ID" instead.
 func startQueued(cfg Config) {
@@ -473,8 +473,8 @@ func startQueued(cfg Config) {
 			"-p", "RuntimeMaxSec=8h", "-p", "Nice=19", "-p", "CPUWeight=idle", "-p", "IOSchedulingClass=idle",
 			"--setenv=PATH=" + os.Getenv("PATH"),
 		}
-		if claude := os.Getenv("NIXBOOK_IMPROVE_CLAUDE"); claude != "" {
-			args = append(args, "--setenv=NIXBOOK_IMPROVE_CLAUDE="+claude)
+		if agent := os.Getenv("NIXBOOK_IMPROVE_AGENT"); agent != "" {
+			args = append(args, "--setenv=NIXBOOK_IMPROVE_AGENT="+agent)
 		}
 		c = exec.Command("systemd-run", append(args, self, "run", "--item", p.ID)...)
 	}
@@ -518,8 +518,8 @@ func interrupted(note string) {
 // In words, for Settings and the activity.
 var stageText = map[string]string{
 	"clone": "Getting the repository up to date",
-	"fix":   "Claude looks for the cause",
-	"build": "Claude builds the feature",
+	"fix":   "Muse looks for the cause",
+	"build": "Muse builds the feature",
 	"check": "Checking the change",
 	"push":  "Pushing and opening the pull request",
 }
@@ -605,7 +605,7 @@ func commitMessage(a Answer, it Item) string {
 	if it.feature() {
 		trailer = "Agent-Feature"
 	}
-	fmt.Fprintf(&b, "%s: %s\nCo-Authored-By: Claude <noreply@anthropic.com>\n", trailer, it.ID)
+	fmt.Fprintf(&b, "%s: %s\n", trailer, it.ID)
 	return b.String()
 }
 
@@ -685,10 +685,10 @@ func prBody(a Answer, it Item, report []string, changes []Change, sensitiveFiles
 	}
 	if it.feature() {
 		b.WriteString("\n---\nOpened by nixbook-improve, the desktop agent: a feature asked for, never merged on its own, " +
-			"checked by `nixbook-improve guard --feature` in CI (agent-guard).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n")
+			"checked by `nixbook-improve guard --feature` in CI (agent-guard).\n\n🤖 Made by nixbook-improve (Meta Muse)\n")
 	} else {
 		b.WriteString("\n---\nOpened by nixbook-improve, the desktop agent's fixer: fixes and polish only, " +
-			"checked by `nixbook-improve guard` in CI (agent-guard).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n")
+			"checked by `nixbook-improve guard` in CI (agent-guard).\n\n🤖 Made by nixbook-improve (Meta Muse)\n")
 	}
 	return b.String()
 }

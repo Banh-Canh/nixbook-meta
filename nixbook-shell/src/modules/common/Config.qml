@@ -42,7 +42,7 @@ Singleton {
             done.appCommands = true;
         }
         // The side panel button's icon used to default to Gemini's, whose
-        // icon is gone: Claude's.
+        // icon is gone: the spark.
         if (!done.sidebarIconNoGemini) {
             if (root.options.custom.distroIcon === "google-gemini-symbolic" && !NixManaged.isPinned("custom.distroIcon"))
                 root.options.custom.distroIcon = "spark-symbolic";
@@ -56,6 +56,38 @@ Singleton {
             if (dedup.window === 120 && !NixManaged.isPinned("notifications.deduplicate.window"))
                 dedup.window = 1800;
             done.dedupWindow = true;
+        }
+        // nixbook-meta runs on Meta only: the Claude usage bar widget is
+        // gone, the model names are the provider-neutral small/main/big, the
+        // "anthropic" provider is Meta, and the side panel's Claude is Muse.
+        if (!done.metaOnly) {
+            const removed = ["anthropicUsage"];
+            const dropRemoved = (obj, key, pinKey) => {
+                const list = obj?.[key];
+                if (!list || NixManaged.isPinned(pinKey)) return;
+                const arr = Array.from(list);
+                if (arr.some(w => removed.includes(w)))
+                    obj[key] = arr.filter(w => !removed.includes(w));
+            };
+            const layouts = root.options.bar.layouts;
+            for (const key of ["leftLayout", "middleLayout", "rightLayout"])
+                dropRemoved(layouts, key, "bar.layouts." + key);
+            const island = root.options.bar.dynamicIsland;
+            for (const key of ["leftWidgets", "rightWidgets"])
+                dropRemoved(island, key, "bar.dynamicIsland." + key);
+            const tiers = { haiku: "small", sonnet: "main", opus: "big", fable: "big" };
+            const retier = (obj, key, pinKey) => {
+                const tier = tiers[obj[key]];
+                if (tier && !NixManaged.isPinned(pinKey)) obj[key] = tier;
+            };
+            retier(root.options.equalizer, "agentModel", "equalizer.agentModel");
+            retier(root.options.ai.improve, "model", "ai.improve.model");
+            const provider = root.options.ai.provider;
+            if (provider.kind === "anthropic" && !NixManaged.isPinned("ai.provider.kind"))
+                provider.kind = "meta";
+            if (Persistent.states.ai.model === "claude")
+                Persistent.states.ai.model = "muse";
+            done.metaOnly = true;
         }
     }
     property int readWriteDelay: 50 // milliseconds
@@ -150,10 +182,10 @@ Singleton {
             }
 
             // Agent mode (EqualizerAutoService): each new song, a short
-            // Claude Code task sets the equalizer for it (Auto goes off).
+            // nixbook-meta-agent task sets the equalizer for it (Auto goes off).
             property JsonObject equalizer: JsonObject {
                 property bool agent: false
-                property string agentModel: "haiku" // claude --model ("" = Claude Code's default)
+                property string agentModel: "small" // small, main or big: the provider's model
                 // The window's look: false = the theme's (its palette and
                 // frame), true = tinted from the album art over the blurred cover.
                 property bool albumColors: false
@@ -168,7 +200,7 @@ Singleton {
                 // summary of the shell's live settings. Sent to the chosen
                 // provider with every request.
                 property bool includeSystemContext: true
-                // A notification when Claude finishes a turn while the side
+                // A notification when Muse finishes a turn while the side
                 // panel is closed ("waiting for you" when it ends on a question).
                 property bool notifyWhenDone: true
                 // The side panel's conversations, saved as they go (Ai.qml):
@@ -177,11 +209,11 @@ Singleton {
                 property JsonObject history: JsonObject {
                     property int keepDays: 30
                 }
-                // The side panel's "From Claude" tab closes after this many
+                // The side panel's "From Muse" tab closes after this many
                 // minutes left alone, its thread kept in the history (0: stays).
-                property int claudeThreadIdleMinutes: 30
+                property int threadIdleMinutes: 30
                 // The folders AI agents may read (absolute, or ~/…), read-only:
-                // the side panel's Claude (Claude Code --add-dir; no file tools
+                // the side panel's Muse (nixbook-meta-agent --add-dir; no file tools
                 // at all without any) and the apps on the agent desktop
                 // (scripts/agent-desktop.sh binds them into its sandbox). None by
                 // default: no access to the user's files unless allowed here.
@@ -190,7 +222,7 @@ Singleton {
                 // (bound read-write into its sandbox; the first one is their
                 // Downloads folder, where its browser saves), so an agent can
                 // download a file there and use it on the user's side. The side
-                // panel's Claude can read them, not write them. Not the home
+                // panel's Muse can read them, not write them. Not the home
                 // itself or /. None by default.
                 property list<string> writableFolders: []
                 // The agent desktop's sandbox (scripts/agent-desktop.sh), from
@@ -201,22 +233,22 @@ Singleton {
                     property bool hideSystemSockets: true
                     property bool privateNetwork: true
                 }
-                // The model provider every Claude Code the shell starts talks
-                // to (scripts/model-provider.sh, services/ModelProvider.qml):
-                // "anthropic" (the user's Claude login), "meta" (Meta's Model
-                // API, Muse models) or "custom" (another Anthropic-compatible
-                // Messages API). Empty fields: the preset's. The API key is
-                // in the keyring, never here.
+                // The model provider every agent the shell starts talks to
+                // (nixbook-meta-agent, Quick AI, the voice; scripts/
+                // model-provider.sh, services/ModelProvider.qml): "meta"
+                // (Meta's Model API, the Muse models) or "custom" (another
+                // server with a Messages API). Empty fields: the preset's. The
+                // API key is in the keyring, never here.
                 property JsonObject provider: JsonObject {
-                    property string kind: "anthropic"
+                    property string kind: "meta"
                     property string baseUrl: "" // custom: https://… (the host, no /v1)
-                    property string model: "" // the main model (Claude's Sonnet; meta: muse-spark-1.3)
-                    property string smallModel: "" // in place of Haiku (meta: muse-spark-1.3)
-                    property string bigModel: "" // in place of Opus (meta: muse-wonder-1.0)
+                    property string model: "" // the main model (meta: muse-spark-1.3)
+                    property string smallModel: "" // the small, fast one (meta: muse-spark-1.3)
+                    property string bigModel: "" // the big one (meta: muse-wonder-1.0)
                 }
                 // Quick AI (services/QuickAi.qml, scripts/quick-ai.py): the model
                 // provider's model called directly to answer and act in a few
-                // seconds, in Claude's speech bubble (Mod+C, Mod+T to talk), from
+                // seconds, in Muse's speech bubble (Mod+C, Mod+T to talk), from
                 // the screenshot app's Ask AI, the launcher's "!" and a
                 // notification's AI buttons.
                 property JsonObject quick: JsonObject {
@@ -239,7 +271,7 @@ Singleton {
                 }
                 // Talking to the desktop (services/Voice.qml): push to talk
                 // (Mod+T), transcribed by Meta or on this computer, then sent
-                // in Claude's speech bubble.
+                // in Muse's speech bubble.
                 // Full AI mode (services/FullAi.qml): reacting on its own to what
                 // happens (notifications, downloads, the battery…), learning
                 // from the user's answers.
@@ -268,27 +300,24 @@ Singleton {
                     property string speak: "voice"
                     property string style: "cute"
                 }
-                // Claude through Claude Code (`claude -p`, the user's own
-                // Claude login): the "Claude" model, with the desktop tools
+                // Muse in the side panel: nixbook-meta-agent (the shell's own
+                // agent, on the model provider: Meta's Model API by default),
+                // the "Muse" model, with the desktop tools
                 // (nixbook-desktop-mcp) unless the tool is "none".
-                property JsonObject claudeCode: JsonObject {
-                    property string command: "" // empty: `claude` on PATH, ~/.local/bin, the Nix profiles
-                    // Sonnet at low effort: driving the desktop is many short
-                    // steps, each waiting on the model's thinking.
-                    property string model: "sonnet" // empty: Claude Code's default; "opus", "haiku"
-                    property string effort: "low" // --effort: low, medium, high; empty: Claude Code's default
+                property JsonObject agent: JsonObject {
+                    // The main model at low effort: driving the desktop is many
+                    // short steps, each waiting on the model's thinking.
+                    property string model: "main" // small, main or big: the provider's
+                    property string effort: "low" // --effort: low, medium, high
                     // Tools it may use besides the desktop ones; others (Bash,
                     // Edit, Write…) are refused. The file tools (Read, Glob,
                     // Grep) aren't taken from here: ai.allowedFolders gives them.
                     property list<string> allowedTools: ["WebSearch", "WebFetch"]
-                    // The claude.ai connectors of the Claude account (Gmail,
-                    // Calendar, Drive…), all their tools allowed.
-                    property bool connectors: false
-                    // The command line: Bash for Claude in the side panel (never
+                    // The command line: Bash for Muse in the side panel (never
                     // terminal windows). Asks before changing anything.
                     property bool commandLine: false
                     // Its commands confined to ai.allowedFolders (read) and
-                    // ai.writableFolders (write) by Claude Code's sandbox
+                    // ai.writableFolders (write) by the agent's sandbox
                     // (bubblewrap).
                     property bool commandLineFolders: true
                     // The MCP servers of assistant-mcp.json (assistant.mcpServers:
@@ -298,16 +327,16 @@ Singleton {
                     // accounts using automation. Immich, until it is set up
                     // (ai.immich).
                     property list<string> mcpServersOff: ["linkedin", "immich"]
-                    // Claude speaks as the computer itself, its hardware,
+                    // Muse speaks as the computer itself, its hardware,
                     // OS and kernel read live (system_info).
                     property bool asComputer: true
                     // The memory pass: once a chat goes quiet, a small model
                     // reads it and saves what is worth keeping about the user
                     // (personal memory), without being asked.
                     property bool autoMemory: true
-                    property string memoryModel: "haiku"
+                    property string memoryModel: "small"
                 }
-                // The Immich photo library the side panel's Claude can use
+                // The Immich photo library the side panel's Muse can use
                 // (immich-photo-manager, in assistant.mcpServers): its server,
                 // and optionally a file holding the API key. Otherwise the key
                 // is the one saved in Settings > Desktop agents, kept in the
@@ -388,13 +417,13 @@ Singleton {
                 // turned on.
                 property JsonObject improve: JsonObject {
                     property bool enable: false
-                    property string model: "sonnet"
+                    property string model: "main" // small, main or big: the provider's
                     // Fixes started on its own per day ("Fix now" isn't counted).
                     property int perDay: 2
                     // A bigger change isn't a fix: refused.
                     property int maxFiles: 5
                     property int maxLines: 150
-                    property real budgetUsd: 3
+                    property real budgetUsd: 3 // unused: the Meta agent reports no cost (runs are bounded by turns)
                     // Merged without asking once CI passes, when every file
                     // matches autoMergePaths (none of what agents may do).
                     property bool autoMerge: false
@@ -414,7 +443,7 @@ Singleton {
                         property int perDay: 1
                         property int maxFiles: 15
                         property int maxLines: 600
-                        property real budgetUsd: 8
+                        property real budgetUsd: 8 // unused, like improve.budgetUsd
                     }
                 }
             }

@@ -10,8 +10,8 @@ import qs.services.ai
 
 /**
  * One conversation of the side panel's chat, in a tab of its own (Ai.chats):
- * its messages, its Claude Code (kept running between messages, resuming its
- * session) and its own agent desktop when agents work on theirs, so tabs
+ * its messages, its Muse agent (nixbook-meta-agent, kept running between
+ * messages, resuming its session) and its own agent desktop when agents work on theirs, so tabs
  * work in parallel without fighting over one pointer and keyboard. Slot 1
  * uses the first agent desktop (nixbook-agent-desktop), slot N the
  * nixbook-agent-desktop@N one (NIXBOOK_AGENT_DESKTOP, given to the desktop
@@ -32,10 +32,10 @@ Scope {
         property int total: -1
     }
     property string chatId: "" // its conversation in the history ("" until saved)
-    property string claudeSessionId: ""
+    property string agentSessionId: ""
     property string pendingFilePath: ""
     // What the user just did (RecentContext, filtered), sent with the next
-    // message only: a question asked in Claude's bubble.
+    // message only: a question asked in Muse's bubble.
     property string pendingContext: ""
     // Answered while not looked at (another tab, or the panel closed).
     property bool unread: false
@@ -43,14 +43,14 @@ Scope {
     // A message's personal context and privacy mask being made (DesktopHelper).
     property int preparing: 0
 
-    // The tab for what Claude says on its own (services/Initiative.qml): a
-    // thread for each, one at a time (Ai.claudeThread).
-    property bool fromClaude: false
+    // The tab for what Muse says on its own (services/Initiative.qml): a
+    // thread for each, one at a time (Ai.agentThread).
+    property bool fromAgent: false
     // Made for a conversation of the bubble (Ai.askThread): closed again
     // when left empty (Ai.dropIfEmpty).
     property bool fromBubble: false
     readonly property string title: {
-        if (chat.fromClaude) return Translation.tr("From Claude");
+        if (chat.fromAgent) return Translation.tr("From Muse");
         const saved = Ai.history.find(c => c.id === chat.chatId)?.title;
         if (saved) return saved;
         const first = chat.messageIDs.map(id => chat.messageByID[id]).find(m => m?.role === "user");
@@ -59,18 +59,18 @@ Scope {
 
     readonly property bool seen: chat.isCurrent && GlobalStates.sidebarLeftOpen
     // Its last message, or the last time it was looked at: when a "From
-    // Claude" tab left alone expires (Ai.expireClaudeThreads).
+    // Muse" tab left alone expires (Ai.expireAgentThreads).
     property real lastActivity: Date.now()
     onSeenChanged: {
         chat.lastActivity = Date.now();
         if (seen) chat.unread = false;
     }
 
-    property ClaudeCodeApiStrategy strategy: ClaudeCodeApiStrategy {
+    property MetaAgentApiStrategy strategy: MetaAgentApiStrategy {
         unmask: text => Ai.unmaskPrivate(text)
     }
 
-    // Files of its own: the command line Claude Code runs with, and the task
+    // Files of its own: the command line the agent runs with, and the task
     // for the desktop MCP server's memory (NIXBOOK_DESKTOP_MCP_QUERY_FILE):
     // written before each message, read by the running server on its next call.
     readonly property string requestScriptFilePath: `${Directories.aiTemp}/request-${chat.slot}.sh`
@@ -114,7 +114,7 @@ Scope {
     function clearMessages() {
         chat.runMemoryPass(); // the chat being left
         chat.memoryReadUpTo = 0;
-        chat.claudeSessionId = "";
+        chat.agentSessionId = "";
         chat.chatId = "";
         chat.messageIDs = [];
         chat.messageByID = ({});
@@ -167,10 +167,10 @@ Scope {
         chat.memoryReadUpTo = ids.length;
     }
 
-    // A conversation of the history, opened here: Claude Code's session too
-    // when Claude Code still has it (it deletes them after a while,
-    // cleanupPeriodDays), else the next message sends the conversation so
-    // far as context.
+    // A conversation of the history, opened here: the agent's session too
+    // when the agent still has it (it deletes them after a week), else the
+    // next message sends the conversation so far as context. (A session saved
+    // before Muse, claudeSessionId, was Claude Code's: not resumed.)
     function openSaved(id, saved) {
         // The answer being written stays with the conversation it is for.
         if (requester.turnActive) {
@@ -180,22 +180,22 @@ Scope {
         chat.setMessages(saved.messages ?? []);
         chat.chatId = id;
         chat.lastActivity = Date.now();
-        const session = saved.claudeSessionId ?? "";
-        if (/^[0-9a-f-]{36}$/.test(session)) {
-            claudeSessionCheck.chat = id;
-            claudeSessionCheck.session = session;
-            claudeSessionCheck.running = true;
+        const session = saved.agentSessionId ?? "";
+        if (/^[A-Za-z0-9_-]{8,100}$/.test(session)) {
+            agentSessionCheck.chat = id;
+            agentSessionCheck.session = session;
+            agentSessionCheck.running = true;
         }
     }
     Process {
-        id: claudeSessionCheck
+        id: agentSessionCheck
         property string chat
         property string session
-        command: ["bash", "-c", `test -n "$(find "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$1.jsonl" -print -quit 2>/dev/null)"`,
-            "claude-session", session]
+        command: ["bash", "-c", `test -f "\${XDG_STATE_HOME:-$HOME/.local/state}/nixbook-shell/agent-sessions/$1.json"`,
+            "agent-session", session]
         onExited: (exitCode, exitStatus) => {
-            if (exitCode === 0 && chat.chatId === claudeSessionCheck.chat && chat.claudeSessionId.length === 0)
-                chat.claudeSessionId = claudeSessionCheck.session;
+            if (exitCode === 0 && chat.chatId === agentSessionCheck.chat && chat.agentSessionId.length === 0)
+                chat.agentSessionId = agentSessionCheck.session;
         }
     }
 
@@ -204,9 +204,9 @@ Scope {
     }
 
     function sendUserMessage(message) {
-        // An agent typing into this chat would act with this Claude's tools.
-        if (DesktopControl.refuseIfAgentInput(Translation.tr("a message to Claude in the side panel"))) return;
-        if (chat.fromClaude) Initiative.engaged();
+        // An agent typing into this chat would act with this Muse's tools.
+        if (DesktopControl.refuseIfAgentInput(Translation.tr("a message to Muse in the side panel"))) return;
+        if (chat.fromAgent) Initiative.engaged();
         if (message.length === 0) return;
         chat.addMessage(message, "user");
         requester.makeRequest();
@@ -220,23 +220,25 @@ Scope {
         for (let i = chat.messageIDs.length - 1; i >= messageIndex; i--) {
             chat.removeMessage(i);
         }
-        // Claude Code's session still holds the removed answer: start a new
+        // The agent's session still holds the removed answer: start a new
         // one, with the chat so far as context.
-        chat.claudeSessionId = "";
+        chat.agentSessionId = "";
         requester.makeRequest();
     }
 
-    // Stops the answer being written (and, for Claude, what it is doing).
+    // Stops the answer being written (and, for Muse, what it is doing): the
+    // agent is stopped (the next message resumes its session, which holds
+    // the turns it finished).
     function stopResponse() {
         if (!requester.turnActive) return;
         requester.restartPending = false;
+        requester.pendingLine = "";
         requester.interrupting = true;
-        requester.write(JSON.stringify({ type: "control_request", request_id: `stop-${Date.now()}`,
-            request: { subtype: "interrupt" } }) + "\n");
+        requester.signal(15);
         stopFallback.restart();
     }
 
-    // The tab closed: its Claude Code stopped, its agent desktop (not the
+    // The tab closed: its agent stopped, its agent desktop (not the
     // first, which other tools use too) closed, what it said remembered.
     function close() {
         chat.runMemoryPass();
@@ -247,27 +249,20 @@ Scope {
             Quickshell.execDetached(["systemctl", "--user", "stop", `nixbook-agent-desktop@${chat.desktopInstance}.service`]);
     }
 
-    // The panel opened on this tab, on Claude: Claude Code started ahead, so
+    // The panel opened on this tab, on Muse: the agent started ahead, so
     // the first message doesn't wait for it.
     function prewarm() {
-        if (requester.running || requester.turnActive) return;
+        if (!Ai.agentReady || requester.running || requester.turnActive) return;
         // Only a new chat or the session of this one, with no file attached.
         requester.pendingLine = "";
-        requester.launch("", chat.claudeSessionId);
+        requester.launch("", chat.agentSessionId);
     }
 
-    // The connectors listed again: a message waiting for that goes now; an
-    // idle Claude Code that started with others starts again.
-    function connectorsChecked(changed) {
-        if (changed) requester.connectorsStale = true;
-        requester.connectorsChecked();
-    }
-
-    // The personal memory entries sent with this Claude session's messages
+    // The personal memory entries sent with this agent session's messages
     // (`nixbook-desktop-mcp personal context`), not to send twice.
     property var personalShown: []
     // The privacy mask (`nixbook-desktop-mcp privacy mask`): the message, with
-    // its context, reaches Claude with placeholders for the private details.
+    // its context, reaches Muse with placeholders for the private details.
     // Never sent as it is: if masking fails, the message isn't sent.
     function maskFailed() {
         const message = requester.message;
@@ -277,9 +272,9 @@ Scope {
         message.thinking = false;
     }
 
-    // The memory pass (`nixbook-desktop-mcp personal learn`): Claude is told
+    // The memory pass (`nixbook-desktop-mcp personal learn`): Muse is told
     // to save what matters about the user, but mid-task it often doesn't.
-    // So once a chat with Claude goes quiet (ai.claudeCode.autoMemory), or
+    // So once a chat with Muse goes quiet (ai.agent.autoMemory), or
     // is left (cleared, another loaded, its tab closed), the turns the pass
     // hasn't read go to a small model that saves what is worth keeping.
     // Detached: it outlives the chat, and costs nothing while the chat goes on.
@@ -294,7 +289,7 @@ Scope {
         onTriggered: requester.turnActive ? restart() : chat.runMemoryPass()
     }
     // Quick AI answered in this chat (the speech bubble's): the pass once
-    // it goes quiet, as after Claude.
+    // it goes quiet, as after Muse.
     function queueMemoryPass() {
         memoryPassTimer.restart();
     }
@@ -303,10 +298,10 @@ Scope {
         const messages = chat.messageIDs.map(id => chat.messageByID[id]);
         const from = Math.min(chat.memoryReadUpTo, messages.length);
         chat.memoryReadUpTo = messages.length;
-        if (!(Config.options?.ai?.claudeCode?.autoMemory ?? true) || Ai.claudeCodePath.length === 0) return;
+        if (!(Config.options?.ai?.agent?.autoMemory ?? true) || !Ai.agentReady) return;
         const isTurn = m => m && (m.role === "user" || m.role === "assistant") && !m.functionName && (m.rawContent ?? "").length > 0;
         const fresh = messages.slice(from).filter(isTurn);
-        // Only what the user said to an AI (Claude, Quick AI's model; not the
+        // Only what the user said to an AI (Muse, Quick AI's model; not the
         // config assistant, which answers from the configuration).
         if (!fresh.some(m => m.role === "user") || !fresh.some(m => m.role === "assistant" && (m.model ?? "").length > 0
             && m.model !== Ai.configAssistantId)) return;
@@ -318,11 +313,11 @@ Scope {
         const path = `${Directories.aiTemp}/memory-pass-${Date.now()}-${chat.slot}.txt`;
         memoryPassFile.path = Qt.resolvedUrl(path);
         memoryPassFile.setText(transcript);
-        Quickshell.execDetached([Ai.desktopMcpCommand, "personal", "learn", "--claude", Ai.claudeCodePath,
-            "--model", Config.options.ai.claudeCode.memoryModel || "haiku", "--delete", path]);
+        Quickshell.execDetached([Ai.desktopMcpCommand, "personal", "learn",
+            "--model", Config.options.ai.agent.memoryModel || "small", "--delete", path]);
     }
 
-    // Claude Code, kept running between messages: a message is one line on
+    // The agent (nixbook-meta-agent), kept running between messages: a message is one line on
     // its stdin, the answer ends with a "result" event. Started again
     // (resuming the session) when the command line it needs changes (the
     // settings, an attached file) or for another chat; started ahead when
@@ -344,40 +339,6 @@ Scope {
         property string pendingLine: ""
         property bool turnActive: false
         property bool interrupting: false
-        // The connectors changed since it started; a message waiting for
-        // them to be listed again (its attached file).
-        property bool connectorsStale: false
-        property bool connectorsHold: false
-        property string heldAttached: ""
-        // The message line sent and its attached file, to send again when
-        // Claude Code started with a connector it wasn't allowed (once per
-        // message).
-        property string sentLine: ""
-        property string sentAttached: ""
-        property bool connectorRetried: false
-
-        // Claude Code names the servers it loaded at the start of a turn.
-        // A claude.ai connector missing from the allowed ones (added on
-        // claude.ai since they were listed): allowed, and Claude Code started
-        // again on the same message before the model answers. True if so.
-        function restartForConnectors(ev) {
-            if (!Ai.claudeConnectorsSetting || requester.connectorRetried) return false;
-            // From its servers' names and, exactly, from its tools' names
-            // (mcp__<server>__<tool>).
-            const found = [...(ev.mcp_servers ?? []).filter(s => /^(claude\.ai |plugin:)/.test(s.name ?? ""))
-                    .map(s => Ai.connectorRule(s.name)),
-                ...(ev.tools ?? []).map(t => /^(mcp__(?:claude_ai_|plugin_).+?)__/.exec(t)?.[1]).filter(r => r)];
-            const missing = [...new Set(found)].filter(n => !Ai.claudeConnectors.includes(n));
-            if (missing.length === 0) return false;
-            Ai.claudeConnectors = [...Ai.claudeConnectors, ...missing];
-            requester.connectorRetried = true;
-            requester.pendingLine = requester.sentLine;
-            // Not an answer: the message stays open for the new one.
-            requester.activeMessage = null;
-            requester.turnActive = false;
-            requester.launch(requester.sentAttached, chat.claudeSessionId);
-            return true;
-        }
 
         function markDone() {
             const stopped = requester.interrupting;
@@ -450,8 +411,17 @@ Scope {
             }
             const attached = attachedFile && attachedFile.length > 0 && attachedFile.startsWith("/") ? attachedFile : "";
 
+            // Muse with no key saved yet: said, nothing sent.
+            if (!ModelProvider.ready) {
+                requester.message.content = Translation.tr("**Not sent**: Muse needs your %1 API key. Save it in Settings > Desktop agents > Model provider.").arg(ModelProvider.label);
+                requester.message.rawContent = requester.message.content;
+                requester.message.done = true;
+                requester.message.thinking = false;
+                return;
+            }
+
             /* Send the request */
-            let prompt = Ai.claudeCodePrompt(filteredMessageArray, attached, chat.claudeSessionId);
+            let prompt = Ai.agentPrompt(filteredMessageArray, attached, chat.agentSessionId);
             if (chat.pendingContext.length > 0) {
                 // Seen by the shell, window titles and copied text among it:
                 // information, never instructions.
@@ -467,10 +437,10 @@ Scope {
             const turns = filteredMessageArray.filter(m => m.role === "user");
             desktopTaskFile.path = Qt.resolvedUrl(chat.desktopTaskFilePath);
             desktopTaskFile.setText((turns[turns.length - 1]?.rawContent ?? "").slice(0, 500));
-            // What Claude remembers about the user that this message is
+            // What Muse remembers about the user that this message is
             // about goes with it (the personal memory, in the desktop MCP
             // server): no recall round trip.
-            if (chat.claudeSessionId.length === 0) chat.personalShown = [];
+            if (chat.agentSessionId.length === 0) chat.personalShown = [];
             const desktop = Ai.currentTool !== "none" && Ai.desktopTools.some(t => t.name === "recall_about_user");
             if (desktop) {
                 chat.preparing++;
@@ -509,36 +479,15 @@ Scope {
 
         function sendContent(content, attached) {
             requester.pendingLine = JSON.stringify({ type: "user", message: { role: "user", content: content } }) + "\n";
-            requester.sentAttached = attached;
-            requester.connectorRetried = false;
-            // A connector needed signing in to: perhaps it's done now.
-            if (Ai.claudeConnectorsSetting && Ai.claudeConnectorsNeedAuth
-                    && Date.now() - Ai.claudeConnectorsCheckedAt > 20000) {
-                requester.connectorsHold = true;
-                requester.heldAttached = attached;
-                if (Ai.checkClaudeConnectors()) return;
-                requester.connectorsHold = false;
-            }
             requester.start(attached);
         }
 
-        function connectorsChecked() {
-            if (requester.connectorsHold) {
-                requester.connectorsHold = false;
-                requester.start(requester.heldAttached);
-            } else if (requester.connectorsStale && requester.running && !requester.turnActive) {
-                // Idle: started again now, not on the next message.
-                requester.pendingLine = "";
-                requester.launch("", requester.session);
-            }
-        }
-
-        // Sends the pending message: to the Claude Code running, when it
-        // fits, else to one started for it.
+        // Sends the pending message: to the agent running, when it fits,
+        // else to one started for it.
         function start(attached) {
-            if (requester.running && !requester.restartPending && !requester.turnActive && !requester.connectorsStale
-                    && requester.script === Ai.claudeCodeScript(chat, attached, "")
-                    && requester.session === chat.claudeSessionId) {
+            if (requester.running && !requester.restartPending && !requester.turnActive
+                    && requester.script === Ai.agentScript(chat, attached, "")
+                    && requester.session === chat.agentSessionId) {
                 if (requester.ready) requester.send(); // else once started
                 return;
             }
@@ -546,17 +495,16 @@ Scope {
                 requester.activeMessage.done = true;
                 requester.activeMessage.thinking = false;
             }
-            requester.launch(attached, chat.claudeSessionId);
+            requester.launch(attached, chat.agentSessionId);
         }
 
-        // Starts Claude Code (after stopping the one running): resume, the
+        // Starts the agent (after stopping the one running): resume, the
         // session to go on with.
         function launch(attached, resume) {
-            requester.connectorsStale = false;
-            requester.script = Ai.claudeCodeScript(chat, attached, "");
+            requester.script = Ai.agentScript(chat, attached, "");
             requester.session = resume;
             requesterScriptFile.path = Qt.resolvedUrl(CF.FileUtils.trimFileProtocol(chat.requestScriptFilePath));
-            requesterScriptFile.setText("#!/usr/bin/env bash\n" + Ai.claudeCodeScript(chat, attached, resume));
+            requesterScriptFile.setText("#!/usr/bin/env bash\n" + Ai.agentScript(chat, attached, resume));
             if (requester.running) {
                 requester.restartPending = true;
                 requester.signal(15);
@@ -577,7 +525,6 @@ Scope {
             requester.activeMessage = requester.message;
             requester.turnActive = true;
             idleClose.stop();
-            requester.sentLine = requester.pendingLine;
             requester.write(requester.pendingLine);
             requester.pendingLine = "";
         }
@@ -599,14 +546,10 @@ Scope {
                         requester.markDone();
                         return;
                     }
-                    if (data.includes('"subtype":"init"')) {
-                        const ev = JSON.parse(data);
-                        if (ev.type === "system" && ev.subtype === "init" && requester.restartForConnectors(ev)) return;
-                    }
                     const result = chat.strategy.parseResponseLine(data, requester.activeMessage);
 
                     if (result.sessionId) {
-                        chat.claudeSessionId = result.sessionId;
+                        chat.agentSessionId = result.sessionId;
                         requester.session = result.sessionId;
                     }
                     if (result.tokenUsage) {
@@ -638,12 +581,11 @@ Scope {
         }
     }
 
-    // Stop: Claude Code interrupts the answer and waits for the next
-    // message; stopped if it doesn't.
+    // Stop: the agent ends on SIGTERM; killed if it doesn't.
     Timer {
         id: stopFallback
         interval: 5000
-        onTriggered: if (requester.turnActive) { requester.restartPending = false; requester.signal(15); }
+        onTriggered: if (requester.running && requester.interrupting) { requester.restartPending = false; requester.signal(9); }
     }
 
     // Unused for a while: closed (a few hundred MB); the next message
@@ -654,8 +596,8 @@ Scope {
         onTriggered: if (requester.running && !requester.turnActive) { requester.restartPending = false; requester.signal(15); }
     }
 
-    // Claude finished a turn while the panel is closed (ai.notifyWhenDone):
-    // Claude's speech bubble says so with its answer, to reply to right
+    // Muse finished a turn while the panel is closed (ai.notifyWhenDone):
+    // Muse's speech bubble says so with its answer, to reply to right
     // there (Initiative.chatDone); a notification when the bubble is taken
     // (the user typing in it), "waiting for you" when it ends on a question,
     // and its Open button opens the panel on this tab. Not in Do Not Disturb.

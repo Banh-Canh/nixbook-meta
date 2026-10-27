@@ -41,7 +41,7 @@ let
     // lib.optionalAttrs cfg.linkedinMcp.enable {
       linkedin.command = lib.getExe pkgs.customPkgs.linkedin-mcp-server;
     }
-    # The phone through KDE Connect, for the side panel's Claude only: not on
+    # The phone through KDE Connect, for the side panel's Muse only: not on
     # the PATH, so no other agent gets it. Reading its texts and
     # notifications is a separate switch (ai.phone.readMessages, off).
     // lib.optionalAttrs config.services.kdeconnect.enable {
@@ -183,8 +183,8 @@ in
     type = lib.types.bool;
     default = true;
     description = ''
-      Whether to offer the nixbook-shell AI chat (Claude in the side panel, and
-      nothing else: not your own Claude Code or other agents) LinkedIn, through
+      Whether to offer the nixbook-shell AI chat (Muse in the side panel, and
+      nothing else: not your own coding agents or other agents) LinkedIn, through
       [linkedin-mcp-server](https://github.com/stickerdaniel/linkedin-mcp-server)
       (`customPkgs.linkedin-mcp-server`): profiles, people and company
       search, messages, jobs, the feed, on your own account in a browser

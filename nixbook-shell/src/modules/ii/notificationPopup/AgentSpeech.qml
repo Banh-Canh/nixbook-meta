@@ -11,11 +11,11 @@ import Quickshell
 import Quickshell.Wayland
 
 /**
- * Claude speaking (services/Initiative.qml, `speaking`): not a notification
+ * Muse speaking (services/Initiative.qml, `speaking`): not a notification
  * but the agent itself, on the left of the screen under the bar, a speech
  * bubble from the robot that is a small chat of its own: the user answers
  * in it (a field at the bottom, or a quick answer: Yes please, one click on
- * a reaction's Open, Summarize it…) and Claude answers there, saying what
+ * a reaction's Open, Summarize it…) and Muse answers there, saying what
  * it is doing meanwhile; the conversation goes to the side panel only when
  * asked (the expand button). Also how a chat of the side panel says it has
  * answered while the panel is closed (Initiative.chatDone), and what
@@ -37,7 +37,7 @@ Scope {
     readonly property var item: Initiative.speaking
     readonly property var chat: Initiative.chat
     readonly property bool conversing: Initiative.conversing
-    // Claude Code answering, or Quick AI (services/QuickAi.qml) in this chat.
+    // Muse answering, or Quick AI (services/QuickAi.qml) in this chat.
     readonly property bool quick: QuickAi.owns(root.chat)
     readonly property bool responding: (root.chat?.responding ?? false) || (root.quick && QuickAi.busy)
     readonly property string style: Persona.enabled ? "persona" : Chiikawa.enabled ? "chiikawa"
@@ -369,7 +369,7 @@ Scope {
                             Layout.fillWidth: true
                             spacing: 0
                             StyledText {
-                                text: root.style === "cyberpunk" ? "CLAUDE //" : "Claude"
+                                text: root.style === "cyberpunk" ? "MUSE //" : "Muse"
                                 font.family: root.font
                                 font.weight: Font.Bold
                                 font.pixelSize: Appearance.font.pixelSize.normal
@@ -490,7 +490,7 @@ Scope {
                         color: root.fg
                     }
 
-                    // The conversation: Claude's words plain, the user's in a pill
+                    // The conversation: Muse's words plain, the user's in a pill
                     // on the right; follows the newest.
                     Flickable {
                         id: talk
@@ -835,9 +835,9 @@ Scope {
                                         : Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")
                                             : Translation.tr("Listening… speak now"))
                                         : Voice.transcribing ? Translation.tr("Understanding…")
-                                        : window.grab ? Translation.tr("Message Claude… (Esc: put away, /new: start over)")
-                                        : root.conversing || Initiative.isAsk(root.item) ? Translation.tr("Message Claude…")
-                                        : Translation.tr("Answer Claude…")
+                                        : window.grab ? Translation.tr("Message Muse… (Esc: put away, /new: start over)")
+                                        : root.conversing || Initiative.isAsk(root.item) ? Translation.tr("Message Muse…")
+                                        : Translation.tr("Answer Muse…")
                                     onActiveFocusChanged: {
                                         Initiative.typing = activeFocus || text.length > 0
                                         // The keys gone elsewhere (a click on another

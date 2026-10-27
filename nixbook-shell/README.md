@@ -345,7 +345,7 @@ window to a file in `screenSnip.savePath` and/or the clipboard; recordings
 of a monitor or region, with or without the desktop audio, through the
 shell's recorder and its indicator: start, stop with the video's path,
 status; never from the agent desktop); have the shell's own windows over
-the apps make way (`services/MakeWay.qml`: the side panel, Claude's
+the apps make way (`services/MakeWay.qml`: the side panel, Muse's
 bubble, notification popups, a theme's cut-in, listed in
 $XDG_RUNTIME_DIR/nixbook-shell/overlays.json; before an action on the
 user's desktop the server writes `make-way.json` {seq, until, capture}:
@@ -386,9 +386,9 @@ too); the audio equalizer (`equalizer`: what's playing
 with its Last.fm genre tags, then a preset or a 10-band curve and the
 preamp, or Auto, which follows each song's genre; the `equalizer` IPC
 target; its agent mode, `equalizer.agent` (the equalizer window's Agent
-chip, Settings > Desktop agents), has a short Claude Code task with only
-this tool tune the curve for each new song, `equalizer.agentModel`, Haiku
-by default); the user's calendars (`calendar`: the next event, the coming
+chip, Settings > Desktop agents), has a short `nixbook-meta-agent` task with
+only this tool tune the curve for each new song, `equalizer.agentModel`, the
+provider's small model by default); the user's calendars (`calendar`: the next event, the coming
 days, a given day through the `calendar` IPC target; the calendars, and
 creating, changing and deleting events, an occurrence or a whole series,
 through nixbook-accounts); the user's contacts (`contacts`); the to-do lists, all of them (`tasks`:
@@ -400,12 +400,13 @@ window on a task; create, rename and delete the lists themselves; and up to
 `todo` IPC target's query/apply, which pass JSON through private transfer
 files like the notes'); the shell's own IPC (sidebars, launcher, lock…);
 notifications. It is a Model Context Protocol server, so
-any agent that speaks MCP can use it:
+any agent that speaks MCP can use it (the shell's own agents get it through
+`nixbook-meta-agent --mcp-config`):
 
 ```sh
-claude mcp add desktop -- nixbook-desktop-mcp            # Claude Code
-# opencode, Codex…: a local (stdio) server running
-# `nixbook-desktop-mcp`
+# any MCP client (opencode, Codex, Claude Code…): a local (stdio) server
+# running `nixbook-desktop-mcp`, e.g.
+claude mcp add desktop -- nixbook-desktop-mcp
 ```
 
 Any app's window can be read and driven through its accessibility tree,
@@ -444,8 +445,8 @@ pages.
 
 The **Desktop Control** bar widget (`desktopControl` in a bar layout) is a
 button per action, each with its own tooltip (`bar/DesktopControl.qml`):
-the robot asks Claude (`Initiative.toggle`), a speech bubble (only when
-Claude has something for the user) opens it (right-click: not now), the
+the robot asks Muse (`Initiative.toggle`), a speech bubble (only when
+Muse has something for the user) opens it (right-click: not now), the
 pause button (faint idle, pulsing in the accent colour while an agent acts,
 its calls within the last 20 s; a red play button while paused; its tooltip
 names the last agent and tool), the desktop button (theirs or yours,
@@ -532,9 +533,9 @@ what agents do — an **episode** is one task, ending at the next one, after
   and every half minute, notifies (app "Reminder") and fires them
   (`memory fire ID`).
 
-Model calls only where they pay, in the background, by Claude Code with no
-tools (`memoryModel`, Haiku; `memoryClaude`; `memoryLearn = false` turns
-them off): an episode new to the memory (no note helped, no recipe ran)
+Model calls only where they pay, in the background, by `nixbook-meta-agent`
+with no tools (`memoryModel`, the provider's `small` model; `memoryLearn =
+false` turns them off): an episode new to the memory (no note helped, no recipe ran)
 that went well and took work (8 actions, or 2 failures) goes to `memory
 learn`, which sees the request, the actions in short (typed text as its
 length only) and the notes on those apps, and may save notes or recipes
@@ -558,7 +559,7 @@ shows, clears or prints the digest; the `memory` tool group
 Desktop agents > AI features, or Panels) gates everything: 0 hides the
 chat, `Initiative.enabled`/`summon()`, `Routines.enabled`,
 `SelfImprove.enabled` and the equalizer agent go off; desktop-mcp's
-`ai_policy()` makes `claude_path()` None (every model pass skips) unless
+`ai_policy()` makes `meta_agent()` None (every model pass skips) unless
 1, and `call_tool()` refuses every tool at 0; nixbook-improve starts no
 fix unless 1.
 
@@ -582,11 +583,15 @@ from nixosModules/ownedUnits.nix), the last `osupdate` (failure, Nix
 warnings), CI on main, coredumps of its packages; the rest (other units,
 apps, the kernel) as never-ripe `info` items; only what the user can read;
 `collect` is plain reading). `services/SelfImprove.qml` starts it in user
-units of its own (systemd-run, the shell's `PATH` and Claude Code's path):
+units of its own (systemd-run, the shell's `PATH`, `nixbook-meta-agent` on
+it; `NIXBOOK_IMPROVE_AGENT` overrides):
 `run --auto` when a report comes in or a collect made an item ripe, at
 most `perDay`. A run brings a clone (`~/.local/share/nixbook-shell/improve/repo`)
-to `origin/main` and runs Claude Code `--restricted --safe-mode` there (file
-tools only, confined to the clone, no Bash, web, settings, hooks or MCP;
+to `origin/main` and runs `nixbook-meta-agent` there (`--tools
+Read,Edit,Write,Glob,Grep --permission-mode acceptEdits`: file tools only,
+confined to the clone, no Bash, web or MCP; `--model` `small|main|big`,
+`main` by default; bounded by turns, 60 for a fix and 150 for a feature, and
+time, 40 and 90 min: the agent reports no cost, so `budgetUsd` is unused;
 `--json-schema`: fixed, skip or too_big, and the changelog entry). Then
 plain code applies `guard.go` (forbidden paths, `maxFiles`/`maxLines`, no
 new non-Markdown, deleted or binary files) and the checks (`treefmt`,
@@ -608,11 +613,11 @@ the deployed shell's journal (its invocation) for new warnings in the
 fix's files, or restarts. Either offers a revert PR. CI's `agent-guard`
 runs `nixbook-improve guard` from the base branch on `agent/` PRs.
 What it did and decided goes to `activity.json`, and a run's `doing` is
-updated live from Claude Code's `stream-json` tool calls and each check:
+updated live from the agent's `stream-json` tool calls and each check:
 Settings' status line and Activity and the bar robot's wrench show them;
 `stop` ends a run by its recorded PID (each call its own unit name, as a
-run waiting on CI keeps its unit for hours). `tests/improve.sh` runs it end to end with stand-ins for claude, gh and
-notify-send.
+run waiting on CI keeps its unit for hours). `tests/improve.sh` runs it end to end with stand-ins for nixbook-meta-agent,
+gh and notify-send.
 
 **Features it builds** (`ai.improve.features`, off by default, same
 availability): kind `feature` items in the same inbox (`nixbook-improve
@@ -667,10 +672,10 @@ Ghibli), that is a small chat of its own: the user answers in its field
 button, or /new or /clear typed, starts a new conversation,
 `Initiative.fresh()`: the one before stays in the side panel's history) or with a quick
 answer (Yes please / No thanks under a question, Yes do it for a routine,
-a reaction's buttons, Not now, Don't tell me this), and Claude answers in
+a reaction's buttons, Not now, Don't tell me this), and Muse answers in
 the bubble, saying what it is doing meanwhile (thinking, the tool it used:
 `Initiative.chat`, the thread made by `Initiative.prepare()` as soon as the
-field gets the focus, so Claude Code is warm when the message goes; the
+field gets the focus, so its `nixbook-meta-agent` is warm when the message goes; the
 robot nods meanwhile). Only
 notifications go to the small model (`INITIATIVE_SYSTEM`, at most
 `initiativeCallsPerDay`), which also names kinds never worth a word. The
@@ -703,7 +708,7 @@ call until clicked. Watches (the `watch` tool, `initiative.json`
 an offer's button that needs no thinking is
 done by the shell (`Initiative._direct`: `setup`, `tasks`, `settings`,
 `forget`, `log`; `extract` through `nixbook-desktop-mcp extract`), never a
-Claude run, and a plain command typed in the bubble (`QuickIntent.qml`:
+model run, and a plain command typed in the bubble (`QuickIntent.qml`:
 strict patterns, an app only when its name is certain) is done at once,
 the bubble saying what it did (kind `quick`, gone after 5 s);
 each small-model call is kept in `sent.jsonl` (`sent_note`, shown in
@@ -712,35 +717,35 @@ only) for pairing and notifications. Left alone (25 s,
 15 s for a reaction, 90 s after an answer; never while hovered, typed in
 or answering) the bubble goes to the bar, a conversation with it
 (`Initiative.parked`): the bar's bubble brings it back, and so does
-Claude's next answer in it (not when busy). Its expand button moves the
-talk to the side panel's "From Claude" tab: what it said is Claude's
-message in a thread of its own (`Ai.claudeThread()`, not selected in the
+Muse's next answer in it (not when busy). Its expand button moves the
+talk to the side panel's "From Muse" tab: what it said is Muse's
+message in a thread of its own (`Ai.agentThread()`, not selected in the
 panel while the talk is in the bubble: the thread before saved to the
-history, `fromClaude: true`, listed under the tabs by
-`aiChat/ClaudeThreads.qml` to go back to, with a button clearing them,
-pinned ones kept: `Ai.deleteClaudeThreads()`; a second "From Claude" tab,
+history, `fromAgent: true`, listed under the tabs by
+`aiChat/AgentThreads.qml` to go back to, with a button clearing them,
+pinned ones kept: `Ai.deleteAgentThreads()`; a second "From Muse" tab,
 past `maxChats`, when the first is still answering) (`unsent`: it goes with
 the user's next message when the tab's session already runs;
-`GlobalStates.aiChatRequested`). Left alone `ai.claudeThreadIdleMinutes`
+`GlobalStates.aiChatRequested`). Left alone `ai.threadIdleMinutes`
 (30; 0: stays), not answering, shown or the bubble's, the tab closes, its
-thread saved in the history first (`Ai.expireClaudeThreads`); the history
-marks those "From Claude". A thread is saved only once it has more than 5
-messages (`Ai.claudeThreadMinMessages`): shorter ones go with their tab. A chat of the side panel that answers
+thread saved in the history first (`Ai.expireAgentThreads`); the history
+marks those "From Muse". A thread is saved only once it has more than 5
+messages (`Ai.agentThreadMinMessages`): shorter ones go with their tab. A chat of the side panel that answers
 while the panel is closed says so in the bubble too, its answer there to
 reply to (`Initiative.chatDone`; `notify-send` only while the user is
 typing in the bubble). **Mod+C** (`nixbook-shell ipc call
-claude toggle`, again: put away) or a click on the bar's robot calls the bubble up to
+muse toggle`, again: put away) or a click on the bar's robot calls the bubble up to
 ask anything (`Initiative.summon()`, the keys taken until sent): a new
-conversation there is a normal one, not a "From Claude" thread
+conversation there is a normal one, not a "From Muse" thread
 (`Ai.askThread()`: an empty tab, else a new one, closed again when left
 empty). The
-robot hops when Claude has something new to say.
+robot hops when Muse has something new to say.
 Reactions (`ai.initiative.reactions`, off): what the user just did, seen by
 `services/Routines.qml` (`happened`, every event with a `path` for files),
 goes to `initiative consider` as `happened` (`happened_item`, plain code, no
 model call): a file downloaded (open, show in folder with
 org.freedesktop.FileManager1, and by its type summarize it, what's in it,
-extract it, how to install it on NixOS: those ask Claude in the bubble,
+extract it, how to install it on NixOS: those ask Muse in the bubble,
 the file attached), a screenshot (what's in it), a drive plugged in (open,
 what's on it). Not what an agent did (DesktopControl.active), never while
 busy, once per file, past the day's budget and gap (now or never), 30 min
@@ -748,7 +753,7 @@ in the bar; "Don't tell me this" silences that kind of reaction only.
 answers (`initiative answer ID replied|later|dismissed|never|engaged`) teach
 it: `budget()` scales the day's notifications and chats by the reply rate
 (×0.5 to ×2), `hour_key` stats hold back speaking out loud at times the user
-rarely answers, `engaged` (each message of the user in the From Claude tab
+rarely answers, `engaged` (each message of the user in the From Muse tab
 within 30 min, up to 4) adds half a reply, and `initiative notices` (the
 shell's counts of notifications acted on or dismissed, from
 Notifications.acted/dismissed) skip apps always dismissed unread and tell the
@@ -762,7 +767,7 @@ personal entries to the small model (`CURIOUS_SYSTEM`), saves up to 3 facts
 with `remember_about_user` (client `curiosity`), marks the titles read and
 says what it learned (a question only when unclear) as a `curious` word;
 its chat message carries `learnHint`, added to the user's next prompt, so
-Claude fixes the memory when corrected. **Say something now** reads what is
+Muse fixes the memory when corrected. **Say something now** reads what is
 new at once.
 News (`ai.initiative.news`, off): each moment ask carries `news`; about
 once a day (`NEWS_EVERY`, 20 h; not in quiet hours, not while busy)
@@ -772,7 +777,7 @@ lately; plus `initiativeNewsTopics`, up to 4), where the user is (the
 event's `location`: the weather's city and country, or `newsLocation`;
 local news, 1 or 2 items) and the links told already
 (`newsSeen`, 200 kept) to the small model (`newsModel`, else `memoryModel`)
-with WebSearch and WebFetch only (`ask_claude(..., web=True)`,
+with WebSearch and WebFetch only (`ask_agent(..., web=True)`,
 `NEWS_SYSTEM`). Up to 4 items with an http(s) link not told before
 (`news_items`) make a `news` word: the intro and headlines in the bubble,
 the first 3 links as buttons (`do: "link"`, `AppLaunch.openUrl`, the
@@ -801,11 +806,11 @@ types in the bubble or is busy, and drops the pop when another app comes
 in front.
 Each decision is logged (`log`, 30 kept; Settings shows the last ones, and
 **Say something now** sends a `moment` with `force`: no chance or gap, out
-loud, a hello when nothing is on its mind). The small model's Claude Code:
-`memoryClaude`, the shell's own (`claude` in the event), PATH, or the usual
-install places (`claude_path`). State in `~/.local/state/nixbook-shell/initiative.json`.
+loud, a hello when nothing is on its mind). The small model runs through
+`nixbook-meta-agent` (`meta_agent()`: `NIXBOOK_META_AGENT`, PATH, or the
+script beside desktop-mcp.py). State in `~/.local/state/nixbook-shell/initiative.json`.
 
-**Routines**: "whenever X happens, do Y", asked of Claude (`routine` tool:
+**Routines**: "whenever X happens, do Y", asked of Muse (`routine` tool:
 `when` {event + filters: app, words, at, days, percent, name, ext, minutes,
 cooldown}, `do` a fixed call {tool, args, server: "desktop" or an
 assistant-mcp.json server} or {agent, servers}), kept in the desktop memory
@@ -821,9 +826,9 @@ calendar events), UPower, NetworkManager, the VPNs, the default sink,
 monitors and ~/Downloads (FolderListModel), and runs `routine run ID EVENT`:
 `routine_run` checks on, pause, cooldown, the day's agent runs, then calls the
 desktop tool (`call_tool`), the MCP server (`mcp_call`, a one-shot stdio
-client) or Claude Code (`routine_agent`: --strict-mcp-config with the
+client) or `nixbook-meta-agent` (`routine_agent`: --mcp-config with the
 desktop and the named servers, --tools "" and --allowedTools mcp__…, a few
-turns). What it did goes to the bar (`routine_say`). The shell reports a
+turns, `routineModel`, `small` by default). What it did goes to the bar (`routine_say`). The shell reports a
 routine's action undone within 3 min (`routine undone`): twice, it is off.
 Learned routines (`ai.routines.learn` off/suggest/auto; `routine learn MODE`,
 hourly from Routines.qml, once a day in effect): `learn_patterns` mines the
@@ -835,7 +840,7 @@ the same kind (weekdays, weekends) in two weeks; one new routine a day,
 it on, no forgets it and `routinesDeclined` keeps it out) or, auto and strong,
 on with a trial (said each run until 3 runs undone by nobody).
 
-Routine events added (Routines.qml): `music_silent` (no music for `minutes` while present, once a silence, held after the user's own stop until music plays, a break or an hour), `music_repeating` (the same song `times` in a row, a loop seen as the position jumping back to the start, or the same artist for `minutes` of play, a track with no artist counting none; once a streak, which a 5-minute stop ends; the Claude run is told why it fired, and that it has no listening history to read; track_changed routines about a repeat, from before it, moved to it: memory version 4), `app_focused`, `day_start` (once a day: `routine_run`), `away`, `long_session`, `fullscreen_started|ended`, `dnd_on|off`, `charged`, `bluetooth_connected|disconnected`, `phone_connected|disconnected` (KDE Connect), `drive_connected|disconnected` (/run/media), `disk_low`, `rain` (OpenWeather 2xx–6xx), `screenshot`. `music_ended` waits 20 s. Routine ideas (`routine_idea`, `IDEA_SYSTEM`, daily, `initiative ideas`): personal entries (people by name only, contacts redacted), habits, music, cue names, routines, events and actions → one routine added off and offered with why (`routine_ask(r, why)`); declined ones in `ideasDeclined`. Curiosity reads every 5 h with 4 new titles and may `offer` help with what is in front ("now").
+Routine events added (Routines.qml): `music_silent` (no music for `minutes` while present, once a silence, held after the user's own stop until music plays, a break or an hour), `music_repeating` (the same song `times` in a row, a loop seen as the position jumping back to the start, or the same artist for `minutes` of play, a track with no artist counting none; once a streak, which a 5-minute stop ends; the agent run is told why it fired, and that it has no listening history to read; track_changed routines about a repeat, from before it, moved to it: memory version 4), `app_focused`, `day_start` (once a day: `routine_run`), `away`, `long_session`, `fullscreen_started|ended`, `dnd_on|off`, `charged`, `bluetooth_connected|disconnected`, `phone_connected|disconnected` (KDE Connect), `drive_connected|disconnected` (/run/media), `disk_low`, `rain` (OpenWeather 2xx–6xx), `screenshot`. `music_ended` waits 20 s. Routine ideas (`routine_idea`, `IDEA_SYSTEM`, daily, `initiative ideas`): personal entries (people by name only, contacts redacted), habits, music, cue names, routines, events and actions → one routine added off and offered with why (`routine_ask(r, why)`); declined ones in `ideasDeclined`. Curiosity reads every 5 h with 4 new titles and may `offer` help with what is in front ("now").
 
 **Personal memory**, so a conversation knows what the user told agents
 before: life events (past or planned, with dates), plans, people close to
@@ -863,18 +868,18 @@ kept small and relevant:
   instructions or with the next reply, once.
 
 Agents often don't save mid-task, so the AI chat also runs a **memory
-pass**: two minutes after Claude's last answer (or when the chat is cleared
+pass**: two minutes after Muse's last answer (or when the chat is cleared
 or another loaded), the turns not read yet go to `nixbook-desktop-mcp
 personal learn`, which hands them, with the entries they bear on, to a
-small model (`ai.claudeCode.memoryModel`, `haiku`) through Claude Code with
-no tools, MCP servers or settings, and applies its answer under the same
+small model (`ai.agent.memoryModel`, `small`) through `nixbook-meta-agent`
+with no tools, MCP servers or session, and applies its answer under the same
 rules (an existing subject only by id, at most 6 saves and 3 forgets, and
 only of entries it was shown); its entries are "by memory pass".
-`ai.claudeCode.autoMemory` (on; **Settings → Desktop agents → About you**)
+`ai.agent.autoMemory` (on; **Settings → Desktop agents → About you**)
 turns it off, and so does the `personal` tool group.
 
 It keeps memories the way a person does, without a token spent in the
-conversation (the pass is detached, ~4 s and ~2k tokens of Haiku):
+conversation (the pass is detached, a few seconds and ~2k tokens of the small model):
 
 - **importance** 1-5, rated by the pass (agents' own saves: 3; the
   profile: 5);
@@ -992,90 +997,122 @@ click or key doesn't land on a window being moved; it lifts when the restore
 is done (after 30 s at the latest).
 
 **Model provider** (`ai.provider` = `{ kind; baseUrl; model; smallModel;
-bigModel; }`, Settings → Desktop agents → Claude in the side panel → Model
+bigModel; }`, Settings → Desktop agents → Muse in the side panel → Model
 provider; `services/ModelProvider.qml`, `scripts/model-provider.sh`): every
-Claude Code the shell starts — the side panel (`Ai.claudeCodeScript`), the
-equalizer agent, desktop-mcp's passes and routine turns (`claude_cmd()`) and
-nixbook-improve (`claudeCommand`) — goes through `nixbook-model-provider run
-CLAUDE ARGS…`. `anthropic` (default) execs Claude Code unchanged, on the
-user's Claude login. `meta` (Meta's Model API, preset base URL
-`https://api.meta.ai`, `muse-spark-1.3` main and small, `muse-wonder-1.0`
-big) and `custom` (any Anthropic-compatible Messages API: `https://`, or
-`http://` on the loopback) set `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`
-(the key from the keyring: `secret-tool`, `application nixbook-shell kind
-model-provider provider <kind> host <host>`, so a key is never sent to another
-host), `ANTHROPIC_MODEL` and the `ANTHROPIC_DEFAULT_{SONNET,HAIKU,OPUS}_MODEL`
-aliases, unset `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`, turn off
-non-essential traffic, and map `--model`/`--fallback-model` values (Claude
-aliases and `claude-*` ids by family; the provider's own ids kept). Without a
-key or with a bad URL it exits 3, with Claude Code's own `{"type":"result",
-"is_error":true}` line when JSON output was asked. `status`, `key set` (stdin)
-/ `key forget` and `test` (one Messages request, the key as a header from a
-file descriptor) back the Settings controls. The panel's script carries
-`ModelProvider.signature`, so a provider, model or key change restarts its
-Claude Code; a provider change also clears every chat's Claude session. The
-claude.ai connectors are off with another provider. desktop-mcp's sent log
-names the provider (`meta:haiku`).
+model call the shell makes — `nixbook-meta-agent` (the side panel's Muse,
+the equalizer agent, desktop-mcp's passes and routine turns,
+nixbook-improve), Quick AI, the voice and the Nix onboarding — goes through
+`nixbook-model-provider run CMD ARGS…`, which execs CMD unchanged with
+`NIXBOOK_AI_BASE_URL`, `NIXBOOK_AI_KEY`, `NIXBOOK_AI_MODEL`,
+`NIXBOOK_AI_SMALL_MODEL`, `NIXBOOK_AI_BIG_MODEL`, `NIXBOOK_AI_LABEL` and
+`NIXBOOK_AI_PROVIDED=1`, every `ANTHROPIC_*`/`CLAUDE_CODE_*` variable unset.
+`meta` (the default: Meta's Model API, preset base URL `https://api.meta.ai`,
+`muse-spark-1.3` main and small, `muse-wonder-1.0` big) or `custom` (another
+server with a Messages API: `https://`, or `http://` on the loopback); an
+old config saying `anthropic` reads as `meta`. The key comes from the
+keyring (`secret-tool`, `application nixbook-shell kind model-provider
+provider <kind> host <host>`), so a key is never sent to another host.
+Without a key or with a bad URL it exits 3, with a `{"type":"result",
+"is_error":true}` line when JSON output was asked. `status`, `key set`
+(stdin) / `key forget` and `test` (one Messages request, the key as a header
+from a file descriptor) back the Settings controls. The panel's script
+carries `ModelProvider.signature`, so a provider, model or key change
+restarts its agent; a provider change also clears every chat's agent
+session. desktop-mcp's sent log names the provider (`meta:small`).
 
-**Claude in the side panel**: when Claude Code is installed (`claude` on the
-PATH, in `~/.local/bin` or a Nix profile), the AI chat offers a **Claude**
-model (`/model claude`) that runs on your own Claude login, no API key. It is
-set up in **Settings → Desktop agents → Claude in the side panel**: whether
-Claude Code was found (and its command, if elsewhere), the model (Sonnet by
-default, or Opus, Haiku, Claude Code's own) and its thinking effort (low by
-default: driving the desktop is many short steps, each waiting on the
-model), whether it may search and read the web, the folders it
-may read, and a button to use it in the panel (the `ai.claudeCode.*` and
-`ai.allowedFolders` settings; Nix can pin them like any other). Claude
-Code (`claude -p`) keeps running between messages, each one a line on its
-stdin, so a message doesn't wait ~2 s for it and the desktop MCP server to
-start: it starts when you open the panel on Claude, again (resuming the
-conversation's session) when a setting or an attached file changes its
-command line, and closes after 15 minutes unused; Stop interrupts the answer
-and keeps it. It runs with the desktop MCP server attached (its guardrails,
-the pause button and the memory apply as always; tool `none` leaves it out),
-the MCP servers of `programs.nixbook-shell.assistant.mcpServers` (by default
+**The agent engine** (`scripts/meta-agent.py`, `nixbook-meta-agent`,
+`passthru.metaAgent`, stdlib Python): every agent the shell starts runs on
+it; it replaced Claude Code, which the shell no longer uses (lost with it,
+on purpose: the claude.ai connectors, the Claude usage bar widget and
+running on a Claude subscription login). It sends the conversation to
+`POST $NIXBOOK_AI_BASE_URL/v1/messages` (`Authorization: Bearer`; the
+`anthropic-version` header is only the wire protocol Meta's API speaks) and
+loops through tool calls until the model answers; without
+`NIXBOOK_AI_KEY` (and no `NIXBOOK_AI_PROVIDED`) it re-execs itself through
+`nixbook-model-provider run`. Its command line is the usual print-mode one,
+so callers changed little: the prompt on stdin (`-p`); `--model
+small|main|big` or a provider id (`haiku`/`sonnet`/`opus` still read as
+small/main/big); `--effort low|medium|high` (adaptive thinking, dropped
+again on a 400); `--system-prompt` / `--append-system-prompt`;
+`--output-format text|json|stream-json`; `--input-format stream-json` (one
+turn per stdin line, a `result` after each, exits on EOF);
+`--include-partial-messages`; `--json-schema S` (the answer through a forced
+`structured_output` tool call); `--mcp-config` (stdio MCP servers, their
+tools as `mcp__<server>__<tool>`; `--allowedTools` patterns narrow them);
+`--tools` (built-ins: Read, Glob, Grep, Edit, Write, Bash, WebFetch,
+WebSearch; none by default) and `--disallowedTools`; `--add-dir` (readable,
+with the working directory) and `--write-dir` (Edit/Write only there;
+`--permission-mode acceptEdits`: the working directory too); `--sandbox
+JSON` (`{read, write, deny}`: Bash in bubblewrap, the home hidden but those
+folders, `/nix` and `/etc` read-only, the network open, its own pid
+namespace; without it Bash runs plain in the working directory, 120 s
+timeout); `--max-turns` (30); `--resume ID` / `--session-id` /
+`--no-session-persistence` (transcripts in
+`$XDG_STATE_HOME/nixbook-shell/agent-sessions/<id>.json`, 0600, pruned after
+7 days); `--privacy` (MCP tool inputs of servers other than `desktop`
+unmasked and their results masked with `nixbook-desktop-mcp privacy
+unmask|mask --json`, which replaced Claude Code's privacy hooks). Other
+Claude Code flags are accepted and ignored. Events are stream-json lines of
+the usual shapes: `system`/`init` (session id, model, tools),
+`stream_event` deltas, `assistant`, `user` (tool results) and `result`
+(`subtype` `success`, `error_max_turns` or `error_during_execution`, the
+answer, `structured_output`, usage; `total_cost_usd` always 0); exit 0, or
+1 on an error (the result is still printed). WebSearch reads DuckDuckGo's
+HTML results, WebFetch http(s) pages as text (100 kB at most); paths outside
+the allowed folders are refused, and the provider's key never reaches a
+tool. `tests/meta-agent.sh` runs it against `tests/fake-messages.py` and a
+stub MCP server.
+
+**Muse in the side panel**: when `nixbook-meta-agent` is on the PATH (the
+package puts it there), the AI chat offers a **Muse** model (`/model muse`,
+named after the provider: `ModelProvider.chatName`), which answers once a key
+is saved under Model provider. It is set up in **Settings → Desktop agents
+→ Muse in the side panel**: whether it is ready, the model (`main`, Muse
+Spark, by default, or `big`, Muse Wonder, or `small`) and its thinking
+effort (low by default: driving the desktop is many short steps, each
+waiting on the model), whether it may search and read the web, the folders
+it may read, and a button to use it in the panel (the `ai.agent.*` and
+`ai.allowedFolders` settings; Nix can pin them like any other; the Home
+Manager activation moves menu-set `ai.claudeCode` values to `ai.agent`
+once). The agent (`Ai.agentScript`) keeps running between messages, each
+one a line on its stdin, so a message doesn't wait for it and the desktop
+MCP server to start: it starts when you open the panel on Muse, again
+(resuming the conversation's session, `agentSessionId`) when a setting or an
+attached file changes its command line, and closes after 15 minutes unused.
+Stop ends the agent process (SIGTERM; killed after 5 s); the next message
+resumes its session, which holds the turns it finished. It runs with the
+desktop MCP server attached (its guardrails, the pause button and the memory
+apply as always; tool `none` leaves it out), the MCP servers of
+`programs.nixbook-shell.assistant.mcpServers` (by default
 [MCP-NixOS](https://mcp-nixos.io), for real NixOS / Home Manager package and
 option data; written to `~/.config/nixbook-shell/assistant-mcp.json`, every
-tool allowed, left out with tool `none` too) and only the built-in tools in `ai.claudeCode.allowedTools` (web search and
-fetch); running commands is refused. **It reads none of
-your files** unless you allow it: **Folders AI agents may read**
-(`ai.allowedFolders`, none by default) become its `--add-dir` working
-directories, read-only, and a file attached to a message is readable alone
-(`Read(//that/file)`). Without any, it has no file tools at all
-(`--disallowedTools Read Glob Grep`). **Folders AI agents may write**
-(`ai.writableFolders`, none by default) are bound read-write into the agent
-desktop's sandbox (made if missing; never the whole home or `/`), and the
-first is its apps' Downloads folder (`XDG_DOWNLOAD_DIR` in its home), so an
-agent can download a file in its own browser and use it on your side, a
-wallpaper for instance; Claude can read them and gets `Write` and `Edit`
-allowed there only (`Edit(//that/folder/**)`; any other write is denied),
-and is told where downloads land. It runs in an empty directory of its own
-(`~/.local/share/nixbook-shell/assistant`, not your home) and without your
-`~/.claude` settings (`--setting-sources project`: allow rules you set for your
-own Claude Code sessions don't apply), and any other read is denied (`-p`
-can't ask). Claude Code in a terminal, or any other MCP client, follows its
-own permissions.
-**Use your claude.ai connectors** (`ai.claudeCode.connectors`, off by
-default) also gives it the connectors of your Claude account (Gmail,
-Calendar, Drive… as connected on claude.ai, found with `claude mcp list`),
-every tool of each allowed without asking; it then drops
-`--strict-mcp-config` and keeps their tools behind ToolSearch. A connector
-that needs signing in to is signed in to from the panel: Claude gives its
-sign-in link, and its tools come once it's done; one signed in to on claude.ai
-instead is seen when the panel next opens.
-Replies stream in, each tool call shows with its result in a collapsible
-block, and the send button stops the answer (and what Claude is doing), as
-does `/stop`. Sonnet is faster than Opus for desktop tasks.
-`ai.claudeCode.commandLine` (off): Bash in `--tools`/`--allowedTools` (not
-disallowed) and a system-prompt rule to ask before changes; never terminal
-windows (the desktop tools keep refusing them). With
-`ai.claudeCode.commandLineFolders` (on), `--settings` turns on Claude Code's
-Bash sandbox (bubblewrap: `denyRead` the home, `allowRead` the allowed and
-writable folders, `allowWrite` the writable ones, plus the assistant workdir;
-`allowUnsandboxedCommands: false`, `failIfUnavailable`, network `*`); what
-its commands start stays inside (systemd-run, D-Bus and the niri socket
-are unreachable from it: checked).
+tool allowed, those in `ai.agent.mcpServersOff` and all with tool `none`
+left out) and only the built-in tools in `ai.agent.allowedTools` (web search
+and fetch); running commands is refused. **It reads none of your files**
+unless you allow it: **Folders AI agents may read** (`ai.allowedFolders`,
+none by default) become its `--add-dir` folders, read-only, and a file
+attached to a message is readable alone. Without any, it has no file tools
+at all. **Folders AI agents may write** (`ai.writableFolders`, none by
+default) are bound read-write into the agent desktop's sandbox (made if
+missing; never the whole home or `/`), and the first is its apps' Downloads
+folder (`XDG_DOWNLOAD_DIR` in its home), so an agent can download a file in
+its own browser and use it on your side, a wallpaper for instance; Muse can
+read them and gets `Write` and `Edit` there only (`--write-dir`; any other
+write is refused), and is told where downloads land. It runs in an empty
+directory of its own (`~/.local/share/nixbook-shell/assistant`, not your
+home), and any other path is refused by its tools. Any other MCP client
+follows its own permissions.
+Replies stream in (`services/ai/MetaAgentApiStrategy.qml`, api_format
+`meta-agent`), each tool call shows with its result in a collapsible block,
+and the send button stops the answer (and what Muse is doing), as does
+`/stop`. `ai.agent.commandLine` (off): Bash in `--tools` and a
+system-prompt rule to ask before changes; never terminal windows (the
+desktop tools keep refusing them). With `ai.agent.commandLineFolders` (on),
+`--sandbox` runs Bash in bubblewrap (in the home only the allowed and
+writable folders and the assistant workdir, written only in the writable
+ones; the runtime dir, `/run/media` and a writable folder's `.git`/`.envrc`
+hidden; network open); what its commands start stays inside (its own pid
+namespace; systemd-run, D-Bus and the niri socket are unreachable from it).
 
 The side panel's other model is the offline **Config assistant** (the
 default), which answers from this machine's configuration without any AI.
@@ -1124,7 +1161,7 @@ Guardrails, whatever the transport:
   while locked or on Do Not Disturb; routines an agent adds (or turns on) start
   off and ask (`routine_ask`, the accept word; `routine on` from the user turns
   one on), fixed actions use `ROUTINE_DESKTOP_TOOLS` (shell_ipc: `mpris`),
-  `assistant_servers()` drops `ai.claudeCode.mcpServersOff`, a routine's Claude
+  `assistant_servers()` drops `ai.agent.mcpServersOff`, a routine's agent
   run gets only `ROUTINE_EVENT_FIELDS` of its event, a desktop server limited by
   `NIXBOOK_DESKTOP_MCP_GROUPS` (`observe,windows,shell`), and doesn't run while
   locked; person entries reach the contacts only from the user's chats, never
@@ -1285,10 +1322,8 @@ Python start each (~60 ms, ~150 ms before `-P`). Only the commands in
 `HELPER_COMMANDS` (no model, no long wait), and the initiative's decisions
 (`initiative consider`), each on a thread of its own since a model's answer
 can take seconds; the others, and any while it is down (it restarts after
-2 s), run as a process as before. It also serves
-the side panel's privacy hooks over HTTP (Claude Code's `http` hooks) on
-127.0.0.1: a random port, a bearer token, the caller checked to be the same
-user.
+2 s), run as a process as before. Its first line, `{"ready": true}`, says
+it is up; it listens on no socket.
 
 Every Python script of the package runs with `-P`: run from `/nix/store`,
 its directory would be on `sys.path`, and the first import would list the
@@ -1301,7 +1336,7 @@ default), models read placeholders instead of private details:
 `⟦Person 2⟧`, `⟦Person 2 first⟧`, `⟦Email 1⟧`, `⟦Phone 1⟧`, `⟦Address 1⟧`,
 `⟦Card 1⟧`, `⟦IBAN 1⟧`, `⟦Private 1⟧`, and `⟦User⟧` for you. The real values
 come back on this computer whenever a model uses a placeholder: in a tool's
-arguments (typing it, sending a mail through a connector) and in the
+arguments (typing it, sending a mail through an MCP server) and in the
 answers you read. It works in plain code, with no model involved:
 
 - **What is private**: what is known to be. That covers your name (the
@@ -1343,45 +1378,41 @@ answers you read. It works in plain code, with no model involved:
   - The desktop server: `call_tool` masks every tool's reply and unmasks
     its arguments. The notes it adds to a reply (the memory about the task,
     people in it), `tools/list` and the instructions are masked too.
-  - The small model's passes (`ask_claude`, `ask_local`): masked, their
+  - The small model's passes (`ask_agent`, `ask_local`): masked, their
     answers unmasked, so the memory keeps the real values. `sent.jsonl`
     holds what was really sent.
   - The side panel: the message and its context go through `privacy mask`,
     and so does the system prompt (the machine's context, your own words in
-    it, paths), in the script that starts Claude Code. If either fails,
-    nothing is sent. Claude Code's `PreToolUse`/`PostToolUse` hooks
-    (`privacy hook`) cover every other tool: claude.ai connectors, other MCP
-    servers, Bash, Read. WebSearch and WebFetch keep their placeholders:
-    they run at the provider (WebFetch's page goes to its small model).
-    Answers are unmasked as they stream (`ClaudeCodeApiStrategy.qml`,
-    `Ai.unmaskPrivate`).
-  - A routine's agent (`routine_agent`): masked prompt, the hook on its
+    it, paths), in the script that starts `nixbook-meta-agent`. If either
+    fails, nothing is sent. Its `--privacy` covers the other MCP servers'
+    tools: their inputs unmasked and their results masked through
+    `nixbook-desktop-mcp privacy unmask|mask --json`. WebSearch and
+    WebFetch keep their placeholders. Answers are unmasked as they stream
+    (`MetaAgentApiStrategy.qml`, `Ai.unmaskPrivate`).
+  - A routine's agent (`routine_agent`): masked prompt, `--privacy` on its
     other servers, its report unmasked. The equalizer agent: masked prompt
     (a local file's path), its note unmasked.
   - The self-fix agent (`nixbook-improve`): its prompt (logs, your reports
     and feature requests) masked through `privacy mask`, nothing sent if
     that fails. Its answer keeps the placeholders: it becomes a public pull
-    request. The improvement ideas go through `ask_claude` (masked too);
+    request. The improvement ideas go through `ask_agent` (masked too);
     people's names and contact details are left out of their prompt.
   - With `ai.privacy.screenshots`, the images in any tool's reply too (an
-    attached image read by Claude, a photo from another server), boxed in
+    attached image read by Muse, a photo from another server), boxed in
     place, the reply's shape kept.
   - Your login name is private too (`⟦User login⟧`, in paths), unless it is
     a generic one (debian, admin, user…).
 - **Cost**: one compiled regex (common prefixes factored for thousands of
-  contacts) and a few for the learning, about 2.2 ms for a 7 KB reply. The side panel's hooks go over HTTP to the
-  shell's helper (below), about 1 ms a tool call; a process each (~60 ms)
-  only while the helper isn't up. Screenshots
+  contacts) and a few for the learning, about 2.2 ms for a 7 KB reply. The agent's
+  `--privacy` starts a `nixbook-desktop-mcp privacy` process per masked
+  tool call (~60 ms). Screenshots
   (`ai.privacy.screenshots`, off by default) take about 1.3 s of OCR for a
   full screen of text. They are read by tesseract, the words regrouped into
   the rows a reader sees, the details blacked out, and the model told where
   each one is (`⟦Person 2⟧ at image (x,y)`), so it can still click there.
 - **Not covered**: faces and photos, text the OCR misses, anything not on the
   list (a stranger's name in a mail), and what other apps send on their own.
-  Screenshots and images unless `ai.privacy.screenshots` is on. claude.ai
-  connectors run through Anthropic's servers: the model reads placeholders,
-  but what a connector fetches, and the real values it is given, pass
-  there. The screen translator sends the screen to Google Cloud Vision.
+  Screenshots and images unless `ai.privacy.screenshots` is on. The screen translator sends the screen to Google Cloud Vision.
 
 ## Look and feel
 
@@ -1598,7 +1629,7 @@ ignored.
 | `nixos-module.nix` | optional NixOS module: the system's toggles for the assistant                                                                |
 | `greeter.nix`      | the login screen (`nixbook-shell.greeter`, imported by it)                                                                   |
 | `toggles.nix`      | discovers the `enable` toggles from an options tree                                                                          |
-| `scripts/`         | `config` CLI, its jq library, assistant facts, Anthropic usage, login screen theme, emoji list, desktop control MCP server   |
+| `scripts/`         | `config` CLI, its jq library, assistant facts, the agent engine, model provider, login screen theme, emoji list, desktop MCP |
 | `npins/`           | default nixpkgs and quickshell pins                                                                                          |
 | `src/`             | the QML tree                                                                                                                 |
 | `tests/`           | script tests, lib unit tests, the self-containment check, the shell started headless (`shell-loads.sh`)                      |

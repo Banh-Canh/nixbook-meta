@@ -9,7 +9,7 @@ import QtQuick
 
 /**
  * Talking to the desktop (ai.voice): push to talk (Mod+T, `voice toggle`,
- * the mic button of Claude's speech bubble). Two engines (ai.voice.engine; "auto": Meta when
+ * the mic button of Muse's speech bubble). Two engines (ai.voice.engine; "auto": Meta when
  * it is the model provider with a key, else this computer):
  *   - meta: the microphone streamed to Muse Voice Transcribe while the user
  *     speaks (`nixbook-voice-stream`, scripts/voice-stream.py): the words
@@ -19,11 +19,11 @@ import QtQuick
  *     has spoken and then been quiet for ai.voice.pauseSeconds (or the key
  *     again, or ai.voice.maxSeconds), and transcribes with whisper.cpp
  *     (`nixbook-voice-transcribe`, nothing leaves the computer).
- * It all happens in Claude's speech bubble (the Mod+C one, AgentSpeech.qml):
+ * It all happens in Muse's speech bubble (the Mod+C one, AgentSpeech.qml):
  * listening calls it up, the words show in its field as they come, and
  * what was said is sent there (Initiative.reply: a plain command done at
  * once by QuickIntent, else Quick AI answers or acts with the desktop
- * tools, or Claude in its own thread). Escape in the bubble cancels.
+ * tools, or Muse in its own thread). Escape in the bubble cancels.
  * The answers are read out (ai.voice.speak) in a cute voice: Meta's MMS-TTS
  * on this computer (`nixbook-voice-speak`, English or French).
  */

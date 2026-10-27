@@ -8,13 +8,13 @@ import Quickshell.Services.Mpris
 import QtQuick
 
 /**
- * What asked in Claude's bubble is a plain command, done at once in plain
- * code instead of a Claude run (which can think for a while): open an app,
+ * What asked in Muse's bubble is a plain command, done at once in plain
+ * code instead of a Muse run (which can think for a while): open an app,
  * the music (play, pause, next, previous), the volume and brightness, dark
  * or light mode, Do Not Disturb, locking the screen, a timer or a
  * pomodoro, a saved window layout, a task added. Strict patterns only:
  * anything else, or anything unsure (an app it can't name for sure), goes
- * to Claude as before. `run(text)` does it and says what it did, else "".
+ * to Muse as before. `run(text)` does it and says what it did, else "".
  */
 Singleton {
     id: root
@@ -22,7 +22,7 @@ Singleton {
     // Lowercase, no politeness around it, no final punctuation.
     function _clean(text) {
         return String(text ?? "").trim().toLowerCase()
-            .replace(/^(hey |ok |okay )?(claude[,:]?\s+)?/, "")
+            .replace(/^(hey |ok |okay )?(muse[,:]?\s+)?/, "")
             .replace(/^(please |pls |can you |could you |would you |will you )+/, "")
             .replace(/(,?\s*(please|pls|thanks|thank you))+$/, "")
             .replace(/[.!?\s]+$/, "")
@@ -146,7 +146,7 @@ Singleton {
     }
 
     // The app named exactly (its name, its id, or the start of its name),
-    // else none: an app opened by mistake is worse than asking Claude.
+    // else none: an app opened by mistake is worse than asking Muse.
     function _app(name) {
         const want = name.trim()
         if (want.length < 2) return null

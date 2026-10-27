@@ -6,8 +6,8 @@ import QtQuick
 import QtQuick.Layouts
 
 /**
- * The "From Claude" tab's threads: each thing Claude said on its own is a
- * conversation of its own (Ai.claudeThread), saved in the history once it
+ * The "From Muse" tab's threads: each thing Muse said on its own is a
+ * conversation of its own (Ai.agentThread), saved in the history once it
  * has more than 5 messages (Ai.saveHistory); the
  * latest are listed here, newest first, a dot on those not answered yet.
  * Clicking one goes back to it in this tab; the button at the end deletes
@@ -15,10 +15,10 @@ import QtQuick.Layouts
  */
 ListView {
     id: root
-    readonly property var threads: Ai.history.filter(c => c.fromClaude).slice(0, 20)
-    readonly property int unpinned: Ai.history.filter(c => c.fromClaude && !c.pinned).length
+    readonly property var threads: Ai.history.filter(c => c.fromAgent).slice(0, 20)
+    readonly property int unpinned: Ai.history.filter(c => c.fromAgent && !c.pinned).length
     property bool confirmClear: false
-    visible: Ai.current?.fromClaude === true && root.threads.length > 0
+    visible: Ai.current?.fromAgent === true && root.threads.length > 0
     implicitHeight: 28
     orientation: ListView.Horizontal
     spacing: 4
@@ -57,7 +57,7 @@ ListView {
                     return;
                 }
                 root.confirmClear = false;
-                Ai.deleteClaudeThreads();
+                Ai.deleteAgentThreads();
             }
             contentItem: RowLayout {
                 id: clearRow
@@ -76,7 +76,7 @@ ListView {
                 }
             }
             StyledToolTip {
-                text: Translation.tr("Clear the threads from Claude (but the pinned ones)")
+                text: Translation.tr("Clear the threads from Muse (but the pinned ones)")
             }
         }
     }

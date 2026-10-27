@@ -88,7 +88,6 @@ Singleton {
         proc.requestJson = JSON.stringify(Object.assign({
             mode: "scan", lang: ConfigAssistant.uiLang(),
             model: Config.options.ai.quick?.model ?? "small", effort: Config.options.ai.quick?.effort ?? "low",
-            claude: Ai.claudeCodePath,
             context: { app: top?.appId ?? "", title: top?.title ?? "", source: "scan",
                 now: Qt.formatDateTime(new Date(), "ddd d MMM yyyy hh:mm") },
         }, root.situation()));

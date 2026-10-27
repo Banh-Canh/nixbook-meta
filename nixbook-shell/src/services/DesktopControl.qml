@@ -10,7 +10,7 @@ import QtQuick
  * Desktop control for AI agents (scripts/desktop-mcp.py, `nixbook-desktop-mcp`):
  * whether it is paused and what an agent did last, from the state file the
  * MCP server writes on every call. Pausing goes through the server's own
- * command, so every agent (Claude Code, opencode, the AI chat…) is stopped at
+ * command, so every agent (Muse's agent, opencode, the AI chat…) is stopped at
  * once, including a run_steps batch between two steps.
  *
  * Paused until the user first allows it, and the choice survives a reboot:

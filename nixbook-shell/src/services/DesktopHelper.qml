@@ -14,15 +14,12 @@ import QtQuick
  * each time (~150 ms of CPU each). `run(argv, input, done)`: done(code,
  * stdout) once answered; the commands the helper doesn't take (see
  * desktop-mcp.py's HELPER_COMMANDS), and any while it isn't up, run as a
- * process as before. It also serves the side panel's privacy hooks over
- * HTTP on 127.0.0.1 (`hookUrl`, `hookToken`: Ai.privacyHooks).
+ * process as before. Its first line, {"ready": true}, says it is up.
  */
 Singleton {
     id: root
 
     property bool ready: false
-    property string hookUrl: ""
-    property string hookToken: ""
     property int _next: 1
     property var _waiting: ({}) // id -> done
     // As HELPER_COMMANDS: those it answers.
@@ -66,9 +63,7 @@ Singleton {
                 } catch (e) {
                     return;
                 }
-                if (msg.hook !== undefined) {
-                    root.hookUrl = msg.hook;
-                    root.hookToken = msg.token ?? "";
+                if (msg.ready === true) {
                     root.ready = true;
                     return;
                 }
@@ -81,7 +76,6 @@ Singleton {
         // rest runs as processes until it is back.
         onExited: {
             root.ready = false;
-            root.hookUrl = "";
             const waiting = root._waiting;
             root._waiting = {};
             for (const id in waiting) waiting[id](1, "");

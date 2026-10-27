@@ -9,13 +9,13 @@ import Quickshell
 
 // The desktop agent in the bar, one button per thing a click does (each its
 // own hover and tooltip saying what it does):
-// - Claude (a robot): ask Claude anything in its speech bubble, again to put
-//   it away (Mod+C). It hops when Claude has something new to say and nods
-//   while Claude answers in its bubble.
-// - What Claude has for the user (a speech bubble, breathing slowly; only
+// - Muse (a robot): ask Muse anything in its speech bubble, again to put
+//   it away (Mod+C). It hops when Muse has something new to say and nods
+//   while Muse answers in its bubble.
+// - What Muse has for the user (a speech bubble, breathing slowly; only
 //   then): something new it waits to tell (services/Initiative.qml) or an
 //   answer not read in a conversation put away. Click brings it back in
-//   Claude's speech bubble, right-click is "not now". What they've read
+//   Muse's speech bubble, right-click is "not now". What they've read
 //   stays dark; a count says how many they haven't.
 // - Desktop control (services/DesktopControl.qml): a pause button while
 //   agents may act (faint idle, pulsing in the accent colour while one
@@ -51,7 +51,7 @@ Item {
         onRunningChanged: if (!running) root.pulse = 1
     }
 
-    // A hop when Claude has something new to say (out loud or waiting).
+    // A hop when Muse has something new to say (out loud or waiting).
     property real hop: 0
     SequentialAnimation {
         id: hopAnim
@@ -138,9 +138,9 @@ Item {
         rowSpacing: 2
         columnSpacing: root.isMaterial ? 2 : 0
 
-        // Claude: ask anything.
+        // Muse: ask anything.
         AgentButton {
-            id: claudeButton
+            id: museButton
             icon: "smart_toy"
             filled: root.lively || Initiative.speaking !== null
             tone: Initiative.thinking ? Appearance.colors.colPrimary : Appearance.colors.colOnLayer1
@@ -150,12 +150,12 @@ Item {
             offset: root.hop
             onClicked: Initiative.toggle()
             StyledPopup {
-                hoverTarget: claudeButton
+                hoverTarget: museButton
                 ColumnLayout {
                     spacing: 4
                     StyledPopupHeaderRow {
                         icon: "smart_toy"
-                        label: Translation.tr("Claude")
+                        label: Translation.tr("Muse")
                     }
                     StyledPopupValueRow {
                         Layout.fillWidth: true
@@ -166,7 +166,7 @@ Item {
                     }
                     Hint {
                         text: Initiative.speaking ? Translation.tr("Click to put its bubble away (Mod+C)")
-                            : Translation.tr("Click to ask Claude anything (Mod+C)")
+                            : Translation.tr("Click to ask Muse anything (Mod+C)")
                     }
                 }
             }
@@ -215,8 +215,8 @@ Item {
                     spacing: 4
                     StyledPopupHeaderRow {
                         icon: "chat_bubble"
-                        label: root.said ? Translation.tr("Claude has something for you")
-                            : Translation.tr("Your conversation with Claude")
+                        label: root.said ? Translation.tr("Muse has something for you")
+                            : Translation.tr("Your conversation with Muse")
                     }
                     StyledText {
                         visible: root.said !== null
@@ -228,7 +228,7 @@ Item {
                         color: Appearance.colors.colOnSurfaceVariant
                     }
                     Hint {
-                        text: Translation.tr("Click to read it in Claude's bubble, right-click for not now")
+                        text: Translation.tr("Click to read it in Muse's bubble, right-click for not now")
                     }
                 }
             }

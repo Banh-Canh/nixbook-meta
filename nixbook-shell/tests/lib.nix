@@ -131,6 +131,32 @@ lib.runTests {
     expected = true;
   };
   # -- themes (src/modules/common/themes.json) ----------------------------
+  # An old Claude Code setting reaches its ai.agent replacement.
+  testRenamedKeyGivesItsValue = {
+    expr =
+      let
+        c = evalSettings {
+          ai.claudeCode.mcpServersOff = [ "immich" ];
+          ai.claudeThreadIdleMinutes = 10;
+        };
+      in
+      [
+        c.ai.agent.mcpServersOff
+        c.ai.threadIdleMinutes
+      ];
+    expected = [
+      [ "immich" ]
+      10
+    ];
+  };
+  testRenamedKeysAreNotPinned = {
+    expr = shellLib.pinnedSettings (evalSettings {
+      ai.claudeCode.model = "big";
+    });
+    expected = {
+      ai.agent.model = "big";
+    };
+  };
   testLegacyKeysAreNotSettings = {
     expr = lib.filter (k: lib.elem k flatDefaults) shellLib.legacyKeys;
     expected = [ ];

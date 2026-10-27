@@ -9,7 +9,7 @@ import Quickshell.Wayland
 import QtQuick
 
 /**
- * Quick AI (ai.quick): fast answers and actions, in Claude's speech bubble
+ * Quick AI (ai.quick): fast answers and actions, in Muse's speech bubble
  * (modules/ii/notificationPopup/AgentSpeech.qml, the Mod+C one): one box to
  * talk to the AI. What the user asks there (typed, said with Mod+T, from
  * the launcher's "!", a notification's Summarize / Suggest replies, the
@@ -21,10 +21,9 @@ import QtQuick
  * by the model with the desktop tools ("do"), each step in the bubble's
  * status line. Its answers are messages of the bubble's conversation (an
  * AiChatSession), so expanding the bubble carries it on in the side panel
- * with Claude Code. Under the answer, the bubble shows `chips`: Allow / No
+ * with Muse's agent. Under the answer, the bubble shows `chips`: Allow / No
  * for a destructive step, the suggested replies, the modes of a screen
  * region (What's this, Explain, Summarize, Translate, Copy text), Copy.
- * With Anthropic as the provider, `claude -p` (Haiku) answers instead.
  * Text goes through desktop-mcp's privacy mask on the way.
  */
 Singleton {
@@ -52,7 +51,8 @@ Singleton {
     property string error: ""
     property string provider: ""
     property string model: ""
-    // The task the agent handed over to Claude Code (ask_claude): sent in the
+    // The task the agent handed over to the side panel's Muse agent
+    // (ask_agent): sent in the
     // same conversation once its run is over.
     property string handoff: ""
     // After acting: the report ({summary, done, failed, needsYou, steps,
@@ -237,7 +237,7 @@ Singleton {
 
     // What the user says in the bubble (Initiative.reply, after QuickIntent):
     // answered here when it is a conversation this started or a new one of
-    // theirs; false for Claude's own threads (Claude Code answers them).
+    // theirs; false for Muse's own threads (Muse's agent answers them).
     function handle(said, attach = "") {
         if (!root.available) return false;
         const chat = Initiative.chat;
@@ -347,11 +347,13 @@ Singleton {
             history: history, followUp: followUp,
             lang: ConfigAssistant.uiLang(), target: Config.options.ai.quick?.translateTo || "",
             model: Config.options.ai.quick?.model ?? "small", effort: Config.options.ai.quick?.effort ?? "low",
-            claude: Ai.claudeCodePath, confirm: Config.options.ai.quick?.confirm ?? "destructive",
-            // What the user did just before (RecentContext, when its setting is on).
-            activity: RecentContext.enabled ? RecentContext.text : "",
+            // ask_agent offered: the side panel's Muse agent can take a task.
+            agent: Ai.agentReady, confirm: Config.options.ai.quick?.confirm ?? "destructive",
+            // What the user did just before (RecentContext, when its setting
+            // is on and the user didn't take it off this message with ×).
+            activity: RecentContext.enabled && !Initiative.skipContext ? RecentContext.text : "",
             facts: root.facts(),
-            // What the side panel's Claude knows (its system prompt: the
+            // What the side panel's Muse knows (its system prompt: the
             // configured one, this machine and the live settings): the same
             // brain, also in Full AI mode.
             panel: Ai.stableSystemPrompt,
@@ -563,12 +565,12 @@ Singleton {
             if (code !== 0 && root.error.length === 0 && root.answer.length === 0)
                 root.error = Translation.tr("The model didn't answer (exit %1)").arg(code);
             root.finish();
-            // Handed over: Claude Code (the side panel's agent: web, files,
-            // connectors, every MCP server) goes on in this conversation.
+            // Handed over: the side panel's Muse agent (web, files, every
+            // MCP server) goes on in this conversation.
             const task = root.handoff;
             root.handoff = "";
-            if (task && root.chat && Ai.claudeCodePath.length > 0)
-                root.chat.sendUserMessage(Translation.tr("(for Claude) %1").arg(task));
+            if (task && root.chat && Ai.agentReady)
+                root.chat.sendUserMessage(Translation.tr("(for Muse) %1").arg(task));
         }
     }
 

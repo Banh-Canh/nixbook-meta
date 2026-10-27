@@ -7,7 +7,7 @@ import QtQuick;
  * - description: Description of the model
  * - homepage: Link shown for the model
  * - model: Model code
- * - api_format: How Ai.qml answers with it: "config-assistant" or "claude-code"
+ * - api_format: How Ai.qml answers with it: "config-assistant" or "meta-agent"
  */
 
 QtObject {

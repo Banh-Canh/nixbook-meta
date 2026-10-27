@@ -31,7 +31,37 @@ rec {
   legacyKeys = [
     "appearance.persona.enable"
   ]
-  ++ removedKeys;
+  ++ removedKeys
+  ++ lib.attrNames renamedKeys;
+
+  # Settings that moved: old key -> new key. Still accepted in Nix, with a
+  # warning (hm-module.nix), their value given to the new key. nixbook-meta
+  # runs on Meta only: the side panel's agent is nixbook-meta-agent (Muse),
+  # no longer Claude Code.
+  renamedKeys =
+    lib.listToAttrs (
+      map (k: lib.nameValuePair "ai.claudeCode.${k}" "ai.agent.${k}") [
+        "model"
+        "effort"
+        "allowedTools"
+        "commandLine"
+        "commandLineFolders"
+        "mcpServersOff"
+        "asComputer"
+        "autoMemory"
+        "memoryModel"
+      ]
+    )
+    // {
+      "ai.claudeThreadIdleMinutes" = "ai.threadIdleMinutes";
+    };
+
+  # The renamed keys set in a settings tree (for the warning).
+  renamedKeysSet =
+    settings:
+    lib.filter (key: lib.attrByPath (lib.splitString "." key) null settings != null) (
+      lib.attrNames renamedKeys
+    );
 
   # Settings that did nothing (or only did something under Hyprland) and were
   # removed: still accepted in Nix (so an old configuration evaluates) but
@@ -55,6 +85,10 @@ rec {
     "bar.floatStyleShadow"
     "bar.topLeftIcon"
     "bar.workspaces.showNumberDelay"
+    # Claude-only (nixbook-meta runs on Meta): the Claude Code command, the
+    # claude.ai connectors.
+    "ai.claudeCode.command"
+    "ai.claudeCode.connectors"
     "hyprland"
     "interactions.deadPixelWorkaround"
     "light.antiFlashbang"
@@ -202,9 +236,33 @@ rec {
                 }
               )
             ) removedKeys
+            ++ lib.mapAttrsToList (
+              old: new:
+              lib.setAttrByPath (lib.splitString "." old) (
+                lib.mkOption {
+                  type = lib.types.nullOr lib.types.anything;
+                  default = null;
+                  visible = false;
+                  description = "Renamed: use `${new}`.";
+                }
+              )
+            ) renamedKeys
           );
-      config.appearance.theme = lib.mkIf (config.appearance.persona.enable != null) (
-        lib.mkDefault (if config.appearance.persona.enable then "persona" else "material")
+      config = lib.mkMerge (
+        [
+          {
+            appearance.theme = lib.mkIf (config.appearance.persona.enable != null) (
+              lib.mkDefault (if config.appearance.persona.enable then "persona" else "material")
+            );
+          }
+        ]
+        ++ lib.mapAttrsToList (
+          old: new:
+          let
+            value = lib.attrByPath (lib.splitString "." old) null config;
+          in
+          lib.setAttrByPath (lib.splitString "." new) (lib.mkIf (value != null) (lib.mkDefault value))
+        ) renamedKeys
       );
     };
 

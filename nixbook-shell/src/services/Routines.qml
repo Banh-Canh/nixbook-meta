@@ -32,7 +32,7 @@ Singleton {
     id: root
 
     // AI off (policies.ai 0): no routine runs (they are agents' tools);
-    // local only (2): fixed ones run, one taking judgment finds no Claude.
+    // local only (2): fixed ones run, one taking judgment finds no model.
     readonly property bool enabled: (Config.options?.ai?.routines?.enable ?? true) && (Config.options?.policies?.ai ?? 1) !== 0
     readonly property string memoryPath: `${Quickshell.env("XDG_STATE_HOME") || `${Quickshell.env("HOME")}/.local/state`}/nixbook-shell/desktop-memory.json`
     property var routines: []
@@ -155,7 +155,6 @@ Singleton {
 
     function _run(r, ev) {
         const event = Object.assign({}, ev)
-        if (Ai.claudeCodePath.length > 0) event.claude = Ai.claudeCodePath
         root._running += 1
         runner.createObject(root, { routine: r, before: root._musicNow(), command: ["nixbook-desktop-mcp", "routine", "run", r.id, JSON.stringify(event)], running: true })
     }

@@ -8,14 +8,12 @@ import Quickshell.Io
 import QtQuick
 
 /**
- * The model provider every Claude Code the shell starts talks to
- * (ai.provider, scripts/model-provider.sh): Anthropic, Claude Code on the
- * user's own Claude login (the default); Meta, Meta's Model API (Muse
- * models) through its Anthropic-compatible Messages endpoint; or another
- * Anthropic-compatible server. Claude Code stays the agent either way (its
- * tools, the desktop MCP server, the sandbox): only the model behind it
- * changes. The side panel, the memory and initiative passes, routines, the
- * equalizer agent and nixbook-improve all start it through
+ * The model provider every agent the shell starts talks to (ai.provider,
+ * scripts/model-provider.sh): Meta, Meta's Model API (the Muse models,
+ * the default), or "custom", another server with a Messages API. The agent
+ * is nixbook-meta-agent (its tools, the desktop MCP server, the sandbox);
+ * the side panel, Quick AI, the memory and initiative passes, routines, the
+ * equalizer agent and nixbook-improve all reach the provider through
  * `nixbook-model-provider run`. The API key is in the keyring (saved per
  * provider and host), handed to the launcher on stdin, never kept here.
  */
@@ -23,29 +21,28 @@ Singleton {
     id: root
 
     readonly property var settings: Config.options?.ai?.provider ?? ({})
-    readonly property string kind: String(settings.kind ?? "anthropic").toLowerCase() || "anthropic"
-    readonly property bool isAnthropic: kind === "anthropic"
+    // "meta" or "custom"; anything else (an old "anthropic") is Meta.
+    readonly property string kind: String(settings.kind ?? "meta").toLowerCase() === "custom" ? "custom" : "meta"
     // What `nixbook-model-provider status` says: presets filled in, key saved,
     // and why the settings can't be used, if they can't.
     property var status: ({})
     readonly property bool keySaved: status.keySaved === true
     readonly property string error: status.error ?? ""
-    readonly property bool ready: isAnthropic || (keySaved && error === "")
+    readonly property bool ready: keySaved && error === ""
     readonly property string model: status.model ?? ""
-    readonly property string label: kind === "meta" ? "Meta" : kind === "custom" ? Translation.tr("Custom") : "Anthropic"
+    readonly property string label: kind === "meta" ? "Meta" : Translation.tr("Custom")
     // The side panel's model name.
-    readonly property string chatName: isAnthropic ? "Claude" : model.length > 0 ? `${label} ${model}` : label
-    // Bumped when the key changes: the side panel's running Claude Code
-    // holds the old one, its command line then differs and it starts again.
+    readonly property string chatName: kind === "meta" ? "Muse" : model.length > 0 ? `${label} ${model}` : label
+    // Bumped when the key changes: the side panel's running agent holds the
+    // old one, its command line then differs and it starts again.
     property int keyRevision: 0
     // What a command answered, for Settings.
     property bool busy: false
     property string message: ""
 
-    // In the side panel's Claude Code command line: a provider change starts
-    // it again.
-    readonly property string signature: isAnthropic ? "anthropic"
-        : [kind, settings.baseUrl ?? "", settings.model ?? "", settings.smallModel ?? "", settings.bigModel ?? "", keyRevision].join("|")
+    // In the side panel's agent command line: a provider change starts it
+    // again.
+    readonly property string signature: [kind, settings.baseUrl ?? "", settings.model ?? "", settings.smallModel ?? "", settings.bigModel ?? "", keyRevision].join("|")
 
     onSignatureChanged: refreshTimer.restart()
     Component.onCompleted: refreshTimer.restart()

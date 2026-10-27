@@ -1,16 +1,15 @@
 # Talk to your desktop (Quick AI)
 
 Quick AI puts the AI where you already are, and answers in a couple of seconds:
-no agent to start. It all happens in **Claude's speech bubble** (the one `Mod+C`
+no agent to start. It all happens in **Muse's speech bubble** (the one `Mod+C`
 calls up), the one place to talk to the AI: what you type or say there, a region
 of the screen, a notification, a task from a Kiroshi scan. It can act on the
 desktop for you.
 
 It calls the [model provider](./ai-assistant.md)'s small model directly (Meta:
-`muse-spark-1.3`, about 2 to 5 seconds). With Anthropic as the provider, Claude
-Code answers instead, using Haiku and your own login, a little slower. Expand
-the bubble to go on in the side panel, where Claude Code takes the conversation
-over with the desktop tools.
+`muse-spark-1.3`, about 2 to 5 seconds). Expand the bubble to go on in the side
+panel, where Muse (`nixbook-meta-agent`, the side panel's agent) takes the
+conversation over with the desktop tools.
 
 ## Where to call it
 
@@ -53,7 +52,7 @@ What you say or type in the bubble is an order or a question:
    > _Ask me before_: _Risky steps only_ (the default), _Every action_ or
    > _Never_.
 
-**It has the same brain as Claude in the side panel**, and so does Full AI
+**It has the same brain as Muse in the side panel**, and so does Full AI
 mode:
 
 - every desktop tool you have enabled (screenshots included: it sees them) and
@@ -70,7 +69,7 @@ memory's learning pass (the notes that helped count up, a new way of doing
 something that took work becomes a note or a recipe), and once a conversation
 goes quiet, the same memory pass as the side panel's chats saves what it showed
 about you. For what needs more (the web, your files, your mail or calendar
-accounts, other MCP servers), it hands the task over to Claude Code in the same
+accounts, other MCP servers), it hands the task over to the side panel's Muse agent in the same
 conversation, which answers there.
 
 It follows desktop control's own rules: `Mod+Shift+Escape` pauses it (the bubble
@@ -79,7 +78,7 @@ or password managers, and every step goes to the audit log. While it acts, the
 bubble lets clicks and keys through to the apps and hides from the agent's
 screenshots.
 
-**It answers like Claude in the side panel**: what it did or found, in plain
+**It answers like Muse in the side panel**: what it did or found, in plain
 words ("Done, Firefox is on workspace 3."). **Only when part of a task failed
 for good, or something needs you, it adds a report** under its answer (in the
 style of a Kiroshi scan): a one-line outcome, then **DONE** (what it did,

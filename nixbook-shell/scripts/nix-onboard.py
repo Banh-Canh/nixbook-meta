@@ -123,11 +123,11 @@ def catalog():
 
 # ── The model ──
 def post(system, messages, effort):
-    base = os.environ.get("ANTHROPIC_BASE_URL", "").rstrip("/")
-    key = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+    base = os.environ.get("NIXBOOK_AI_BASE_URL", "").rstrip("/")
+    key = os.environ.get("NIXBOOK_AI_KEY", "")
     if not base or not key:
         raise RuntimeError("no model provider with an API key (Settings > Desktop agents > Model provider: Meta)")
-    model = os.environ.get("ANTHROPIC_MODEL") or os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") or ""
+    model = os.environ.get("NIXBOOK_AI_MODEL") or os.environ.get("NIXBOOK_AI_SMALL_MODEL") or ""
     body = {"model": model, "max_tokens": 8000, "system": system, "messages": messages}
     tuned = {**body, "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
     for attempt in (tuned, body):
@@ -149,6 +149,31 @@ def post(system, messages, effort):
                 continue
             raise RuntimeError(f"HTTP {e.code}: {str(detail)[:300]}")
     raise RuntimeError("the server refused the request")
+
+
+def desktop_mcp(args, data):
+    """nixbook-desktop-mcp ARGS with DATA on stdin: its stdout, None
+    without it (outside the package) or on failure."""
+    exe = shutil.which("nixbook-desktop-mcp")
+    if not exe:
+        return None
+    try:
+        p = subprocess.run([exe, *args], input=data, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def masked_post(system, convo, effort):
+    """post() through the privacy mask, like every other AI pass: what the
+    user typed leaves with names, emails… as placeholders, and the answer
+    (the configuration included) comes back with the real values."""
+    sent = [dict(m, content=desktop_mcp(["privacy", "mask"], m["content"]) or m["content"])
+            if m["role"] == "user" else m for m in convo]
+    model, text = post(system, sent, effort)
+    if "⟦" in text:
+        text = desktop_mcp(["privacy", "unmask"], text) or text
+    return model, text
 
 
 def blocks_of(text):
@@ -283,14 +308,14 @@ def turn(path):
         if not wants_config:
             # A question: a short prompt, quick.
             nudge = "This is question %d of at most %d." % (asked + 1, MAX_QUESTIONS)
-            _, text = post(QUESTION_SYSTEM.format(lang=lang, nudge=nudge), convo, "low")
+            _, text = masked_post(QUESTION_SYSTEM.format(lang=lang, nudge=nudge), convo, "low")
             emit("say", text=text.strip())
             emit("done", ms=int((time.monotonic() - started) * 1000))
             return 0
         system = SYSTEM.format(lang=lang, max_q=MAX_QUESTIONS, catalog=catalog())
         if asked >= MAX_QUESTIONS or req.get("now"):
             convo[-1]["content"] += "\n\n(Write the configuration now.)"
-        _, text = post(system, convo, "low")
+        _, text = masked_post(system, convo, "low")
         say, found = blocks_of(text)
         if not found:
             # Still a question (it wanted to know more): fine.
@@ -315,7 +340,7 @@ def turn(path):
                 convo.append({"role": "user", "content": (
                     "Checking it with Nix failed:\n" + errors + "\n\nFix it: answer with one short line saying what "
                     "you changed, then ALL the blocks again, corrected (only keys of the list, their types).")})
-                _, text = post(system, convo, "low")
+                _, text = masked_post(system, convo, "low")
                 note, fixed = blocks_of(text)
                 if fixed:
                     found = fixed
@@ -334,8 +359,19 @@ def turn(path):
     return 0
 
 
+def through_provider(argv):
+    """Run without the provider's key: through nixbook-model-provider, which
+    sets it (once: it marks the environment)."""
+    if os.environ.get("NIXBOOK_AI_KEY") or os.environ.get("NIXBOOK_AI_PROVIDED"):
+        return
+    provider = shutil.which("nixbook-model-provider")
+    if provider:
+        os.execv(provider, [provider, "run", sys.executable, "-I", os.path.abspath(__file__), *argv[1:]])
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "turn":
+        through_provider(argv)
         return turn(argv[2])
     if len(argv) == 2 and argv[1] == "catalog":
         print(catalog())

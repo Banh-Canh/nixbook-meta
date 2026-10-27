@@ -1,18 +1,16 @@
 """nixbook-quick-ai: the instant answers of the shell's Quick AI card (a
 selection, the screen, the launcher, a notification). One request, one
-answer, no agent: the provider's Messages API called directly with its small
-model, so the card answers in a couple of seconds instead of waiting for
-Claude Code to start.
+answer, no agent start: the provider's Messages API (Meta's: Muse) called
+directly with its small model, so the card answers in a couple of seconds.
 
-Run through `nixbook-model-provider run nixbook-quick-ai ask REQUEST.json`:
-with Meta (or another Anthropic-compatible API) the provider's environment
-is set (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, the model names) and the
-API is called here; with Anthropic (the user's Claude login, no key) the
-answer comes from `claude -p` with the small model instead.
+Run through `nixbook-model-provider run nixbook-quick-ai ask REQUEST.json`,
+which sets the provider's environment (NIXBOOK_AI_BASE_URL, NIXBOOK_AI_KEY,
+NIXBOOK_AI_MODEL, NIXBOOK_AI_SMALL_MODEL, NIXBOOK_AI_BIG_MODEL); run without
+it, the script goes through the provider itself.
 
 The request (JSON): {mode, question, text, image, context: {app, title,
 source}, history: [{role, text}], lang, effort, model: small|main|big,
-claude}. The answer, one JSON object per line on stdout:
+agent (the side panel's agent is there to hand a task to), delegate}. The answer, one JSON object per line on stdout:
   {"type": "start", "provider", "model"}
   {"type": "delta", "text"}        (streamed text, when the server streams)
   {"type": "answer", "text"}       (the whole answer, always last)
@@ -106,8 +104,8 @@ def unmask(text):
 
 
 def build(req):
-    """The system prompt and the messages (Anthropic Messages shape, text
-    masked), and the prompt as plain text for the record and Claude Code."""
+    """The system prompt and the messages (Messages API shape, text
+    masked), and the prompt as plain text for the record."""
     mode = req.get("mode") if req.get("mode") in MODES else "ask"
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
     target = req.get("target") or lang
@@ -167,17 +165,32 @@ def build(req):
 def model_for(req):
     which = req.get("model") or "small"
     env = os.environ
-    main = env.get("ANTHROPIC_MODEL", "")
-    return {"small": env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") or main,
-            "big": env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or main}.get(which, main)
+    main = env.get("NIXBOOK_AI_MODEL", "")
+    return {"small": env.get("NIXBOOK_AI_SMALL_MODEL") or main,
+            "big": env.get("NIXBOOK_AI_BIG_MODEL") or main}.get(which, main)
+
+
+def endpoint():
+    """The provider's base URL and key (nixbook-model-provider's)."""
+    base = os.environ.get("NIXBOOK_AI_BASE_URL", "").rstrip("/")
+    key = os.environ.get("NIXBOOK_AI_KEY", "")
+    if not base or not key:
+        raise RuntimeError("no model provider with an API key (Settings > Desktop agents > Model provider)")
+    return base, key
+
+
+def child_env(extra=None):
+    """What the desktop tools run with: never the provider's key."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("NIXBOOK_AI_")}
+    env.update(extra or {})
+    return env
 
 
 def call_api(req, system, messages, on_delta):
     """The provider's Messages API, streamed. A server that refuses the
-    effort settings (not every Anthropic-compatible one has them) is asked
+    effort settings (not every server with a Messages API has them) is asked
     again without them."""
-    base = os.environ["ANTHROPIC_BASE_URL"].rstrip("/")
-    key = os.environ["ANTHROPIC_AUTH_TOKEN"]
+    base, key = endpoint()
     model = model_for(req)
     effort = str(req.get("effort") or "low")
     # The OpenAI-style chat endpoint first (Meta's): it takes reasoning_effort
@@ -277,44 +290,13 @@ def read_stream(resp, on_delta):
     return "".join(text)
 
 
-def call_claude(req, system, prompt):
-    """Anthropic: the small model through Claude Code (the user's login),
-    no tools but Read for an image, no MCP servers, no session kept."""
-    claude = req.get("claude") or shutil.which("claude")
-    if not claude:
-        raise RuntimeError("Claude Code isn't installed (Settings > Desktop agents)")
-    workdir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "nixbook-shell", "quick-ai")
-    os.makedirs(workdir, mode=0o700, exist_ok=True)
-    tools = ""
-    image = req.get("image")
-    if image:
-        prompt = f"Read the image {image} first (it is the user's screen).\n\n{prompt}"
-        tools = "Read"
-    history = "\n\n".join(f"{t.get('role', 'user')}: {t.get('text', '')}" for t in (req.get("history") or [])[-12:])
-    if history and req.get("followUp"):
-        prompt = f"{prompt}\n\nThe conversation since:\n{mask(history)}"
-    cmd = [claude, "-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
-           "--setting-sources", "project", "--tools", tools, "--system-prompt", system,
-           "--model", "sonnet" if req.get("model") == "main" else "haiku"]
-    if tools:
-        cmd += ["--allowedTools", tools, "--add-dir", os.path.dirname(image)]
-    p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, cwd=workdir, timeout=180)
-    try:
-        out = json.loads(p.stdout)
-    except ValueError:
-        raise RuntimeError((p.stderr or p.stdout or "Claude Code failed").strip()[:300])
-    if out.get("is_error"):
-        raise RuntimeError(str(out.get("result") or "Claude Code failed")[:300])
-    return "claude-haiku", str(out.get("result") or "")
-
-
 # ── Doing things: the desktop tools (nixbook-desktop-mcp), called by the
 # model itself. The guardrails are desktop-mcp's own (the pause, the tool
 # groups, no terminals or password managers, the audit log); the card asks
 # before a step that destroys something (a window closed, an event
 # deleted), or before every acting step with confirm "actions".
 # Every desktop tool the user has enabled (desktop-mcp's tool groups): the
-# agent has the same hands and eyes as Claude in the side panel. None left
+# agent has the same hands and eyes as Muse in the side panel. None left
 # out but the agent desktop's switch (Full AI works on the user's desktop).
 AGENT_SKIP = {"desktop"}
 AGENT_SYSTEM = (
@@ -322,7 +304,7 @@ AGENT_SYSTEM = (
     "talk to you instead of clicking, so you must be at least as fast as doing it by hand: act at once with the "
     "fewest tool calls (several independent calls in one turn), never ask \"shall I?\" (the shell asks them itself "
     "before the few really risky steps: deleting their data, sending messages for them), never explain what you are "
-    "about to do. Then answer as Claude would in a chat: what you did or found, in plain words, as long as the "
+    "about to do. Then answer as you would in a chat: what you did or found, in plain words, as long as the "
     "question needs and no longer (\"Done, Firefox is on workspace 3.\"; a real answer to a real question), with "
     "tools only when it is about their desktop or data; never invent results. Only when a task of several steps "
     "partly failed, or something now needs the user, add after your answer a report, exactly: "
@@ -476,9 +458,7 @@ def run_tool(name, args, info=None):
     """A desktop tool, or an app's (info: its server): (its text, failed, the
     tool_result content: text and images, so the model sees a screenshot)."""
     exe = shutil.which("nixbook-desktop-mcp")
-    env = {**os.environ, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}
-    for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
-        env.pop(k, None)
+    env = child_env({"NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"})
     cmd = [exe, "app-call", info["server"], str(info["tool"]), json.dumps(args)] if (info or {}).get("server") else \
         [exe, "call", name, json.dumps(args), "--json"]
     try:
@@ -514,8 +494,7 @@ def step_summary(name, args):
 def post(req, body):
     """One non-streamed Messages API call (the effort settings dropped if
     the server refuses them)."""
-    base = os.environ["ANTHROPIC_BASE_URL"].rstrip("/")
-    key = os.environ["ANTHROPIC_AUTH_TOKEN"]
+    base, key = endpoint()
     tuned = {**body, "thinking": {"type": "adaptive"}, "output_config": {"effort": str(req.get("effort") or "low")}}
     for attempt in (tuned, body):
         r = urllib.request.Request(base + "/v1/messages", data=json.dumps(attempt).encode(), method="POST",
@@ -606,13 +585,12 @@ def tool_instructions(req):
     return (out or "").strip()[:8000]
 
 
-ASK_CLAUDE = {
-    "name": "ask_claude",
-    "description": "Hand the task over to Claude, the user's full assistant, when it needs what you don't have: "
-                   "searching the web, reading or writing the user's files, their mail or calendar accounts "
-                   "(connectors), other MCP servers, long work. The conversation goes on there (it sees what was "
-                   "said). Give the complete task with everything you already know; don't use it for what your "
-                   "own tools do.",
+ASK_AGENT = {
+    "name": "ask_agent",
+    "description": "Hand the task over to Muse in the side panel, the user's full agent, when it needs what you "
+                   "don't have: searching the web, reading or writing the user's files, other MCP servers, long "
+                   "work. The conversation goes on there (it sees what was said). Give the complete task with "
+                   "everything you already know; don't use it for what your own tools do.",
     "input_schema": {"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"]},
 }
 
@@ -642,7 +620,7 @@ def agent(req, system, messages):
     call is a "step" event; one needing the user's OK an "approve" event,
     answered by a line on stdin (yes / no)."""
     specs, meta = agent_tools()
-    # What the side panel's Claude starts with (Ai.stableSystemPrompt: the
+    # What the side panel's Muse starts with (Ai.stableSystemPrompt: the
     # configured prompt, this machine's whole reference and the shell's live
     # settings, when ai.includeSystemContext): the same knowledge. It comes
     # first and is cached (it changes rarely): the next calls read it from
@@ -671,11 +649,10 @@ def agent(req, system, messages):
         system = f"{system}\n\nWhat the user did just before (most recent last):\n{mask(str(req['activity'])[-3000:])}"
     system = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}] + (
         [{"type": "text", "text": system.strip()}] if system.strip() else [])
-    # Claude Code, the whole assistant (web, files, the user's mail and
-    # calendar connectors, other MCP servers): the task handed over, the
-    # conversation going on there.
-    if req.get("claude") and req.get("delegate", True):
-        specs = specs + [ASK_CLAUDE]
+    # The side panel's agent, the whole assistant (web, files, other MCP
+    # servers): the task handed over, the conversation going on there.
+    if req.get("agent") and req.get("delegate", True):
+        specs = specs + [ASK_AGENT]
     model = model_for(req)
     said = []
     for _ in range(AGENT_STEPS):
@@ -688,11 +665,11 @@ def agent(req, system, messages):
         if not calls:
             said = texts
             break
-        handoff = next((c for c in calls if c.get("name") == "ask_claude"), None)
+        handoff = next((c for c in calls if c.get("name") == "ask_agent"), None)
         if handoff:
             task = str((handoff.get("input") or {}).get("task") or "").strip()
             emit("delegate", task=unmask(task))
-            said = [" ".join(texts) or "Asking Claude…"]
+            said = [" ".join(texts) or "Asking Muse…"]
             break
         messages.append({"role": "assistant", "content": content})
         results = []
@@ -766,59 +743,11 @@ def learn_episode(req):
     try:
         p = subprocess.Popen([exe, "episode", "-"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, text=True, start_new_session=True,
-                             env={**os.environ, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"})
+                             env=child_env({"NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}))
         p.stdin.write(json.dumps(episode, ensure_ascii=False))
         p.stdin.close()
     except OSError:
         pass
-
-
-def agent_claude(req, system, prompt):
-    """Anthropic: Claude Code (Haiku) with nixbook-desktop-mcp as its MCP
-    server, only the steps that need no OK allowed; its tool calls are
-    streamed as steps."""
-    claude = req.get("claude") or shutil.which("claude")
-    if not claude:
-        raise RuntimeError("Claude Code isn't installed (Settings > Desktop agents)")
-    if req.get("panel"):
-        system = f"{system}\n\n{mask(str(req['panel']))}"
-    specs, meta = agent_tools()
-    allowed = ",".join(f"mcp__desktop__{t['name']}" for t in specs if not needs_ok(req, t["name"], {}, meta))
-    workdir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "nixbook-shell", "quick-ai")
-    os.makedirs(workdir, mode=0o700, exist_ok=True)
-    mcp = json.dumps({"mcpServers": {"desktop": {"command": shutil.which("nixbook-desktop-mcp"), "args": [],
-                                                 "env": {"NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}}}})
-    cmd = [claude, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-           "--strict-mcp-config", "--mcp-config", mcp, "--setting-sources", "project", "--tools", "",
-           "--allowedTools", allowed, "--system-prompt", system, "--model", "haiku"]
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=workdir)
-    p.stdin.write(prompt)
-    p.stdin.close()
-    result, names = "", {}
-    for line in p.stdout:
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        for b in ((ev.get("message") or {}).get("content") or []) if isinstance(ev.get("message"), dict) else []:
-            if b.get("type") == "tool_use":
-                name = str(b.get("name", "")).removeprefix("mcp__desktop__")
-                names[b.get("id")] = (name, step_summary(name, b.get("input") or {}))
-                emit("step", id=b.get("id"), tool=name, summary=names[b.get("id")][1], status="run")
-            elif b.get("type") == "tool_result" and b.get("tool_use_id") in names:
-                name, shown = names[b["tool_use_id"]]
-                emit("step", id=b["tool_use_id"], tool=name, summary=shown, status="error" if b.get("is_error") else "ok")
-                content = b.get("content")
-                result = content if isinstance(content, str) else " ".join(
-                    str(x.get("text", "")) for x in content or [] if isinstance(x, dict))
-                note_step(b["tool_use_id"], name, shown, "error" if b.get("is_error") else "ok", result[:300],
-                          meta.get(name, {}).get("read_only", False))
-        if ev.get("type") == "result":
-            if ev.get("is_error"):
-                raise RuntimeError(str(ev.get("result") or "Claude Code failed")[:300])
-            result = str(ev.get("result") or "")
-    p.wait(timeout=30)
-    return "claude-haiku", result
 
 
 def replies_of(text):
@@ -933,7 +862,7 @@ def learn_command(raw):
     return 0
 
 
-def react(req, started, api, provider):
+def react(req, started, provider):
     ev = req.get("event") or {}
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
     d = read_learned()
@@ -954,19 +883,15 @@ def react(req, started, api, provider):
         parts.append("Notes from the desktop memory:\n" + told[-3000:])
     prompt = mask("\n\n".join(parts))
     system = REACT_SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
-    emit("start", provider=provider, model=model_for(req) if api else "haiku")
-    desktop_mcp("sent", "note", "Full AI: a reaction", prompt, (f"{provider.lower()}:" if api else "") +
-                (model_for(req) if api else "haiku"))
+    emit("start", provider=provider, model=model_for(req))
+    desktop_mcp("sent", "note", "Full AI: a reaction", prompt, f"{provider.lower()}:{model_for(req)}")
     try:
-        if api:
-            base, key = os.environ["ANTHROPIC_BASE_URL"].rstrip("/"), os.environ["ANTHROPIC_AUTH_TOKEN"]
-            messages = [{"role": "user", "content": prompt}]
-            text = chat_answer(req, base, key, model_for(req), system, messages, "low")
-            if text is None:
-                d2 = post(req, {"model": model_for(req), "max_tokens": 2000, "system": system, "messages": messages})
-                text = "".join(b.get("text", "") for b in d2.get("content") or [] if b.get("type") == "text")
-        else:
-            _, text = call_claude(req, system, prompt)
+        base, key = endpoint()
+        messages = [{"role": "user", "content": prompt}]
+        text = chat_answer(req, base, key, model_for(req), system, messages, "low")
+        if text is None:
+            d2 = post(req, {"model": model_for(req), "max_tokens": 2000, "system": system, "messages": messages})
+            text = "".join(b.get("text", "") for b in d2.get("content") or [] if b.get("type") == "text")
     except Exception as e:  # noqa: BLE001
         emit("error", error=str(e))
         emit("done", ms=int((time.monotonic() - started) * 1000))
@@ -999,34 +924,29 @@ def ask(path):
     except (OSError, ValueError) as e:
         emit("error", error=f"no request: {e}")
         return 2
-    api = bool(os.environ.get("ANTHROPIC_BASE_URL") and os.environ.get("ANTHROPIC_AUTH_TOKEN"))
-    provider = os.environ.get("NIXBOOK_PROVIDER_LABEL") or ("Meta" if "meta.ai" in os.environ.get("ANTHROPIC_BASE_URL", "") else
-                                                            "API" if api else "Claude")
+    base = os.environ.get("NIXBOOK_AI_BASE_URL", "")
+    provider = os.environ.get("NIXBOOK_AI_LABEL") or ("Meta" if "meta.ai" in base else "Custom")
     if req.get("mode") == "scan":
-        return scan(req, started, api, provider)
+        return scan(req, started, provider)
     if req.get("mode") == "react":
-        return react(req, started, api, provider)
+        return react(req, started, provider)
     try:
         mode, system, messages, prompt = build(req)
-        emit("start", provider=provider, model=model_for(req) if api else "haiku")
+        endpoint()
+        emit("start", provider=provider, model=model_for(req))
         purpose = f"Quick AI: {mode}" + (" (screen)" if req.get("image") else "")
-        desktop_mcp("sent", "note", purpose, prompt, (f"{provider.lower()}:" if api else "") + (model_for(req) if api else "haiku"))
+        desktop_mcp("sent", "note", purpose, prompt, f"{provider.lower()}:{model_for(req)}")
         if mode == "do":
             lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
             dsystem = AGENT_SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
-            if api:
-                _, text = agent(req, dsystem, messages)
-            else:
-                _, text = agent_claude(req, dsystem, prompt)
+            _, text = agent(req, dsystem, messages)
             text, report = build_report(unmask(text))
             if report:
                 emit("report", **report)
-        elif api:
+        else:
             # Replies come as JSON: only the suggestions are shown.
             stream = (lambda piece: None) if mode == "reply" else (lambda piece: emit("delta", text=unmask(piece)))
             _, text = call_api(req, system, messages, stream)
-        else:
-            _, text = call_claude(req, system, prompt)
     except Exception as e:  # noqa: BLE001 — every failure is the card's to show
         emit("error", error=str(e) or e.__class__.__name__)
         emit("done", ms=int((time.monotonic() - started) * 1000))
@@ -1129,9 +1049,7 @@ def quick_call(args, timeout):
     exe = shutil.which("nixbook-desktop-mcp")
     if not exe:
         return ""
-    env = {**os.environ, "NIXBOOK_DESKTOP_MCP_CLIENT": "Kiroshi scan"}
-    for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
-        env.pop(k, None)
+    env = child_env({"NIXBOOK_DESKTOP_MCP_CLIENT": "Kiroshi scan"})
     try:
         p = subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout, env=env)
     except (OSError, subprocess.TimeoutExpired):
@@ -1236,8 +1154,7 @@ def complete(req, system, image_block, image_url, parts, max_tokens):
     "minimal", which the Messages API can't ask for: half the thinking),
     else the Messages API. Returns (text, usage)."""
     global CHAT_OK
-    base = os.environ["ANTHROPIC_BASE_URL"].rstrip("/")
-    key = os.environ["ANTHROPIC_AUTH_TOKEN"]
+    base, key = endpoint()
     model = model_for(req)
     if CHAT_OK is not False and str(req.get("scanEffort") or "minimal") == "minimal":
         content = ([{"type": "image_url", "image_url": {"url": image_url}}] if image_url else []) + \
@@ -1266,7 +1183,7 @@ def complete(req, system, image_block, image_url, parts, max_tokens):
 CHAT_OK = None
 
 
-def scan(req, started, api, provider):
+def scan(req, started, provider):
     """Three kinds of passes, the first two at once: the brief's two lines
     (emitted as "brief" in ~3 s), what is on the screen
     (the image: "scan", with boxes, urgency and a gist), then every item's
@@ -1284,27 +1201,28 @@ def scan(req, started, api, provider):
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
     shared = mask(SCAN_INTRO.format(w=w, h=h) + "\n\n" + scan_context(req))
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
-    model = model_for(req) if api else "haiku"
+    model = model_for(req)
     fast = SCAN_FAST.format(kinds="|".join(sorted(SCAN_KINDS)), lang=lang)
+    try:
+        endpoint()
+    except RuntimeError as e:
+        emit("error", error=str(e))
+        emit("done", ms=ms())
+        return 1
     emit("start", provider=provider, model=model, contextMs=ms())
-    desktop_mcp("sent", "note", "Kiroshi scan (screen)", shared + "\n\n" + fast,
-                (f"{provider.lower()}:" if api else "") + model)
-    image_block = image_url = None
-    if api:
-        with open(image, "rb") as f:
-            raw = f.read(IMAGE_MAX + 1)
-        if len(raw) > IMAGE_MAX:
-            emit("error", error="the screenshot is too big")
-            emit("done", ms=ms())
-            return 1
-        media = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
-        data = base64.b64encode(raw).decode()
-        image_block = {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
-        image_url = f"data:{media};base64,{data}"
+    desktop_mcp("sent", "note", "Kiroshi scan (screen)", shared + "\n\n" + fast, f"{provider.lower()}:{model}")
+    with open(image, "rb") as f:
+        raw = f.read(IMAGE_MAX + 1)
+    if len(raw) > IMAGE_MAX:
+        emit("error", error="the screenshot is too big")
+        emit("done", ms=ms())
+        return 1
+    media = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
+    data = base64.b64encode(raw).decode()
+    image_block = {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
+    image_url = f"data:{media};base64,{data}"
 
     def ask_model(task, with_image=True, max_tokens=6000):
-        if not api:
-            return call_claude(req if with_image else {**req, "image": ""}, system, shared + "\n\n" + task)[1]
         text, usage = complete(req, system, image_block if with_image else None, image_url if with_image else None,
                                [shared, task], max_tokens)
         emit("usage", usage=usage, ms=ms())
@@ -1355,8 +1273,19 @@ def scan(req, started, api, provider):
     return 0
 
 
+def through_provider(argv):
+    """Run without the provider's key: through nixbook-model-provider, which
+    sets it (once: it marks the environment)."""
+    if os.environ.get("NIXBOOK_AI_KEY") or os.environ.get("NIXBOOK_AI_PROVIDED"):
+        return
+    provider = shutil.which("nixbook-model-provider")
+    if provider:
+        os.execv(provider, [provider, "run", sys.executable, "-I", os.path.abspath(__file__), *argv[1:]])
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "ask":
+        through_provider(argv)
         return ask(argv[2])
     if len(argv) == 3 and argv[1] == "learn":
         return learn_command(argv[2])

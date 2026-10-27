@@ -42,7 +42,7 @@ features:
     link: /nixbook-shell/
   - icon: 🤖
     title: AI agents on the desktop
-    details: A guarded MCP server lets Claude Code and other agents see and drive the desktop — or work on a sandboxed desktop of their own — with a pause button and an audit log.
+    details: A guarded MCP server lets the shell's own Muse agent and any other MCP agent see and drive the desktop — or work on a sandboxed desktop of their own — with a pause button and an audit log.
     link: /nixbook-shell/desktop-agents
   - icon: 🔐
     title: Secure by default

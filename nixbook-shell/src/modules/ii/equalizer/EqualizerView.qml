@@ -994,9 +994,9 @@ Item {
             }
 
             // Agent mode (EqualizerAutoService): a desktop agent tunes the
-            // curve for each new song. Needs Claude Code.
+            // curve for each new song. Needs nixbook-meta-agent.
             PillChip {
-                visible: Ai.claudeCodePath !== ""
+                visible: Ai.agentAvailable
                 implicitHeight: 34
                 Layout.preferredWidth: agentLabel.implicitWidth + 40
                 chipToggled: EqualizerAutoService.agentEnabled
@@ -1021,7 +1021,7 @@ Item {
                     }
                 }
                 StyledToolTip {
-                    text: Translation.tr("Each new song, a desktop agent (Claude) tunes the equalizer for it")
+                    text: Translation.tr("Each new song, a desktop agent (Muse) tunes the equalizer for it")
                 }
             }
 

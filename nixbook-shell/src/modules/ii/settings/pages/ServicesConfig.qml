@@ -92,15 +92,15 @@ ContentPage {
                 }
             }
             ConfigSpinBox {
-                configKey: "ai.claudeThreadIdleMinutes"
+                configKey: "ai.threadIdleMinutes"
                 enabled: !nixManaged
                 icon: "timer_off"
-                text: Translation.tr("Close the \"From Claude\" tab after (minutes idle, 0: never)")
-                value: Config.options.ai.claudeThreadIdleMinutes
+                text: Translation.tr("Close the \"From Muse\" tab after (minutes idle, 0: never)")
+                value: Config.options.ai.threadIdleMinutes
                 from: 0
                 to: 1440
                 stepSize: 5
-                onValueChanged: Config.options.ai.claudeThreadIdleMinutes = value
+                onValueChanged: Config.options.ai.threadIdleMinutes = value
                 StyledToolTip {
                     text: Translation.tr("Its thread stays in the conversation history when it has more than 5 messages.")
                 }

@@ -957,10 +957,10 @@ in
                   "fullAi"
                   "toggle"
                 ];
-                # Claude's speech bubble, to ask anything (it answers there).
+                # Muse's speech bubble, to ask anything (it answers there).
                 # Takes Mod+C: centering the column moves to Mod+Shift+C.
                 "Mod+C" = [
-                  "claude"
+                  "muse"
                   "toggle"
                 ];
               }
@@ -986,7 +986,7 @@ in
                 fi
               ''
             ];
-            # Mod+C is Claude's bubble here: centering the column moves.
+            # Mod+C is Muse's bubble here: centering the column moves.
             "Mod+Shift+C".action.center-column = { };
             # AI agents work on a desktop of their own (a nested niri, opened
             # as a window) or on yours: nixbook-desktop-mcp desktop toggle.

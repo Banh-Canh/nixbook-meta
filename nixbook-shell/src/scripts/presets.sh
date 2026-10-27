@@ -22,7 +22,7 @@ mkdir -p "$LOCAL_PRESETS_DIR" "$ONLINE_PRESETS_DIR" "$IMPORTED_PRESETS_DIR"
 # Note: profile/wallpaperSelector are NOT blacklisted here (would make preset look empty) - only General+Services per Settings tabs
 # .apps is: its values are commands the shell runs (terminal, network, volume
 # mixer… through AppLaunch.spawnShell), so an online or imported preset could
-# otherwise plant one. (.ai's claudeCode.command and .search's shellCommand
+# otherwise plant one. (.ai's agent settings and .search's shellCommand
 # prefix go with their sections.)
 BLACKLIST_FILTER='del(._presetMeta)
   | del(.time, .battery, .audio, .sounds, .language, .workSafety)
