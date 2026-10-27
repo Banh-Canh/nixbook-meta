@@ -213,6 +213,24 @@ ContentPage {
                 text: Translation.tr("Meta's MMS voices, on this computer, in English or French (from the answer's language). Mod+T or Escape stops it. The microphone doesn't hear it.")
             }
             ConfigSelectionArray {
+                configKey: "ai.quick.bubble"
+                text: Translation.tr("Show the bubble")
+                icon: "chat_bubble"
+                currentValue: Config.options.ai.quick.bubble ?? "always"
+                onSelected: newValue => { Config.options.ai.quick.bubble = newValue }
+                options: [
+                    { displayName: Translation.tr("Always"), icon: "chat_bubble", value: "always" },
+                    { displayName: Translation.tr("Only when needed"), icon: "speaker_notes_off", value: "needed" }
+                ]
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Only when needed: when you talk to it (Mod+T, Full AI mode), the answers are said out loud and the bubble stays away; it comes for replies to pick, an error, or Mod+C.")
+            }
+            ConfigSelectionArray {
                 configKey: "ai.quick.confirm"
                 text: Translation.tr("Ask me before")
                 icon: "shield_question"

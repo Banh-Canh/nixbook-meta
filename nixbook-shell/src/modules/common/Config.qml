@@ -231,6 +231,11 @@ Singleton {
                     // steps (a window closed, an event deleted), every "actions"
                     // step, or "never".
                     property string confirm: "destructive"
+                    // The speech bubble when talking to it (Mod+T, Full AI mode):
+                    // "always" shown, or "needed": out of sight, the answers said
+                    // out loud (and in Full AI's mascot), shown for replies to
+                    // pick, an error, an OK that can't be said, or Mod+C.
+                    property string bubble: "always"
                 }
                 // Talking to the desktop (services/Voice.qml): push to talk
                 // (Mod+T), transcribed by Meta or on this computer, then sent

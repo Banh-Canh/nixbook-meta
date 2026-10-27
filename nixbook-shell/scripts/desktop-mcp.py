@@ -5172,9 +5172,9 @@ def routine_ask(r, why=""):
                 accept=r["id"])
 
 
-def mcp_call(server, tool_name, args, timeout=60):
-    """One tool call to a stdio MCP server, as a client: start it, initialize,
-    call, stop. The result's text."""
+def mcp_session(server, request, timeout=60):
+    """One request to a stdio MCP server, as a client: start it, initialize,
+    send it, stop. ({id: reply}: 1 initialize, 2 the request.)"""
     env = dict(os.environ, **{k: str(v) for k, v in (server.get("env") or {}).items()})
     try:
         proc = subprocess.Popen([server["command"], *[str(a) for a in server.get("args") or []]],
@@ -5184,9 +5184,9 @@ def mcp_call(server, tool_name, args, timeout=60):
         raise ToolError(f"the MCP server didn't start: {e}")
     msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
              "params": {"protocolVersion": PROTOCOL_VERSIONS[0], "capabilities": {},
-                        "clientInfo": {"name": "nixbook-routine", "version": VERSION}}},
+                        "clientInfo": {"name": "nixbook-desktop", "version": VERSION}}},
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool_name, "arguments": args}}]
+            {"jsonrpc": "2.0", "id": 2, **request}]
     result = {}
 
     def talk():
@@ -5214,7 +5214,13 @@ def mcp_call(server, tool_name, args, timeout=60):
         proc.wait(5)
     except subprocess.TimeoutExpired:
         pass
-    reply = result.get(2)
+    return result
+
+
+def mcp_call(server, tool_name, args, timeout=60):
+    """One tool call to a stdio MCP server. The result's text."""
+    reply = mcp_session(server, {"method": "tools/call", "params": {"name": tool_name, "arguments": args}},
+                        timeout).get(2)
     if not reply:
         raise ToolError("the MCP server gave no answer")
     if reply.get("error"):
@@ -5224,6 +5230,73 @@ def mcp_call(server, tool_name, args, timeout=60):
     if res.get("isError"):
         raise ToolError(short(said or "the tool failed", 200))
     return said
+
+
+# ── The user's apps' own tools (the side panel's MCP servers: YouTube
+# Music, Spotify, the phone, photos…) for agents calling tools without MCP
+# (nixbook-quick-ai's direct agent): `app-tools` lists them (cached per
+# server, listed again when its command changes), `app-call` runs one,
+# under the same AI policy and audit log as the desktop tools.
+def app_tools_cache():
+    return os.path.join(xdg("XDG_CACHE_HOME", "~/.cache"), "nixbook-shell", "app-tools.json")
+
+
+def app_tools(refresh=False):
+    """{server: {"tools": [MCP tool specs], "instructions": text}}."""
+    servers = assistant_servers()
+    try:
+        with open(app_tools_cache(), encoding="utf-8") as f:
+            cache = json.load(f)
+        if not isinstance(cache, dict):
+            cache = {}
+    except (OSError, ValueError):
+        cache = {}
+    keys = {name: hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+            for name, spec in servers.items()}
+    stale = [n for n in servers if refresh or (cache.get(n) or {}).get("key") != keys[n]]
+    found = {}
+
+    def list_one(name):
+        try:
+            replies = mcp_session(servers[name], {"method": "tools/list", "params": {}}, timeout=15)
+        except ToolError:
+            return
+        tools = ((replies.get(2) or {}).get("result") or {}).get("tools")
+        if isinstance(tools, list):
+            found[name] = {"key": keys[name], "tools": tools,
+                           "instructions": str(((replies.get(1) or {}).get("result") or {}).get("instructions") or "")[:1500]}
+
+    workers = [threading.Thread(target=list_one, args=(n,), daemon=True) for n in stale]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join(20)
+    if found:
+        cache.update(found)
+        path = app_tools_cache()
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        tmp = f"{path}.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+        os.replace(tmp, path)
+    return {n: {"tools": cache[n]["tools"], "instructions": cache[n].get("instructions", "")}
+            for n in servers if (cache.get(n) or {}).get("key") == keys[n]}
+
+
+def app_call(client, server, tool_name, args):
+    """One of the apps' tools: its text (ToolError when refused or failed)."""
+    if ai_policy() == 0:
+        raise ToolError("AI features are off (policies.ai)")
+    servers = assistant_servers()
+    if server not in servers:
+        raise ToolError(f"no app server {server} (or it is turned off)")
+    try:
+        out = mcp_call(servers[server], tool_name, args)
+    except ToolError as e:
+        audit(client, f"{server}:{tool_name}", args, f"error: {e}")
+        raise
+    audit(client, f"{server}:{tool_name}", args, "ok")
+    return out
 
 
 def routine_agent(cfg, r, event):
@@ -14559,6 +14632,9 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
                           the privacy hooks over HTTP on 127.0.0.1
   tools                   the enabled tools, as MCP JSON
   call NAME [JSON]        run one tool; prints its text, exit 1 on refusal
+  app-tools [--refresh]   the user's apps' MCP tools (the side panel's servers:
+                          YouTube Music, Spotify…), as {server: {tools, instructions}}
+  app-call SERVER TOOL [JSON]  run one of them; prints its text, exit 1 on failure
   pause | resume | toggle stop / allow desktop control, for every client
                           (paused until first resumed; kept across reboots)
   status                  paused or not, config and audit log paths
@@ -14733,6 +14809,27 @@ def main(argv):
         return desktop_command(argv[1:])
     if cmd == "layout":
         return layout_command(cfg, argv[1:])
+    if cmd == "app-tools":
+        # The apps' MCP tools, for agents calling tools without MCP.
+        print(json.dumps({} if ai_policy() == 0 else app_tools("--refresh" in argv), ensure_ascii=False))
+        return 0
+    if cmd == "app-call":
+        if len(argv) < 3:
+            print(USAGE, end="", file=sys.stderr)
+            return 2
+        try:
+            args = json.loads(argv[3]) if len(argv) > 3 else {}
+            if not isinstance(args, dict):
+                raise ValueError
+        except ValueError:
+            print("the arguments must be a JSON object", file=sys.stderr)
+            return 2
+        try:
+            print(app_call(os.environ.get("NIXBOOK_DESKTOP_MCP_CLIENT", "command line"), argv[1], argv[2], args))
+        except ToolError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        return 0
     if cmd == "instructions":
         # What an MCP client gets at initialize (usage, the desktop memory
         # for NIXBOOK_DESKTOP_MCP_QUERY): for clients calling the tools

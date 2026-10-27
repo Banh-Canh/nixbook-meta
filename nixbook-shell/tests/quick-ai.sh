@@ -56,6 +56,8 @@ privacy)
   if [ "\$2" = mask ]; then sed 's/Julien/⟦Person 1⟧/g'; else sed 's/⟦Person 1⟧/Julien/g'; fi ;;
 sent) echo "\$3|\$5" >>"$tmp/sent.log" ;;
 instructions) echo "Tools to see and drive the desktop. Notes: QUERY=\$NIXBOOK_DESKTOP_MCP_QUERY" ;;
+app-tools) cat "$tmp/app-tools.json" 2>/dev/null || echo '{}' ;;
+app-call) echo "app \$2 \$3 \$4" >>"$tmp/calls.log"; echo '{"title": "FIRESTARTER", "isPaused": false}' ;;
 esac
 EOF
 chmod +x "$tmp/bin/nixbook-desktop-mcp"
@@ -153,6 +155,35 @@ sys=$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | grep -F "
 expect_contains_ "context: the machine" "$sys" "Host testhost"
 expect_contains_ "context: not the package lists" "$(echo "$sys" | grep -c 'huge list' | sed 's/^0$/none/')" "none"
 expect_contains_ "context: what the user just did" "$sys" "opened kitty"
+
+# The user's apps' tools (app-tools / app-call): a small server's up front,
+# a big one's on demand (open_app_tools) or when it is named.
+python3 - "$tmp/app-tools.json" <<'PY'
+import json, sys
+tool = lambda n: {"name": n, "description": f"{n} it", "inputSchema": {"$schema": "x", "type": "object", "properties": {"query": {"type": "string"}}}}
+json.dump({"youtube-music": {"instructions": "Plays songs in YouTube Music.", "tools": [tool("play"), tool("now_playing")]},
+           "immich": {"instructions": "Photos.", "tools": [tool(f"search_{i}") for i in range(13)]}}, open(sys.argv[1], "w"))
+PY
+: >"$tmp/calls.log"
+: >"$tmp/requests.log"
+ask music '{"mode": "do", "question": "MUSIC play FIRESTARTER", "lang": "en"}'
+expect_eq "apps: called through app-call" 'app youtube-music play {"query": "FIRESTARTER"}' "$(head -n1 "$tmp/calls.log")"
+tools=$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | head -n1)
+expect_contains_ "apps: a small app's tools up front" "$tools" '"youtube-music__play"'
+expect_contains_ "apps: a big app's on demand only" "$(echo "$tools" | grep -c immich__ | sed 's/^0$/none/')" none
+expect_contains_ "apps: offered to open" "$tools" '"open_app_tools"'
+expect_eq "apps: no schema dialect key sent" "null" "$(jq -c 'select(.body.tools) | .body.tools[] | select(.name == "youtube-music__play") | .input_schema["$schema"]' "$tmp/requests.log" | head -n1)"
+expect_contains_ "apps: their instructions" "$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | head -n1)" "Plays songs in YouTube Music."
+expect_eq "apps: a step like any other" '"ok"' "$(event music step .status | tail -n1)"
+expect_eq "apps: shown as app: tool" '"youtube-music: play"' "$(event music step .tool | tail -n1)"
+expect_eq "apps: playing is an action (reported)" '["youtube-music: play (query=FIRESTARTER)"]' "$(event music report .done)"
+: >"$tmp/requests.log"
+ask photos '{"mode": "do", "question": "PHOTOS find my holiday pictures", "lang": "en"}'
+expect_contains_ "apps: opened on demand, for the next steps" "$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | tail -n1)" '"immich__search_12"'
+: >"$tmp/requests.log"
+ask named '{"mode": "do", "question": "open firefox and search immich", "lang": "en"}'
+expect_contains_ "apps: a big app up front when named" "$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | head -n1)" '"immich__search_0"'
+rm -f "$tmp/app-tools.json"
 
 # A tool that also writes, asked only to read (its action): no OK needed,
 # even when every action is asked about; and no report for it.

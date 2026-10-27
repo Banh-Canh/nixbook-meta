@@ -330,13 +330,69 @@ AGENT_SYSTEM = (
     "comes with the request (time, weather, battery, next events, music): answer from it directly, no tool. Never "
     "open panels, take screenshots or poke around to find information: use the tool made for it, or say you can't "
     "tell. Media and volume: shell_ipc (target mpris: playPause, next, previous; target audio or brightness when "
-    "listed by shell_ipc_list). Keep learning: when the user states a lasting preference or a standing order "
+    "listed by shell_ipc_list). The user's apps' own tools are yours too, named app__tool (youtube-music__play, "
+    "spotify__search, phone__send_sms…): use them before clicking in the app. Music: play/pause only resumes what "
+    "is loaded, and does nothing when the song has ended or nothing is loaded; to start music (a song, an artist, "
+    "\"some music\", or when play/pause didn't take) use the music app's play tool (ask it what is playing first "
+    "if unsure). Bigger apps' tools come with open_app_tools. Keep learning: when the user states a lasting preference or a standing order "
     "(\"always…\", \"never…\", \"when X happens, do Y\"), save it at once (a routine for \"when X, do Y\", "
     "remember_about_user for what they like and who matters to them) and say you will. You only have the tools listed to you (the server's instructions below may name "
     "others): you can't see images, so read the screen with read_screen. Answer in the language the user writes "
     "or speaks in ({lang} when it isn't clear)."
 )
 AGENT_STEPS = 10
+
+
+# The user's apps' tools (the side panel's MCP servers, through
+# `nixbook-desktop-mcp app-tools` / `app-call`): those of a small server
+# (APP_SMALL tools or fewer: music, the phone) are given up front, a bigger
+# one's (photos: ~90) when the request names it or the model asks for them
+# (open_app_tools), so every request doesn't carry them all.
+APP_SMALL = 12
+APP_SEP = "__"
+# Few servers annotate their tools: these names only read.
+APP_READS = re.compile(r"(get|list|search|find|show|read|now_playing|my_|status|devices|ping|info)", re.I)
+
+
+def app_tool_name(server, tool):
+    return re.sub(r"[^A-Za-z0-9_-]", "_", f"{server}{APP_SEP}{tool}")[:64]
+
+
+def app_specs(servers, only=None):
+    specs, meta = [], {}
+    for server, info in servers.items():
+        if only is not None and server not in only:
+            continue
+        for t in info.get("tools") or []:
+            name = app_tool_name(server, str(t.get("name") or ""))
+            schema = {k: v for k, v in (t.get("inputSchema") or {"type": "object", "properties": {}}).items()
+                      if k != "$schema"}
+            schema.setdefault("type", "object")
+            specs.append({"name": name, "description": f"[{server}] " + str(t.get("description") or "")[:2000],
+                          "input_schema": schema})
+            ann = t.get("annotations") or {}
+            reads = bool(ann.get("readOnlyHint")) or bool(APP_READS.match(str(t.get("name") or "")))
+            meta[name] = {"group": "app", "server": server, "tool": t.get("name"), "shown": f"{server}: {t.get('name')}",
+                          "read_only": reads, "destructive": bool(ann.get("destructiveHint"))}
+    return specs, meta
+
+
+def app_servers():
+    out = desktop_mcp("app-tools")
+    try:
+        servers = json.loads(out or "{}")
+        return servers if isinstance(servers, dict) else {}
+    except ValueError:
+        return {}
+
+
+def open_app_tools_spec(big):
+    lines = [f"{n}: {', '.join(str(t.get('name')) for t in (i.get('tools') or [])[:12])}…" for n, i in big.items()]
+    return {"name": "open_app_tools",
+            "description": "Get the tools of one of the user's bigger apps, to use them in your next steps: "
+                           + "; ".join(lines),
+            "input_schema": {"type": "object", "properties": {"server": {"type": "string", "enum": sorted(big)}},
+                             "required": ["server"]}}
 
 
 def agent_tools():
@@ -386,16 +442,17 @@ def needs_ok(req, name, args, meta):
     return name in ("calendar", "tasks", "contacts") and str(args.get("action", "")).lower() in ("delete", "remove")
 
 
-def run_tool(name, args):
-    """A desktop tool: (its text, failed, the tool_result content: text and
-    images, so the model sees a screenshot)."""
+def run_tool(name, args, info=None):
+    """A desktop tool, or an app's (info: its server): (its text, failed, the
+    tool_result content: text and images, so the model sees a screenshot)."""
     exe = shutil.which("nixbook-desktop-mcp")
     env = {**os.environ, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}
     for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         env.pop(k, None)
+    cmd = [exe, "app-call", info["server"], str(info["tool"]), json.dumps(args)] if (info or {}).get("server") else \
+        [exe, "call", name, json.dumps(args), "--json"]
     try:
-        p = subprocess.run([exe, "call", name, json.dumps(args), "--json"], capture_output=True, text=True,
-                           timeout=120, env=env)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"error: {e}", True, f"error: {e}"
     failed = p.returncode != 0
@@ -549,6 +606,19 @@ def agent(req, system, messages):
     told = tool_instructions(req)
     if told:
         system = f"{system}\n\nThe desktop tools' own instructions (from their server):\n{mask(told)}"
+    # The apps' tools: the small servers', and a big one's when it is named.
+    apps = app_servers()
+    asked = str(req.get("followUp") or req.get("question") or "").lower()
+    up_front = {n for n, i in apps.items() if len(i.get("tools") or []) <= APP_SMALL
+                or n.lower().replace("-", " ") in asked.replace("-", " ")}
+    more, more_meta = app_specs(apps, up_front)
+    specs, meta = specs + more, {**meta, **more_meta}
+    big = {n: i for n, i in apps.items() if n not in up_front}
+    if big:
+        specs = specs + [open_app_tools_spec(big)]
+    hints = [f"{n}: {i['instructions'][:400]}" for n, i in apps.items() if n in up_front and i.get("instructions")]
+    if hints:
+        system = f"{system}\n\nThe apps' own instructions:\n" + "\n".join(hints)
     machine = machine_context()
     if machine:
         system = f"{system}\n\n{mask(machine)}"
@@ -582,20 +652,34 @@ def agent(req, system, messages):
         for c in calls:
             name, args = c.get("name", ""), c.get("input") or {}
             shown = unmask(step_summary(name, args))
+            label = meta.get(name, {}).get("shown") or name
             if needs_ok(req, name, args, meta):
-                emit("approve", id=c["id"], tool=name, summary=shown, args=json.loads(unmask(json.dumps(args, ensure_ascii=False))))
+                emit("approve", id=c["id"], tool=label, summary=shown, args=json.loads(unmask(json.dumps(args, ensure_ascii=False))))
                 answer = sys.stdin.readline().strip().lower()
                 if answer not in ("y", "yes", "ok"):
-                    note_step(c["id"], name, shown, "denied", read_only=reads_only(name, args, meta))
-                    emit("step", id=c["id"], tool=name, summary=shown, status="denied")
+                    note_step(c["id"], label, shown, "denied", read_only=reads_only(name, args, meta))
+                    emit("step", id=c["id"], tool=label, summary=shown, status="denied")
                     results.append({"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
                                     "content": "the user said no: don't do it, don't retry it another way"})
                     continue
-            emit("step", id=c["id"], tool=name, summary=shown, status="run")
-            out, failed, result = run_tool(name, args)
-            emit("step", id=c["id"], tool=name, summary=shown, status="error" if failed else "ok",
+            if name == "open_app_tools":
+                server = str(args.get("server") or "")
+                if server in big:
+                    extra, extra_meta = app_specs({server: big.pop(server)})
+                    specs = [t for t in specs if t["name"] != "open_app_tools"] + extra + (
+                        [open_app_tools_spec(big)] if big else [])
+                    meta.update(extra_meta)
+                    out = f"{server}'s tools are yours now: " + ", ".join(t["name"] for t in extra)
+                else:
+                    out = f"no such app: {server}"
+                note_step(c["id"], name, server, "ok", out[:300], True)
+                results.append({"type": "tool_result", "tool_use_id": c["id"], "content": out})
+                continue
+            emit("step", id=c["id"], tool=label, summary=shown, status="run")
+            out, failed, result = run_tool(name, args, meta.get(name))
+            emit("step", id=c["id"], tool=label, summary=shown, status="error" if failed else "ok",
                  result=unmask(out[:300]))
-            note_step(c["id"], name, shown, "error" if failed else "ok", unmask(out[:300]),
+            note_step(c["id"], label, shown, "error" if failed else "ok", unmask(out[:300]),
                       reads_only(name, args, meta))
             if failed and "desktop control is paused" in out:
                 emit("paused")

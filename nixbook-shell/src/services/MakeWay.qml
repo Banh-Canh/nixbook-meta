@@ -66,7 +66,7 @@ Singleton {
     readonly property var overlays: {
         const out = []
         if (GlobalStates.sidebarLeftOpen) out.push("sidePanel")
-        if (Initiative.speaking !== null) out.push("speechBubble")
+        if (Initiative.speaking !== null && !Initiative.quiet) out.push("speechBubble")
         if (Notifications.popupList.length > 0) out.push("notificationPopups")
         if (Object.values(root.cutIns).some(v => v)) out.push("cutIn")
         if (Kiroshi.open) out.push("kiroshi")

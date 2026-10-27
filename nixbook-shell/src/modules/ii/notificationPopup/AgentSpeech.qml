@@ -136,7 +136,7 @@ Scope {
 
     PanelWindow {
         id: window
-        visible: (root.item !== null || Initiative.stacked.length > 0) && !GlobalStates.screenLocked
+        visible: ((root.item !== null && !Initiative.quiet) || Initiative.stacked.length > 0) && !GlobalStates.screenLocked
         screen: Quickshell.screens.find(s => s.name === WM.focusedMonitor?.name) ?? null
 
         WlrLayershell.namespace: "quickshell:agentSpeech"
@@ -146,8 +146,7 @@ Scope {
         // and clicks go to the apps then, the field only once clicked into);
         // else only once clicked into, never taken from the app.
         property bool grab: false
-        // (Full AI mode: never, the user talks; Escape is the mode's.)
-        WlrLayershell.keyboardFocus: MakeWay.active || FullAi.active ? WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: MakeWay.active ? WlrKeyboardFocus.None
             : window.grab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
         // Only the card takes clicks; none while an agent works underneath.
         mask: MakeWay.active ? noInput : cardRegion
@@ -207,7 +206,7 @@ Scope {
             // Slides in from the left, a little bounce (a snap in Persona).
             Item {
                 id: card
-                visible: root.item !== null
+                visible: root.item !== null && !Initiative.quiet
                 x: 12
                 y: 14
                 width: 376
@@ -837,6 +836,9 @@ Scope {
                                         } else if (event.key === Qt.Key_Escape && Voice.speaking && !Voice.listening) {
                                             event.accepted = true
                                             Voice.stopSpeaking()
+                                        } else if (event.key === Qt.Key_Escape && FullAi.active) {
+                                            event.accepted = true
+                                            FullAi.exit()
                                         } else if (event.key === Qt.Key_Escape && (Voice.listening || Voice.transcribing)) {
                                             event.accepted = true
                                             Voice.cancel()
