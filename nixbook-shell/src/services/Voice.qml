@@ -24,6 +24,8 @@ import QtQuick
  * what was said is sent there (Initiative.reply: a plain command done at
  * once by QuickIntent, else Quick AI answers or acts with the desktop
  * tools, or Claude in its own thread). Escape in the bubble cancels.
+ * The answers are read out (ai.voice.speak) in a cute voice: Meta's MMS-TTS
+ * on this computer (`nixbook-voice-speak`, English or French).
  */
 Singleton {
     id: root
@@ -81,6 +83,9 @@ Singleton {
         id: relisten
         interval: 700
         onTriggered: {
+            // Not while it talks (the speaker reopens it), but Full AI mode's
+            // stream, which opens held.
+            if (root.speaking && !(FullAi.active && root.engine === "meta")) return;
             // Full AI mode: always listening (orders keep coming while the
             // agent works), unless muted.
             if (FullAi.active) {
@@ -95,29 +100,121 @@ Singleton {
     Connections {
         target: Initiative
         function onThinkingChanged() {
-            // The answer is there: the user's turn again (a conversation).
-            if (!Initiative.thinking && root.session) relisten.restart();
+            if (Initiative.thinking) return;
+            // The answer is there: read out (Full AI mode reads its own,
+            // FullAi.qml), then the user's turn again (a conversation).
+            if (!FullAi.active && root.wantsSpeech()) root.speak(root.lastAnswer());
+            else if (root.session) relisten.restart();
         }
         function onSpeakingChanged() {
-            if (!Initiative.speaking && !FullAi.active) root.endSession();
+            if (!Initiative.speaking && !FullAi.active) {
+                root.endSession();
+                root.stopSpeaking();
+            }
         }
     }
     Connections {
         target: QuickAi
         function onPendingChanged() {
-            // A step waiting for an OK: answered by voice (yes / no).
-            if (QuickAi.pending && root.session) relisten.restart();
+            // A step waiting for an OK: asked out loud, answered by voice
+            // (yes / no).
+            if (!QuickAi.pending || !(root.session || root.voiceTurn || FullAi.active)) return;
+            const what = QuickAi.pending.tool.replace(/_/g, " ") + (QuickAi.pending.summary ? `, ${QuickAi.pending.summary}` : "");
+            if (!root.speak(Translation.tr("May I %1?").arg(what))) relisten.restart();
+        }
+    }
+
+    // ── The answers read out (ai.voice.speak: "voice", the answers to what
+    // was said; "always"; "never"). Meta's model API has no speech synthesis:
+    // Meta's MMS-TTS on this computer (`nixbook-voice-speak`, English or
+    // French from the answer's language), made cute (ai.voice.style). The
+    // microphone doesn't take it for the user: closed meanwhile, or, Full AI
+    // mode's always-open stream, held (silence sent). Mod+T or Escape cuts it
+    // short.
+    property bool speaking: false
+    // The last message was said, not typed: its answer is read out.
+    property bool voiceTurn: false
+    readonly property string speakMode: Config.options.ai.voice?.speak ?? "voice"
+    readonly property string voiceStyle: Config.options.ai.voice?.style ?? "cute"
+    function wantsSpeech() {
+        const yes = root.speakMode === "always" || (root.speakMode === "voice" && root.voiceTurn);
+        root.voiceTurn = false;
+        return yes && root.lastAnswer().length > 0;
+    }
+    // What to say of the last answer: a report's outcome (and what needs the
+    // user), else the answer itself (the speaker keeps it short).
+    function lastAnswer() {
+        const chat = Initiative.chat;
+        if (!chat) return "";
+        const ids = chat.messageIDs;
+        for (let i = ids.length - 1; i >= 0; i--) {
+            const m = chat.messageByID[ids[i]];
+            if (!m || m.role === "user") return "";
+            if (m.role !== "assistant") continue;
+            if (QuickAi.report && QuickAi.reportMsg === m) {
+                const r = QuickAi.report;
+                return [r.summary, ...(r.failed ?? []).slice(0, 2), ...(r.needsYou ?? [])].join(". ");
+            }
+            return m.content ?? "";
+        }
+        return "";
+    }
+    // Says it (cutting off what it was saying); false when nothing is said
+    // (ai.voice.speak "never", no text).
+    function speak(text) {
+        if (root.speakMode === "never" || !String(text ?? "").trim()) return false;
+        root.stopSpeaking();
+        speaker.text = String(text);
+        speaker.wanted = true;
+        root.speaking = true;
+        // The microphone never hears it: the continuous stream held, a
+        // turn's recording closed (opened again once it has spoken).
+        if (stream.running && stream.continuous) stream.write("hold\n");
+        else if (root.listening) {
+            speaker.reopen = true;
+            root.pauseListening();
+        }
+        speaker.running = true;
+        return true;
+    }
+    function stopSpeaking() {
+        if (speaker.running) {
+            speaker.wanted = false;
+            speaker.signal(15);
+        }
+        if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
+        root.speaking = false;
+    }
+    Process {
+        id: speaker
+        property string text: ""
+        property bool wanted: true
+        // The microphone was closed for it: opened again after.
+        property bool reopen: false
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" -- "$2"', "_",
+            root.voiceStyle, speaker.text]
+        onExited: {
+            if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
+            root.speaking = false;
+            const again = speaker.reopen;
+            speaker.reopen = false;
+            // Said: the user's turn (a conversation, Full AI mode).
+            if (speaker.wanted && (root.session || again || FullAi.active)) relisten.restart();
         }
     }
 
     function toggle() {
         // Full AI mode: Mod+T mutes or unmutes the always-open microphone.
         if (FullAi.active) {
-            FullAi.toggleMic();
+            // Talking: Mod+T only cuts it short.
+            if (root.speaking) root.stopSpeaking();
+            else FullAi.toggleMic();
             return;
         }
         if (root.listening) root.stop();
         else {
+            // Talking over it: it stops.
+            root.stopSpeaking();
             root.session = root.conversation;
             root.start();
         }
@@ -145,6 +242,8 @@ Singleton {
             // Full AI mode: one stream for the whole session (each sentence
             // sent when the user pauses, nothing to reopen between orders).
             stream.continuous = FullAi.active;
+            // It is talking: the stream opens held (resumed when it is done).
+            stream.held = stream.continuous && root.speaking;
             stream.wanted = true;
             stream.frames = 0;
             stream.floor = -50;
@@ -195,6 +294,8 @@ Singleton {
     }
     function cancel() {
         root.endSession();
+        root.stopSpeaking();
+        root.voiceTurn = false;
         stream.again = false;
         if (stream.running) {
             stream.wanted = false;
@@ -249,13 +350,18 @@ Singleton {
         }
         // Full AI mode learns from the answer (its question, what it did alone).
         if (FullAi.active) FullAi.userSaid(text);
+        root.voiceTurn = true;
         if (Initiative.speaking) Initiative.reply(text);
         else QuickAi.askQuestion(text, "voice");
         // Full AI mode: listening again at once (the next order can come
         // while this one is done).
         if (FullAi.active) relisten.restart();
-        // A plain command done at once (QuickIntent): the user's turn again.
-        if (Initiative.speaking?.kind === "quick" && !Initiative.thinking && root.session) relisten.restart();
+        // A plain command done at once (QuickIntent): what it did, said, then
+        // the user's turn again.
+        if (Initiative.speaking?.kind === "quick" && !Initiative.thinking) {
+            root.voiceTurn = false;
+            if (!root.speak(Initiative.speaking.text) && root.session && !FullAi.active) relisten.restart();
+        }
     }
 
     Timer {
@@ -346,14 +452,16 @@ Singleton {
         id: stream
         property bool wanted: true
         property bool continuous: false
+        property bool held: false
         // start() came while it was still closing.
         property bool again: false
         // The meter against the room's own noise, as for the local engine.
         property int frames: 0
         property real floor: -50
         stdinEnabled: true
-        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1" --pause "$2" --max "$3" $4', "_",
-            root.languages, String(root.pauseSeconds), String(root.maxSeconds), stream.continuous ? "--continuous" : ""]
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1" --pause "$2" --max "$3" $4 $5', "_",
+            root.languages, String(root.pauseSeconds), String(root.maxSeconds), stream.continuous ? "--continuous" : "",
+            stream.held ? "--held" : ""]
         stdout: SplitParser {
             onRead: (line) => {
                 let ev;
@@ -463,12 +571,15 @@ Singleton {
         function stop(): void { root.stop(); }
         // Stop without sending.
         function cancel(): void { root.cancel(); }
+        // Says it out loud (the answers' voice), and stops it.
+        function say(text: string): void { root.speak(text); }
+        function hush(): void { root.stopSpeaking(); }
         // A recording sent as if it had just been said (16 kHz mono WAV;
         // the file is deleted afterwards).
         function transcribe(path: string): void { root.transcribeFile(path); }
         function status(): string {
             return JSON.stringify({ available: root.available, engine: root.engine, listening: root.listening,
-                session: root.session, source: root.source,
+                session: root.session, source: root.source, speaking: root.speaking, speak: root.speakMode,
                 transcribing: root.transcribing, heard: root.heard, level: root.level, partial: root.partial,
                 error: root.error, last: root.lastText });
         }

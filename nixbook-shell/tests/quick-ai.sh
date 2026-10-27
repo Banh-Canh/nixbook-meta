@@ -188,7 +188,7 @@ expect_eq "react: never acts on a guess" '"ask"' "$(event react3 react .action)"
 ev='{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Ana", "text": "LEARNED dinner?"}}'
 ask react4 "$ev"
 expect_eq "react: learned, but not agreed twice yet: asks" '"ask"' "$(event react4 react .action)"
-for i in 1 2; do python3 -I "$script" learn '{"event": {"event": "notification", "app": "Chat", "title": "Ana"}, "decision": "ask", "outcome": "agreed", "said": "yes"}'; done
+for _ in 1 2; do python3 -I "$script" learn '{"event": {"event": "notification", "app": "Chat", "title": "Ana"}, "decision": "ask", "outcome": "agreed", "said": "yes"}'; done
 ask react5 "$ev"
 expect_eq "react: agreed twice: acts alone" '"do"' "$(event react5 react .action)"
 expect_contains_ "react: the past answers go along" "$(grep LEARNED "$tmp/requests.log" | tail -n1)" "the user agreed: yes"
@@ -198,6 +198,62 @@ expect_eq "learn: a preference kept" '"Ana is my sister"' "$(python3 -I "$script
 python3 -I "$script" learn '{"forget": true}'
 expect_eq "learn: forgotten" '{}' "$(python3 -I "$script" learned)"
 unset XDG_STATE_HOME
+
+# The answers read out (scripts/voice-speak.py): the text made speakable,
+# the language, and the cute chain run with stub tools (no model).
+speak="$root/scripts/voice-speak.py"
+vs() { python3 -I -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("vs",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(eval(sys.argv[2]))' "$speak" "$1"; }
+expect_eq "speak: English picked" en "$(vs 'm.language("Firefox is open on workspace 3.")')"
+expect_eq "speak: French picked" fr "$(vs 'm.language("Julien demande si tu viens ce soir.")')"
+expect_eq "speak: numbers and units spelled out" "It's twenty-one degrees, battery at eighty-five percent." \
+  "$(vs 'm.speakable("It'"'"'s **21°C**, battery at 85%. 🔋", "en")')"
+expect_eq "speak: clock times" "Meeting at nine oh five, then fourteen thirty." "$(vs 'm.speakable("Meeting at 9:05, then 14:30.", "en")')"
+expect_eq "speak: French times and numbers" "Réunion à quatorze heures trente avec soixante et onze personnes, à une heure." \
+  "$(vs 'm.speakable("Réunion à 14h30 avec 71 personnes, à 1h.", "fr")')"
+# shellcheck disable=SC2016 # Markdown backticks, not an expansion
+expect_eq "speak: code, links and lists out" "Done: see here.
+Firefox" \
+  "$(vs 'm.speakable("Done: see [here](https://x.y).\n```\nrm -rf\n```\n- Firefox", "en")')"
+expect_eq "speak: short pieces joined" "['Done! Firefox is open.', 'Anything else?']" "$(vs 'm.sentences("Done! Firefox is open. Anything else?")')"
+mkdir -p "$tmp/voices/en" "$tmp/voices/fr" "$tmp/sbin"
+touch "$tmp/voices/en/model.onnx" "$tmp/voices/fr/model.onnx"
+cat >"$tmp/sbin/sherpa-onnx-offline-tts" <<EOF
+#!/usr/bin/env bash
+for a; do case "\$a" in --vits-model=*) m="\${a#*=}" ;; --output-filename=*) o="\${a#*=}" ;; esac; done
+echo "tts \$(basename "\$(dirname "\$m")") \${@: -1}" >>"$tmp/speak.log"; echo raw >"\$o"
+EOF
+cat >"$tmp/sbin/ffmpeg" <<EOF
+#!/usr/bin/env bash
+echo "ffmpeg \$*" >>"$tmp/speak.log"; cp "\$5" "\${@: -1}" 2>/dev/null || echo joined >"\${@: -1}"
+EOF
+cat >"$tmp/sbin/rubberband-r3" <<EOF
+#!/usr/bin/env bash
+echo "rubberband \$*" >>"$tmp/speak.log"; cp "\${@: -2:1}" "\${@: -1}"
+EOF
+cat >"$tmp/sbin/pw-play" <<EOF
+#!/usr/bin/env bash
+echo "play \$(basename "\${@: -1}")" >>"$tmp/speak.log"
+EOF
+chmod +x "$tmp/sbin/"*
+sp() { PATH="$tmp/sbin:$PATH" NIXBOOK_MMS_VOICES="$tmp/voices" python3 -I "$speak" "$@"; }
+sp "Firefox is open on workspace three. Anything else for you?"
+expect_eq "speak: English voice, sentence by sentence" "tts en Firefox is open on workspace three.|tts en Anything else for you?" \
+  "$(grep '^tts' "$tmp/speak.log" | paste -sd'|')"
+expect_contains_ "speak: cute = voice and timbre raised together" "$(cat "$tmp/speak.log")" "asetrate=16000*1.35"
+expect_contains_ "speak: cute = then the pitch alone, formants kept" "$(grep rubberband "$tmp/speak.log" | head -n1)" "-F -f 1.5"
+expect_eq "speak: played in order" "play cute1.wav|play cute2.wav" "$(grep '^play' "$tmp/speak.log" | paste -sd'|')"
+: >"$tmp/speak.log"
+sp --style natural "Coucou ! Julien demande si tu viens ce soir."
+expect_eq "speak: French voice" "tts fr" "$(grep '^tts' "$tmp/speak.log" | cut -d' ' -f1-2 | sort -u)"
+expect_eq "speak: natural = no cute chain" "" "$(grep -E '^(ffmpeg|rubberband)' "$tmp/speak.log" || true)"
+: >"$tmp/speak.log"
+# shellcheck disable=SC2016 # Markdown backticks, not an expansion
+sp '🎉 ```x```'
+expect_eq "speak: nothing speakable, nothing run" "" "$(cat "$tmp/speak.log")"
+expect_eq "speak: no voice installed" 2 "$(
+  PATH="$tmp/sbin:$PATH" NIXBOOK_MMS_VOICES="$tmp/none" python3 -I "$speak" "Hello there" 2>/dev/null
+  echo $?
+)"
 
 # Failures.
 python3 -I "$script" ask "$tmp/none.json" >"$tmp/none.out" 2>/dev/null || true

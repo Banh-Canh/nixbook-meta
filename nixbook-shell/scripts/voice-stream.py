@@ -19,7 +19,8 @@ object per line on stdout:
   {"type": "nothing"}               nothing said (8 s), or stopped before
   {"type": "error", "error"}
 stdin: "stop" (the key again: the audio ends, the last words are awaited),
-"cancel" (gone at once). --file streams a WAV (16 kHz mono 16-bit) at real
+"cancel" (gone at once), "hold" / "resume" (the agent speaking: silence
+streamed instead of the microphone; --held starts held). --file streams a WAV (16 kHz mono 16-bit) at real
 time instead of the microphone (tests).
 """
 
@@ -211,7 +212,7 @@ def level_db(chunk):
 
 
 def main(argv):
-    langs, path, continuous = [], None, False
+    langs, path, continuous, held = [], None, False, False
     pause, longest = PAUSE_SECONDS, MAX_SECONDS
     args = list(argv[1:])
     while args:
@@ -227,6 +228,9 @@ def main(argv):
             # sent as a "final" when the user pauses, the microphone kept
             # open (no reconnecting between orders).
             continuous = True
+            continue
+        if a == "--held":
+            held = True
             continue
         if a == "--lang" and args:
             # A hint, not a constraint: "fr,en" (the interface's, then English).
@@ -285,7 +289,7 @@ def main(argv):
     emit("ready")
 
     state = {"done": False, "ending": False, "heard": False, "parts": [], "partial": "", "error": None,
-             "speaking": False, "lastEnd": 0.0}
+             "speaking": False, "lastEnd": 0.0, "held": held}
     done = threading.Event()
 
     def reader():
@@ -336,6 +340,12 @@ def main(argv):
             if cmd == "stop":
                 state["ending"] = True
                 return
+            # The agent speaking: silence sent instead of the microphone (it
+            # never hears itself), the stream kept open.
+            if cmd == "hold":
+                state["held"] = True
+            if cmd == "resume":
+                state["held"] = False
 
     threading.Thread(target=reader, daemon=True).start()
     threading.Thread(target=commands, daemon=True).start()
@@ -352,7 +362,7 @@ def main(argv):
                 continue
             if chunk is None:
                 break
-            ws.send_binary(chunk)
+            ws.send_binary(bytes(len(chunk)) if state.get("held") else chunk)
             now = time.monotonic()
             elapsed = now - started
             if not continuous and not state["heard"] and elapsed > NOTHING_AFTER:

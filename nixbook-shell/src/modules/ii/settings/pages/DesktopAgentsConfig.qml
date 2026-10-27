@@ -183,6 +183,36 @@ ContentPage {
                 text: Translation.tr("Meta: your voice is streamed to Muse Voice Transcribe while you speak, the words show as they come and it knows when you've finished; nothing heavy runs here. This computer: whisper.cpp, nothing leaves it, but it needs a decent GPU or CPU. Auto: Meta when it is the model provider (now: %1).").arg(Voice.engine === "meta" ? Translation.tr("Meta") : Translation.tr("this computer"))
             }
             ConfigSelectionArray {
+                configKey: "ai.voice.speak"
+                text: Translation.tr("Read the answers out")
+                icon: "volume_up"
+                currentValue: Config.options.ai.voice?.speak ?? "voice"
+                onSelected: newValue => { if (Config.options.ai.voice) Config.options.ai.voice.speak = newValue }
+                options: [
+                    { displayName: Translation.tr("When I talk"), icon: "record_voice_over", value: "voice" },
+                    { displayName: Translation.tr("Always"), icon: "volume_up", value: "always" },
+                    { displayName: Translation.tr("Never"), icon: "volume_off", value: "never" }
+                ]
+            }
+            ConfigSelectionArray {
+                configKey: "ai.voice.style"
+                text: Translation.tr("Voice")
+                icon: "face"
+                currentValue: Config.options.ai.voice?.style ?? "cute"
+                onSelected: newValue => { if (Config.options.ai.voice) Config.options.ai.voice.style = newValue }
+                options: [
+                    { displayName: Translation.tr("Cute"), icon: "favorite", value: "cute" },
+                    { displayName: Translation.tr("Natural"), icon: "person", value: "natural" }
+                ]
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Meta's MMS voices, on this computer, in English or French (from the answer's language). Mod+T or Escape stops it. The microphone doesn't hear it.")
+            }
+            ConfigSelectionArray {
                 configKey: "ai.quick.confirm"
                 text: Translation.tr("Ask me before")
                 icon: "shield_question"

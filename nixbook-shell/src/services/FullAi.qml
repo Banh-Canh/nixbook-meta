@@ -46,7 +46,7 @@ Singleton {
         if (!root.active) return "idle";
         if (root.flash) return root.flash;
         if (root.reacting) return "thinking";
-        if (talk.running) return "speaking";
+        if (Voice.speaking || talk.running) return "speaking";
         if (QuickAi.busy) return QuickAi.steps.some(s => s.status === "run") ? "acting" : "thinking";
         if (!root.micOn) return "muted";
         if (Voice.listening && Voice.heard) return "listening";
@@ -70,12 +70,13 @@ Singleton {
     }
     readonly property string hint: Translation.tr("Esc: leave Full AI · Mod+T: mic %1").arg(root.micOn ? Translation.tr("off") : Translation.tr("on"))
 
-    // A new line in the balloon: the mascot "talks" a moment (its mouth),
-    // silently: the agent has no voice.
+    // A new line in the balloon, said out loud in its cute voice (Voice.speak,
+    // unless ai.voice.speak is "never": then its mouth moves a moment).
     function say(text) {
         root.said = String(text ?? "");
         saidOff.restart();
         talk.restart();
+        Voice.speak(root.said);
     }
     Timer {
         id: talk
@@ -265,6 +266,8 @@ Singleton {
             flashOff.restart();
             saidOff.restart();
             talk.restart();
+            // Said out loud: the report's outcome (and what needs the user).
+            Voice.speak(Voice.lastAnswer() || root.said);
         }
     }
     Timer {

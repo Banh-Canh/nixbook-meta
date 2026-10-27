@@ -84,6 +84,9 @@ something failed. A soft glow around the screens says the AI is in charge.
   shortcuts (niri's `Mod+…`) keep working: a Wayland shell can't take those.
 - **The microphone stays open**, also while the agent works: give the next order
   whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
+- **It talks**: what it says in its balloon (what it does, its questions, the
+  outcome) is said out loud in its cute voice; the microphone is held meanwhile
+  so it never hears itself, and `Mod+T` cuts it short.
 - Steps that need your OK are asked in its balloon: say "yes" or "no".
 - The conversation is still in the speech bubble, with its reports.
 
@@ -165,8 +168,18 @@ computer's own sound taken out (a PipeWire echo canceller,
 video playing isn't taken for what you say. After the first deploy with it,
 restart PipeWire once: `systemctl --user restart pipewire pipewire-pulse wireplumber`.
 
+**It answers out loud, in a cute voice** (_Read the answers out_: _When I talk_
+by default, _Always_ or _Never_). The answer to what you said is read on this
+computer by Meta's MMS voices (Massively Multilingual Speech), in English or
+French, picked from the answer's language: Meta's Model API has no speech
+synthesis. After acting, it says the report's outcome and what needs you; when
+a step waits for your OK, it asks "May I …?"; a plain command says what it did.
+_Voice_ picks **Cute** (higher and bouncier, the default) or **Natural** (MMS's
+own voice). The microphone doesn't take it for you, and `Mod+T` or `Esc` cuts
+it short. The voices are MMS's (CC-BY-NC: for personal use).
+
 **A conversation** (_Talk back and forth_, on by default): after `Mod+T`, once the
-answer is there, the microphone opens again by itself, so you just go on
+answer has been said, the microphone opens again by itself, so you just go on
 talking. When a step waits for your OK, say "yes" / "oui" or "no" / "non". It ends
 when you say "that's all", "thanks", "c'est tout", "merci"…, press `Esc`, put the
 bubble away, or say nothing for 8 seconds.
@@ -203,4 +216,5 @@ The options are under `ai.quick` and `ai.voice` in the shell's settings, so Nix
 can set them like any other (`programs.nixbook-shell.settings.ai.quick.confirm = "actions";`).
 
 From a script: `nixbook-shell ipc call quickAi selection|screen|toggle|close`,
-`quickAi ask "…"`, `quickAi approve|deny`, `quickAi status`.
+`quickAi ask "…"`, `quickAi approve|deny`, `quickAi status`, `voice say "…"`,
+`voice hush`.
