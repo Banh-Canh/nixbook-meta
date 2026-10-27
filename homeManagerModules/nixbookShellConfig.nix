@@ -148,6 +148,37 @@ in
     made with a GitHub token set in Settings > Desktop agents. Only machines
     whose profile turns it on have it'';
 
+  options.customHomeManagerModules.nixbookShellConfig.zenAgent.enable = lib.mkOption {
+    type = lib.types.bool;
+    default = true;
+    description = ''
+      Whether the desktop agents can use Zen through the page itself
+      (nixbook-desktop-mcp's `browser_*` tools: tabs, reading pages, clicking,
+      typing, forms), without the mouse or keyboard, in background tabs and
+      other workspaces, while you keep working. With `zenBrowserConfig`:
+      force-installs nixbook-shell's Zen extension (unsigned:
+      `xpinstall.signatures.required` is turned off in the profile) and its
+      native messaging host. Private windows, password fields, the Banking
+      container and password manager / payment sites are off limits
+      (desktop-mcp's `browser` settings).
+    '';
+  };
+
+  options.customHomeManagerModules.nixbookShellConfig.electronAccessibility = lib.mkOption {
+    type = lib.types.bool;
+    default = config.programs.nixbook-shell.desktopMcp.browserAccessibility;
+    defaultText = lib.literalExpression "config.programs.nixbook-shell.desktopMcp.browserAccessibility";
+    description = ''
+      Whether the Chromium/Electron apps nixbook installs (Vesktop with
+      desktopApps; the profiles wrap their own, e.g. Slack and YouTube Music on
+      totoro) start with their accessibility tree on
+      (`--force-renderer-accessibility`, lib/electronA11y.nix), so the desktop
+      agents read and act on them through the app itself (desktop-mcp's
+      ui_read/ui_act), in any window and on any workspace, without the pointer.
+      It costs those apps some CPU and memory.
+    '';
+  };
+
   options.customHomeManagerModules.nixbookShellConfig.linkedinMcp.enable = lib.mkOption {
     type = lib.types.bool;
     default = true;

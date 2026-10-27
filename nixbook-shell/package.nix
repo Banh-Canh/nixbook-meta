@@ -145,6 +145,33 @@ let
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-speak.py} "$@"
   '';
 
+  # The desktop agents in Zen (nixbook-desktop-mcp's browser_* tools): the
+  # extension (zen/, unsigned: Zen doesn't require signing, the profile
+  # turns the check off) force-installed by the browser's policies, and its
+  # native messaging host, a bridge to a private Unix socket
+  # ($XDG_RUNTIME_DIR/nixbook-zen/bridge.sock). nixbook's zenBrowserConfig
+  # installs both (`passthru.zenAgent`).
+  zenExtensionId = "desktop-agent@nixbook-shell";
+  zenExtension = pkgs.runCommand "nixbook-zen-extension.xpi" { nativeBuildInputs = [ pkgs.zip ]; } ''
+    cp ${./zen}/manifest.json ${./zen}/background.js .
+    zip -q -X -9 $out manifest.json background.js
+  '';
+  zenBridge = pkgs.writeShellScriptBin "nixbook-zen-bridge" ''
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/zen-bridge.py} "$@"
+  '';
+  zenBridgeHost = pkgs.runCommand "nixbook-zen-bridge-host" { } ''
+    mkdir -p $out/lib/mozilla/native-messaging-hosts
+    cat > $out/lib/mozilla/native-messaging-hosts/nixbook_zen.json <<EOF
+    {
+      "name": "nixbook_zen",
+      "description": "nixbook's desktop agents in the browser (nixbook-desktop-mcp)",
+      "path": "${zenBridge}/bin/nixbook-zen-bridge",
+      "type": "stdio",
+      "allowed_extensions": ["${zenExtensionId}"]
+    }
+    EOF
+  '';
+
   voiceTranscribe = pkgs.writeShellScriptBin "nixbook-voice-transcribe" ''
     export PATH=${
       lib.makeBinPath [
@@ -478,6 +505,12 @@ launcher.overrideAttrs (old: {
       fonts
       keep
       ;
+    zenAgent = {
+      extension = zenExtension;
+      extensionId = zenExtensionId;
+      host = zenBridgeHost;
+      bridge = zenBridge;
+    };
   };
   meta = shell.meta // {
     mainProgram = "nixbook-shell";

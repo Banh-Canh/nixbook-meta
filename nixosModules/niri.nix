@@ -34,13 +34,18 @@ in
       # The nixpkgs niri already builds against the current libdisplay-info,
       # so pin the package to it here so every user's forced HM package is
       # safe to evaluate.
-      programs.niri.package =
-        if cfg.niri.xrayOpaque then
-          pkgs.niri.overrideAttrs (old: {
-            patches = (old.patches or [ ]) ++ [ ./niri-xray-opaque.patch ];
-          })
-        else
-          pkgs.niri;
+      #
+      # niri-silent-window-screenshot.patch: `niri msg action
+      # screenshot-window --id N --path P --silent` writes the capture without
+      # putting it in the clipboard or notifying, so desktop agents can see a
+      # window on another workspace without disturbing the user (desktop-mcp's
+      # screenshot of an off-screen window). Without `--silent`, as upstream.
+      programs.niri.package = pkgs.niri.overrideAttrs (old: {
+        patches =
+          (old.patches or [ ])
+          ++ [ ./niri-silent-window-screenshot.patch ]
+          ++ lib.optional cfg.niri.xrayOpaque ./niri-xray-opaque.patch;
+      });
     }
     (lib.mkIf cfg.niri.enable {
       programs.niri.enable = true;

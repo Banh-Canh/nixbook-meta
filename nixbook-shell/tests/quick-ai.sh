@@ -222,6 +222,11 @@ expect_eq "deny: reported as failed" '["tasks (id=t1, action=delete): you said n
 ask closing '{"mode": "do", "question": "CLOSE the window", "lang": "en"}'
 expect_eq "risky only: closing a window isn't asked" "" "$(event closing approve .tool)"
 expect_eq "risky only: done at once" 'close_window {"id": 7}' "$(cat "$tmp/calls.log")"
+risky() { python3 -I -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("q",sys.argv[1]); q=importlib.util.module_from_spec(s); s.loader.exec_module(q); print(q.is_risky(sys.argv[2], json.loads(sys.argv[3]), {}))' "$script" "$1" "$2"; }
+expect_eq "risky: a browser click on Send" True "$(risky browser_act '{"ref": 1, "name": "Send", "action": "click"}')"
+expect_eq "risky: a browser form placing an order" True "$(risky browser_act '{"ref": 4, "name": "Place order", "action": "submit"}')"
+expect_eq "risky: a browser click elsewhere isn't" False "$(risky browser_act '{"ref": 2, "name": "Liked Music", "action": "click"}')"
+expect_eq "risky: typing in a page isn't" False "$(risky browser_act '{"ref": 3, "name": "Message", "action": "type", "value": "send it"}')"
 : >"$tmp/calls.log"
 ask allow '{"mode": "do", "question": "DELETE the task", "lang": "en"}' $'yes\n'
 expect_eq "allow: run once allowed" 'tasks {"action": "delete", "id": "t1"}' "$(cat "$tmp/calls.log")"

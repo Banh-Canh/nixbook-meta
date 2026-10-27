@@ -463,7 +463,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 60 tools" 60 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 67 tools" 67 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -1881,6 +1881,48 @@ expect_eq "undone twice: off" '{"off": true}' "$(python3 "$mcp" routine undone "
 expect_contains "undone: says why" "$(python3 "$mcp" initiative pending | jq -r '.[].text')" "twice, so I turned it off"
 call routine "{\"action\":\"remove\",\"id\":\"$agent\"}" >/dev/null
 expect_eq "routine remove" 2 "$(jq '.routines | length' "$mem")"
+# The browser (Zen through nixbook's extension): the real native host
+# (scripts/zen-bridge.py), started by a stand-in for Zen and the extension
+# (tests/fake-zen.py) the way Zen starts it.
+zsock="$XDG_RUNTIME_DIR/nixbook-zen/bridge.sock"
+expect_contains "browser: Zen not running" "$(call browser_tabs '{}')" "Zen isn't running"
+: >"$tmp/zen.log"
+python3 "$root/tests/fake-zen.py" "$root/scripts/zen-bridge.py" "$tmp/zen.log" &
+zen_pid=$!
+for _ in $(seq 1 50); do
+  [ -S "$zsock" ] && break
+  sleep 0.1
+done
+expect_eq "browser bridge: a private socket" "600 700" "$(stat -c %a "$zsock") $(stat -c %a "$(dirname "$zsock")")"
+out=$(call browser_tabs '{}')
+expect_contains "browser_tabs: a tab" "$out" "[3] (shown) 'Inbox' https://mail.example.org/ · container Work"
+expect_contains "browser_tabs: a blocked one, private" "$out" "[7] private: the Banking container"
+expect_contains "browser_tabs: another workspace" "$out" "'News' https://news.example.org/ · other workspace"
+expect_eq "browser: the guard sent along" '["Banking"]' "$(head -n1 "$tmp/zen.log" | jq -c .guard.containers)"
+out=$(call browser_read '{"query":"send"}')
+expect_contains "browser_read: the elements" "$out" "[2] text field 'To' = 'ana@example.org'"
+expect_contains "browser_read: no password value" "$out" "[3] password field 'Password' (password: off limits)"
+expect_contains "browser_read: the text" "$out" "Hello"
+expect_eq "browser_read: the query passed" '"send"' "$(tail -n1 "$tmp/zen.log" | jq -c .query)"
+out=$(call browser_act '{"ref":2,"name":"To","action":"type","value":"bob@example.org"}')
+expect_contains "browser_act: done" "$out" "done (type): text field 'To' = 'bob@example.org'"
+expect_eq "browser_act: ref, name, action, value" '[2,"To","type","bob@example.org"]' "$(tail -n1 "$tmp/zen.log" | jq -c '[.ref,.name,.action,.value]')"
+expect_contains "browser_act: what was typed not logged" "$(grep '"browser_act"' "$XDG_STATE_HOME/nixbook-shell/desktop-mcp.log" | tail -n1)" '"value": "<15 chars>"'
+expect_contains "browser_act: the page's refusal said" "$(call browser_act '{"ref":3,"name":"Password","action":"type","value":"x"}')" "password fields are off limits"
+expect_contains "browser_open: in the background" "$(call browser_open '{"url":"https://example.org/"}')" "[12] 'Example' https://example.org/"
+expect_eq "browser_open: not shown" "false" "$(tail -n1 "$tmp/zen.log" | jq -c .active)"
+expect_contains "browser_screenshot: a tab, saved" "$(python3 "$mcp" call browser_screenshot '{}' 2>&1)" "Tab 3: 'Inbox'"
+python3 "$mcp" pause >/dev/null
+expect_contains "browser: paused like the rest" "$(call browser_tabs '{}')" "paused"
+python3 "$mcp" resume >/dev/null
+kill "$zen_pid" 2>/dev/null
+wait "$zen_pid" 2>/dev/null || true
+for _ in $(seq 1 50); do
+  [ -S "$zsock" ] || break
+  sleep 0.1
+done
+expect_eq "browser bridge: gone with Zen" "no" "$([ -S "$zsock" ] && echo yes || echo no)"
+
 # The apps' tools for agents without MCP (nixbook-quick-ai): listed (and
 # cached), called, audited, refused while AI is off.
 export XDG_CACHE_HOME="$tmp/cache"

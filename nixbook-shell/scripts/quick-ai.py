@@ -453,6 +453,10 @@ def is_risky(name, args, meta):
     action = str((args or {}).get("action") or "")
     if RISKY_ACTION.match(action):
         return True
+    if tool == "browser_act":
+        # A click (or a form sent) on a "Send", "Pay", "Order"… button.
+        return str((args or {}).get("action") or "") in ("click", "submit", "press") and bool(
+            RISKY_TARGET.search(str((args or {}).get("name") or "")))
     if tool in ("ui_act", "click", "notification_action"):
         said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
         return bool(RISKY_TARGET.search(said))

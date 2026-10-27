@@ -6,6 +6,13 @@
 }:
 let
   cfg = config.customHomeManagerModules;
+  # Readable by the desktop agents where nixbook-shell runs (lib/electronA11y.nix).
+  a11y =
+    pkg: bin:
+    if cfg.nixbookShellConfig.enable && cfg.nixbookShellConfig.electronAccessibility then
+      import ../lib/electronA11y.nix { inherit pkgs; } pkg bin
+    else
+      pkg;
 in
 {
   options.customHomeManagerModules.desktopApps = {
@@ -59,7 +66,7 @@ in
         spotify
         obs-studio
         wdisplays # display manager
-        vesktop # discord
+        (a11y vesktop "vesktop") # discord
         pinta # paint
         wifi-qr
       ]

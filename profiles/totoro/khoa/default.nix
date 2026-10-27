@@ -6,6 +6,13 @@
 }:
 let
   inherit (pkgs.customPkgs) actual-budget moonfin pear-desktop;
+  # Their accessibility tree on, for the desktop agents (lib/electronA11y.nix).
+  a11y =
+    pkg: bin:
+    if config.customHomeManagerModules.nixbookShellConfig.electronAccessibility then
+      import ../../../lib/electronA11y.nix { inherit pkgs; } pkg bin
+    else
+      pkg;
 in
 {
   imports = [
@@ -16,12 +23,12 @@ in
     ./nixbookShellConfig.nix
   ];
   home.packages = [
-    pkgs.slack
+    (a11y pkgs.slack "slack")
     pkgs.moonlight-qt
     pkgs.anki
     actual-budget
     moonfin
-    pear-desktop
+    (a11y pear-desktop "pear-desktop")
   ];
   programs = {
     go = {

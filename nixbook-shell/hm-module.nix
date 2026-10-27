@@ -381,6 +381,12 @@ let
       de = "Der Desktop-Agent antwortet laut mit einer niedlichen Stimme: Metas MMS-Stimmen, auf diesem Computer, auf Englisch oder Französisch (je nach Sprache der Antwort; Deutsch gibt es nicht). Einstellungen > Desktop-Agenten > Mit dem Desktop reden > Antworten vorlesen: Wenn ich spreche (Antworten auf Gesagtes und der volle KI-Modus; Standard), Immer oder Nie; Stimme: Niedlich (höher und munterer) oder Natürlich. Nach dem Handeln sagt er das Ergebnis und was dich braucht, vor einem Schritt fragt er „Darf ich…?“, ein einfacher Befehl sagt, was er getan hat. Das Mikro hört ihn nie (pausiert, solange er spricht). Mod+T oder Esc unterbricht ihn. Antworten ohne die Blase: Einstellungen > Desktop-Agenten > Mit dem Desktop reden > Blase anzeigen: Nur wenn nötig (die Antwort wird gesprochen; die Blase kommt für Antworten zum Auswählen, einen Fehler oder Mod+C). Die Werkzeuge deiner Apps (YouTube Music, Spotify, das Handy…) gehören auch ihm.";
       vi = "Tác nhân màn hình trả lời thành tiếng bằng một giọng dễ thương: giọng MMS của Meta, chạy trên máy này, bằng tiếng Anh hoặc tiếng Pháp (theo ngôn ngữ của câu trả lời; không có tiếng Việt). Cài đặt > Tác nhân màn hình > Nói chuyện với màn hình > Đọc câu trả lời: Khi tôi nói (câu trả lời cho điều bạn nói, và chế độ AI toàn phần; mặc định), Luôn luôn hoặc Không bao giờ; Giọng: Dễ thương (cao và vui hơn) hoặc Tự nhiên. Sau khi làm, nó nói kết quả và việc cần bạn, trước một bước nó hỏi Tôi có thể…?, lệnh đơn giản thì nói nó đã làm gì. Micro không bao giờ nghe thấy nó (tạm giữ khi nó nói). Mod+T hoặc Esc để cắt ngang. Để trả lời mà không mở bong bóng: Cài đặt > Tác nhân màn hình > Nói chuyện với màn hình > Hiện bong bóng: Chỉ khi cần (câu trả lời được đọc thành tiếng; bong bóng hiện khi có câu trả lời để chọn, có lỗi, hoặc Mod+C). Công cụ của các ứng dụng (YouTube Music, Spotify, điện thoại…) nó cũng dùng được.";
     };
+    agentsInParallel = {
+      en = "The desktop agents can work while you do, without taking your mouse or keyboard: in Zen they act in the page itself (reading pages, clicking, typing, filling forms) in any tab, in the background or in another workspace, through nixbook's Zen extension; in other apps they use the app's own controls through its accessibility tree, on any workspace; and they see a window on another workspace without moving your view (silently with nixbook's niri, from your next login). Off limits in Zen: private windows, password fields, the Banking container, password managers, your Google account, PayPal and banks. A click on Send, Pay or Order is asked first.";
+      fr = "Les agents du bureau peuvent travailler pendant que vous travaillez, sans prendre votre souris ni votre clavier : dans Zen ils agissent dans la page elle-même (lire, cliquer, écrire, remplir des formulaires) dans n'importe quel onglet, en arrière-plan ou dans un autre espace, grâce à l'extension Zen de nixbook ; dans les autres applications ils passent par leurs propres commandes via l'arbre d'accessibilité, sur n'importe quel espace ; et ils voient une fenêtre d'un autre espace sans déplacer votre vue (en silence avec le niri de nixbook, dès votre prochaine connexion). Interdit dans Zen : les fenêtres privées, les champs de mot de passe, le conteneur Banking, les gestionnaires de mots de passe, votre compte Google, PayPal et les banques. Un clic sur Envoyer, Payer ou Commander est demandé avant.";
+      de = "Die Desktop-Agenten können arbeiten, während du arbeitest, ohne Maus oder Tastatur zu übernehmen: in Zen handeln sie in der Seite selbst (lesen, klicken, tippen, Formulare ausfüllen) in jedem Tab, im Hintergrund oder in einem anderen Arbeitsbereich, über nixbooks Zen-Erweiterung; in anderen Apps über deren eigene Bedienelemente per Barrierefreiheitsbaum, auf jedem Arbeitsbereich; und sie sehen ein Fenster auf einem anderen Arbeitsbereich, ohne deine Ansicht zu bewegen (lautlos mit nixbooks niri, ab der nächsten Anmeldung). In Zen tabu: private Fenster, Passwortfelder, der Banking-Container, Passwortmanager, dein Google-Konto, PayPal und Banken. Ein Klick auf Senden, Bezahlen oder Bestellen wird vorher erfragt.";
+      vi = "Các tác nhân màn hình có thể làm việc cùng lúc với bạn mà không chiếm chuột hay bàn phím: trong Zen chúng thao tác ngay trong trang (đọc, bấm, gõ, điền biểu mẫu) ở bất kỳ thẻ nào, chạy nền hoặc ở không gian làm việc khác, nhờ tiện ích Zen của nixbook; trong ứng dụng khác chúng dùng chính các điều khiển của ứng dụng qua cây trợ năng, ở bất kỳ không gian nào; và chúng xem được cửa sổ ở không gian khác mà không làm đổi màn hình của bạn (im lặng với niri của nixbook, từ lần đăng nhập sau). Trong Zen không được đụng: cửa sổ riêng tư, ô mật khẩu, container Banking, trình quản lý mật khẩu, tài khoản Google, PayPal và ngân hàng. Bấm Gửi, Thanh toán hay Đặt hàng thì sẽ hỏi trước.";
+    };
     nixOnboarding = {
       en = "To set up your desktop by talking: Settings > Desktop agents > Talk to your desktop > Set up my desktop by talking. Say how you work (\"I'm a developer, I hate notifications at night, I like a minimal bar\"); it asks a few questions, writes the Nix for the shell's settings, checks it with Nix itself (a misspelt or wrong setting is fixed by the AI until Nix accepts it) and shows it with Copy, Build it for me (the desktop agent's fixer puts it in nixbook) and Apply now (live, not in your Nix files; settings set in Nix are left alone).";
       fr = "Pour configurer votre bureau en parlant : Paramètres > Agents du bureau > Parler à son bureau > Configurer mon bureau en parlant. Dites comment vous travaillez (« je suis développeur, je déteste les notifications le soir, j'aime une barre minimale ») ; il pose quelques questions, écrit le Nix des réglages du shell, le vérifie avec Nix lui-même (un réglage mal écrit ou faux est corrigé par l'IA jusqu'à ce que Nix l'accepte) et l'affiche avec Copier, Le faire pour moi (le correcteur de l'agent du bureau l'ajoute à nixbook) et Appliquer maintenant (en direct, pas dans vos fichiers Nix ; les réglages fixés dans Nix ne sont pas touchés).";
@@ -819,6 +825,7 @@ in
                 "memory"
                 "personal"
                 "ui"
+                "browser"
               ]
             );
             default = [
@@ -830,6 +837,7 @@ in
               "memory"
               "personal"
               "ui"
+              "browser"
             ];
             description = ''
               Tool groups AI agents get: `observe` (windows, workspaces,
@@ -844,7 +852,14 @@ in
               through its accessibility tree, and acting on its elements;
               needs the accessibility bus, nixbook's `niri.accessibility`;
               Firefox-based and Chromium/Electron apps through
-              `desktopMcp.browserAccessibility`, on by default).
+              `desktopMcp.browserAccessibility`, on by default; Electron apps
+              also need `--force-renderer-accessibility`: nixbook wraps its own,
+              nixbookShellConfig.electronAccessibility), `browser` (Zen's tabs
+              through the page itself, with nixbook's extension: read, click,
+              type, forms, in background tabs, without the pointer or keys;
+              `browser.blockedSites` / `browser.blockedContainers` are off
+              limits, by default password managers, Google account and payment
+              sites, banks and the Banking container).
             '';
           };
         };
@@ -896,6 +911,10 @@ in
           They then keep it up to date on every page change, all session long:
           more CPU, memory and scrolling jank in heavy pages. Off, agents read
           those apps with screenshots. Apps started before need a restart.
+          Electron apps' pages also need `--force-renderer-accessibility` on
+          their command line (the variables alone leave them empty): nixbook
+          wraps Vesktop, Slack and YouTube Music with it
+          (nixbookShellConfig.electronAccessibility, which follows this).
         '';
       };
 

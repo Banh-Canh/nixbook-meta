@@ -70,7 +70,7 @@ SERVER_NAME = "nixbook-desktop"
 
 DEFAULT_CONFIG = {
     # Tool groups on offer; the others are neither listed nor callable.
-    "tools": ["observe", "screen", "windows", "input", "shell", "memory", "personal", "ui"],
+    "tools": ["observe", "screen", "windows", "input", "shell", "memory", "personal", "ui", "browser"],
     # No keyboard/pointer input while the focused window's app_id (or title)
     # matches one of these (Python regexes, case-insensitive, searched).
     "inputDenyApps": [
@@ -180,12 +180,28 @@ DEFAULT_CONFIG = {
         r"microsoft-edge|plasma-browser-integration)",
     ],
     "http": {"port": 7823},
+    # The browser tools (Zen, through nixbook's extension): tabs whose
+    # address matches one of these (Python/JS regexes, case-insensitive), or
+    # in one of these containers, are neither read nor used (listed as
+    # private), and agents can't open them; private windows never.
+    "browser": {
+        "blockedSites": [
+            r"^(about|chrome|moz-extension|resource|view-source|file|data|javascript):",
+            r"://([^/]*\.)?(bitwarden|vaultwarden|1password|lastpass|dashlane|keepersecurity|nordpass|enpass)\.",
+            r"://(pass\.proton\.me|account\.proton\.me)",
+            r"://(accounts|myaccount)\.google\.com",
+            r"://([^/]*\.)?paypal\.",
+            r"://[^/]*(bank|banque|boursorama|revolut|n26\.com|qonto|fortuneo|credit-?agricole|creditmutuel|"
+            r"societegenerale|bnpparibas|caisse-?epargne|lcl\.fr|labanquepostale|wise\.com)",
+        ],
+        "blockedContainers": ["Banking"],
+    },
     # The fixer is on this machine (programs.nixbook-shell.selfImprove.enable):
     # report_problem and request_feature are listed only then.
     "improve": False,
 }
 
-TOOL_GROUPS = ["observe", "screen", "windows", "input", "shell", "memory", "personal", "ui"]
+TOOL_GROUPS = ["observe", "screen", "windows", "input", "shell", "memory", "personal", "ui", "browser"]
 
 
 def xdg(var, fallback):
@@ -222,8 +238,8 @@ def read_config():
     for key, value in user.items():
         if key not in DEFAULT_CONFIG:
             log(f"{path}: unknown key {key!r}, ignored")
-        elif key == "http" and isinstance(value, dict):
-            cfg["http"].update(value)
+        elif key in ("http", "browser") and isinstance(value, dict):
+            cfg[key].update(value)
         else:
             cfg[key] = value
     cfg["tools"] = [g for g in cfg["tools"] if g in TOOL_GROUPS]
@@ -9941,8 +9957,10 @@ COORD = {"type": "number"}
     "exactly, a tiled one with its monitor). All of these are silent. Every "
     "screenshot comes with a `mapping`: pass it as `screenshot` to "
     "click/move_pointer/drag/scroll to give them this image's pixel "
-    "coordinates. A window not on screen: focus it first (focus_window with "
-    "screenshot_after does both in one call). A monitor screenshot sends only "
+    "coordinates. A window on another workspace or monitor: `window_id` "
+    "captures it where it is (silently with nixbook's niri; the user's view "
+    "doesn't move): don't focus it just to look, the user may be working "
+    "elsewhere. A monitor screenshot sends only "
     "what changed since your last one of it (the rest is as you saw it), or "
     "says nothing did; `full` sends it all. To read a window's buttons, "
     "fields or text, or to check that something showed, ui_read and "
@@ -9957,11 +9975,12 @@ COORD = {"type": "number"}
                 "properties": {"x": COORD, "y": COORD, "width": COORD, "height": COORD},
                 "required": ["x", "y", "width", "height"],
             },
-            "window_id": {"type": "integer", "description": "A window id (see list_windows), on screen"},
+            "window_id": {"type": "integer", "description": "A window id (see list_windows), on any workspace"},
             "offscreen": {
                 "type": "boolean",
-                "description": "Capture a window that isn't on screen through niri. Avoid: it "
-                "copies the capture to the user's clipboard and notifies them",
+                "description": "Capture a window that isn't on screen through niri. Only needed with "
+                "an older niri (it then copies the capture to the user's clipboard and notifies them); "
+                "nixbook's niri captures off-screen windows silently, without it",
             },
             "full": {"type": "boolean", "description": "The whole monitor, even when little or nothing changed"},
         }
@@ -9983,7 +10002,9 @@ def screenshot_now(ctx, args):
         ws = next((x for x in niri_json("workspaces") if x.get("id") == w.get("workspace_id")), None)
         on_screen = bool(ws and ws.get("is_active") and ws.get("output") in outputs)
         if not on_screen:
-            if args.get("offscreen") is not True:
+            # On another workspace or monitor: captured where it is, without
+            # moving the user's view (silently with nixbook's niri).
+            if args.get("offscreen") is not True and not niri_silent_capture():
                 raise ToolError(
                     f"window {wid} isn't on screen. Focus it first (focus_window with "
                     "screenshot_after: true), or pass offscreen: true to capture it through niri, "
@@ -10263,14 +10284,40 @@ def wl_copy(data, mime=None):
         raise ToolError("`wl-copy` timed out")
 
 
+# nixbook's niri (nixosModules/niri-silent-window-screenshot.patch) captures
+# a window with `--silent`: no clipboard, no notification. Whether the niri
+# running now has it (the session keeps its niri until the next login): its
+# binary holds the flag's help text. Cached per binary.
+_SILENT_NIRI = {}
+SILENT_NIRI_MARK = b"Neither put the screenshot in the clipboard nor show a notification"
+
+
+def niri_silent_capture():
+    sock = os.environ.get("NIRI_SOCKET", "")
+    try:
+        pid = os.path.basename(sock).split(".")[-2]
+        exe = os.readlink(f"/proc/{int(pid)}/exe")
+    except (ValueError, IndexError, OSError):
+        return False
+    if exe not in _SILENT_NIRI:
+        try:
+            import mmap
+            with open(exe, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+                _SILENT_NIRI[exe] = m.find(SILENT_NIRI_MARK) >= 0
+        except (OSError, ValueError):
+            _SILENT_NIRI[exe] = False
+    return _SILENT_NIRI[exe]
+
+
 def screenshot_window(ctx, wid):
     w = window_by_id(wid)
-    # niri writes the capture where asked (--path), but also puts it in the
-    # clipboard (no way around that): keep what was there to put it back.
-    saved = saved_clipboard()
+    silent = niri_silent_capture()
+    # Without --silent niri also puts the capture in the clipboard (no way
+    # around that): keep what was there to put it back.
+    saved = None if silent else saved_clipboard()
     path = os.path.join(runtime_dir(), f"screenshot-{secrets.token_hex(4)}.png")
     try:
-        niri_action("screenshot-window", "--id", str(wid), "--path", path)
+        niri_action("screenshot-window", "--id", str(wid), "--path", path, *(["--silent"] if silent else []))
         # niri encodes and writes it from a thread: wait for a stable, non-empty file.
         prev = -1
         for _ in range(80):
@@ -13936,6 +13983,229 @@ def enabled_tools(cfg):
                            "start_improvement") or cfg.get("improve"))}
 
 
+# --------------------------------------------------------------------------
+# The browser (Zen): nixbook-shell's extension (zen/) does the work in the
+# page itself, through its native host nixbook-zen-bridge, a Unix socket only
+# this user can reach. No pointer, no keys, no screenshot: background tabs
+# and other workspaces work the same, and the user keeps working meanwhile.
+# --------------------------------------------------------------------------
+
+BROWSER_ACTS = ("browser_open", "browser_tab", "browser_act")
+
+
+def zen_socket():
+    base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return os.path.join(base, "nixbook-zen", "bridge.sock")
+
+
+def zen(ctx, cmd, **args):
+    """One request to the extension: its result (ToolError when refused)."""
+    path = zen_socket()
+    try:
+        st = os.stat(path)
+        if st.st_uid != os.getuid() or not stat.S_ISSOCK(st.st_mode):
+            raise ToolError("the browser bridge's socket isn't this user's: not used")
+    except FileNotFoundError:
+        raise ToolError("Zen isn't running, or its nixbook extension isn't installed (nixbookShellConfig.zenAgent "
+                        "with zenBrowserConfig): start Zen (launch_app) and try again")
+    guard = ctx.cfg.get("browser") or {}
+    request = {"cmd": cmd, **{k: v for k, v in args.items() if v is not None},
+               "guard": {"sites": guard.get("blockedSites") or [], "containers": guard.get("blockedContainers") or []}}
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(55)
+    try:
+        s.connect(path)
+        s.sendall(json.dumps(request).encode() + b"\n")
+        f = s.makefile("rb")
+        line = f.readline(8 * 1024 * 1024)
+    except (OSError, socket.timeout) as e:
+        raise ToolError(f"the browser didn't answer ({e}): is Zen still running?")
+    finally:
+        s.close()
+    try:
+        reply = json.loads(line)
+    except ValueError:
+        raise ToolError("the browser bridge gave no answer: is Zen still running?")
+    if not reply.get("ok"):
+        raise ToolError(str(reply.get("error") or "the browser refused"))
+    return reply.get("result")
+
+
+def browser_tab_line(t):
+    bits = [f"[{t['id']}]"] + (["(shown)"] if t.get("active") else [])
+    if t.get("private"):
+        bits.append(f"private: {t['private']}")
+    else:
+        bits.append(f"{short(t.get('title') or '', 90)!r} {short(t.get('url') or '', 160)}")
+    for k, label in (("container", "container {}"), ("otherWorkspace", "other workspace"), ("pinned", "pinned"),
+                     ("audible", "playing sound"), ("loading", "loading")):
+        if t.get(k):
+            bits.append("· " + label.format(t[k]))
+    return " ".join(bits)
+
+
+TAB_ARG = {"type": "integer", "description": "A tab id from browser_tabs (default: the tab shown in Zen)"}
+
+
+@tool(
+    "browser_tabs",
+    "browser",
+    "The tabs open in Zen (every window and workspace; private windows never): id, title, address, "
+    "container. Tabs in the user's blocked containers or sites are listed as private and can't be used.",
+    read_only=True,
+)
+def t_browser_tabs(ctx, args):
+    tabs = zen(ctx, "tabs") or []
+    return [text("\n".join(browser_tab_line(t) for t in tabs) if tabs else "no tabs")]
+
+
+@tool(
+    "browser_open",
+    "browser",
+    "Open an address in a new Zen tab, in the background unless `active` (the user's view doesn't "
+    "move), and wait for it to load. Then browser_read it.",
+    obj({"url": {"type": "string", "description": "http(s) address"},
+         "active": {"type": "boolean", "description": "Show it (switch Zen to it); default false"}}, ["url"]),
+)
+def t_browser_open(ctx, args):
+    url = as_str(args, "url", max_len=2000)
+    return [text(browser_tab_line(zen(ctx, "open", url=url, active=bool(args.get("active")))))]
+
+
+@tool(
+    "browser_tab",
+    "browser",
+    "A tab: `activate` (show it in its window), `navigate` (to `url`), `back`, `forward`, `reload`, "
+    "`mute`, `unmute` or `close`.",
+    obj({"tab": TAB_ARG, "action": {"type": "string", "enum": ["activate", "navigate", "back", "forward", "reload",
+                                                                "mute", "unmute", "close"]},
+         "url": {"type": "string", "description": "For navigate"}}, ["action"]),
+)
+def t_browser_tab(ctx, args):
+    action = as_str(args, "action", max_len=20)
+    r = zen(ctx, "tab", tab=args.get("tab"), action=action,
+            url=as_str(args, "url", max_len=2000, required=False) or None)
+    if r and r.get("closed") is not None:
+        return [text(f"closed tab {r['closed']}")]
+    return [text(browser_tab_line(r))]
+
+
+@tool(
+    "browser_read",
+    "browser",
+    "Read a Zen tab through the page itself (any tab, in the background too): its title, address, "
+    "text, and the elements you can act on, numbered: [ref] role 'name' = value. With `query`, only "
+    "the elements whose name has one of its words. Then browser_act on a ref. Password fields show no "
+    "value. Costs far less than a screenshot and is exact.",
+    obj({"tab": TAB_ARG,
+         "query": {"type": "string", "description": "Words: only the elements named so (a button, a field)"},
+         "text": {"type": "boolean", "description": "The page's text too (default true)"},
+         "chars": {"type": "integer", "description": "At most this much text (default 12000)"},
+         "max": {"type": "integer", "description": "At most this many elements (default 150)"}}),
+    read_only=True,
+)
+def t_browser_read(ctx, args):
+    r = zen(ctx, "read", tab=args.get("tab"), query=as_str(args, "query", max_len=200, required=False) or None,
+            text=args.get("text") is not False, chars=args.get("chars"), max=args.get("max"))
+    lines = [f"Tab {r.get('tab')}: {r.get('title')!r} {r.get('url')}"]
+    els = r.get("elements") or []
+    lines.append(f"Elements ({len(els)} of {r.get('total')}):" if els else "No elements found.")
+    for e in els:
+        line = f"[{e['ref']}] {e['role']} {e.get('name')!r}"
+        if e.get("password"):
+            line += " (password: off limits)"
+        if "value" in e:
+            line += f" = {e['value']!r}"
+        if e.get("checked") is not None:
+            line += " (checked)" if e["checked"] else " (unchecked)"
+        if e.get("selected"):
+            line += " (selected)"
+        if e.get("disabled"):
+            line += " (disabled)"
+        if e.get("options"):
+            line += f" options: {', '.join(e['options'])}"
+        if e.get("href"):
+            line += f" → {e['href']}"
+        if e.get("offscreen"):
+            line += " (scrolled away)"
+        lines.append(line)
+    if r.get("selection"):
+        lines.append(f"Selected text: {r['selection']!r}")
+    if r.get("text"):
+        more = r.get("textTotal", 0) - len(r["text"])
+        lines.append("Text:\n" + r["text"] + (f"\n… ({more} more characters: `chars` for more)" if more > 0 else ""))
+    return [text("\n".join(lines))]
+
+
+@tool(
+    "browser_act",
+    "browser",
+    "Act on an element of a Zen tab from its last browser_read, in the page itself (no pointer, no "
+    "keys: the user keeps working): `click`, `type` (`value` replaces the field's text, `append` adds "
+    "it), `select` (a list's option by its text), `check` (`value` \"false\" unchecks), `submit` "
+    "(its form), `press` (a key: Enter, Escape…), `focus`, `scroll`. Give the element's `name` as "
+    "browser_read showed it: if the page changed, it says so instead of acting on something else. "
+    "Password fields are refused. A click that leads to a new page returns once it has loaded.",
+    obj({"tab": TAB_ARG, "ref": {"type": "integer"},
+         "name": {"type": "string", "description": "The element's name, as browser_read listed it"},
+         "action": {"type": "string", "enum": ["click", "type", "select", "check", "submit", "press", "focus",
+                                               "scroll"]},
+         "value": {"type": "string"}, "append": {"type": "boolean"}}, ["ref", "name", "action"]),
+    destructive=True,
+)
+def t_browser_act(ctx, args):
+    value = args.get("value")
+    if isinstance(value, str):
+        ctx.guard.check_text(value)
+    ctx.guard.check_rate()
+    r = zen(ctx, "act", tab=args.get("tab"), ref=as_int(args, "ref"), name=as_str(args, "name", max_len=200),
+            action=as_str(args, "action", max_len=20), value=value if isinstance(value, str) else None,
+            append=bool(args.get("append")))
+    el = r.get("element")
+    after = (f"{el['role']} {el.get('name')!r}" + (f" = {el['value']!r}" if "value" in el else "")
+             + ("" if el.get("checked") is None else (" (checked)" if el["checked"] else " (unchecked)"))) if el \
+        else "(the element is gone: the page changed)"
+    return [text(f"done ({r.get('done')}): {after}. Tab {r.get('tab')} now: {r.get('title')!r} {r.get('url')}")]
+
+
+@tool(
+    "browser_wait",
+    "browser",
+    "Wait in a Zen tab until it has loaded (`until` load), its text shows `text` (`until` text) or its "
+    "address contains `text` (`until` url), at most `timeout_ms` (default 10000).",
+    obj({"tab": TAB_ARG, "until": {"type": "string", "enum": ["load", "text", "url"]},
+         "text": {"type": "string"}, "timeout_ms": {"type": "integer"}}, ["until"]),
+    read_only=True,
+)
+def t_browser_wait(ctx, args):
+    r = zen(ctx, "wait", tab=args.get("tab"), until=as_str(args, "until", max_len=10),
+            text=as_str(args, "text", max_len=300, required=False) or None,
+            timeout=max(100, min(30000, int(args.get("timeout_ms") or 10000))))
+    if not r.get("ok"):
+        return [text(f"not yet: tab {r.get('tab')} still isn't there (timed out)")]
+    return [text(f"there: tab {r.get('tab')}: {r.get('title')!r} {r.get('url')}")]
+
+
+@tool(
+    "browser_screenshot",
+    "browser",
+    "A picture of a Zen tab's page (any tab: no need to show it), for what text doesn't tell (layout, "
+    "pictures). browser_read is cheaper and exact for text and controls.",
+    obj({"tab": TAB_ARG}),
+    read_only=True,
+)
+def t_browser_screenshot(ctx, args):
+    r = zen(ctx, "screenshot", tab=args.get("tab"))
+    data = str(r.get("data") or "")
+    if not data.startswith("data:image/"):
+        raise ToolError("the browser gave no picture")
+    path = os.path.join(runtime_dir(), f"screenshot-{secrets.token_hex(4)}.jpg")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(base64.b64decode(data.split(",", 1)[1]))
+    return screenshot_reply(ctx, path, f"Tab {r.get('tab')}: {r.get('title')!r} {r.get('url')}")
+
+
 def call_tool(ctx, name, args, session=None):
     """Returns (content, is_error). Unknown tools raise KeyError. session:
     the MCP session calling (HTTP: its Mcp-Session-Id). With the privacy
@@ -14030,9 +14300,9 @@ def call_tool_now(ctx, name, args, session=None):
             return [text(f"internal error: {e}")], True
         if t["group"] in ACTION_GROUPS:
             content = content + after_action(ctx, args)
-        if t["group"] in ACTION_GROUPS or name == "ui_act":
+        if t["group"] in ACTION_GROUPS or name in ("ui_act", *BROWSER_ACTS):
             record_action(ctx, name, args)
-        elif t["group"] in ("screen", "ui", "observe"):
+        elif t["group"] in ("screen", "ui", "observe", "browser"):
             ctx.episode["reads"] += 1
         write_state(last={"time": int(time.time() * 1000), "client": ctx.client, "tool": name, "outcome": "ok"})
     audit(ctx.client, name, args, "ok")
@@ -14111,7 +14381,12 @@ INSTRUCTIONS = (
     "(with `find`) still costs far less than a screenshot and gives "
     "positions to click as they are. Screenshot only for what neither "
     "tells (layout, pictures); to click in a "
-    "screenshot, give its pixel coordinates with its mapping. Input into terminals, "
+    "screenshot, give its pixel coordinates with its mapping. Web pages in Zen: the browser_* "
+    "tools work in the page itself, in any tab (in the background, in another workspace), "
+    "without the mouse or keyboard, so the user keeps working meanwhile: prefer them to "
+    "clicking or typing in the browser window. Windows on other workspaces: read them "
+    "(ui_read, browser_read) or screenshot them by window_id where they are; don't focus them "
+    "just to look (it moves the user's view). Input into terminals, "
     "password managers and password prompts is refused: ask the user to do "
     "those steps. The user can pause desktop control at any time from the "
     "bar; then every tool is refused. The user can also move you between "

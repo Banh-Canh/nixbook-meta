@@ -1,0 +1,150 @@
+diff --git a/niri-config/src/binds.rs b/niri-config/src/binds.rs
+index 0be7596..8389cdd 100644
+--- a/niri-config/src/binds.rs
++++ b/niri-config/src/binds.rs
+@@ -143,6 +143,7 @@ pub enum Action {
+         write_to_disk: bool,
+         show_pointer: bool,
+         path: Option<String>,
++        silent: bool,
+     },
+     ToggleKeyboardShortcutsInhibit,
+     CloseWindow,
+@@ -414,17 +415,20 @@ impl From<niri_ipc::Action> for Action {
+                 write_to_disk,
+                 show_pointer,
+                 path,
++                ..
+             } => Self::ScreenshotWindow(write_to_disk, show_pointer, path),
+             niri_ipc::Action::ScreenshotWindow {
+                 id: Some(id),
+                 write_to_disk,
+                 show_pointer,
+                 path,
++                silent,
+             } => Self::ScreenshotWindowById {
+                 id,
+                 write_to_disk,
+                 show_pointer,
+                 path,
++                silent,
+             },
+             niri_ipc::Action::ToggleKeyboardShortcutsInhibit {} => {
+                 Self::ToggleKeyboardShortcutsInhibit
+diff --git a/niri-ipc/src/lib.rs b/niri-ipc/src/lib.rs
+index 0aa3cb4..7661576 100644
+--- a/niri-ipc/src/lib.rs
++++ b/niri-ipc/src/lib.rs
+@@ -282,6 +282,13 @@ pub enum Action {
+         /// If `None`, the screenshot is saved according to the `screenshot-path` config setting.
+         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set))]
+         path: Option<String>,
++
++        /// Neither put the screenshot in the clipboard nor show a notification.
++        ///
++        /// Only with `--id`: for programs capturing a window silently (desktop agents).
++        #[cfg_attr(feature = "clap", arg(long))]
++        #[serde(default)]
++        silent: bool,
+     },
+     /// Enable or disable the keyboard shortcuts inhibitor (if any) for the focused surface.
+     ToggleKeyboardShortcutsInhibit {},
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index f1ad493..8df3147 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -755,6 +755,7 @@ impl State {
+                             write_to_disk,
+                             show_pointer,
+                             path,
++                            false,
+                         ) {
+                             warn!("error taking screenshot: {err:?}");
+                         }
+@@ -766,6 +767,7 @@ impl State {
+                 write_to_disk,
+                 show_pointer,
+                 path,
++                silent,
+             } => {
+                 let mut windows = self.niri.layout.windows();
+                 let window = windows.find(|(_, m)| m.id().get() == id);
+@@ -779,6 +781,7 @@ impl State {
+                             write_to_disk,
+                             show_pointer,
+                             path,
++                            silent,
+                         ) {
+                             warn!("error taking screenshot: {err:?}");
+                         }
+diff --git a/src/niri.rs b/src/niri.rs
+index ec40e01..fbd8afe 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -2024,7 +2024,7 @@ impl State {
+         self.backend.with_primary_renderer(|renderer| {
+             match self.niri.screenshot_ui.capture(renderer) {
+                 Ok((size, pixels)) => {
+-                    if let Err(err) = self.niri.save_screenshot(size, pixels, write_to_disk, path) {
++                    if let Err(err) = self.niri.save_screenshot(size, pixels, write_to_disk, path, false) {
+                         warn!("error saving screenshot: {err:?}");
+                     }
+                 }
+@@ -5568,7 +5568,7 @@ impl Niri {
+             elements,
+         )?;
+ 
+-        self.save_screenshot(size, pixels, write_to_disk, path)
++        self.save_screenshot(size, pixels, write_to_disk, path, false)
+             .context("error saving screenshot")
+     }
+ 
+@@ -5580,6 +5580,7 @@ impl Niri {
+         write_to_disk: bool,
+         show_pointer: bool,
+         path: Option<String>,
++        silent: bool,
+     ) -> anyhow::Result<()> {
+         let _span = tracy_client::span!("Niri::screenshot_window");
+ 
+@@ -5636,7 +5637,7 @@ impl Niri {
+             elements,
+         )?;
+ 
+-        self.save_screenshot(geo.size, pixels, write_to_disk, path)
++        self.save_screenshot(geo.size, pixels, write_to_disk, path, silent)
+             .context("error saving screenshot")
+     }
+ 
+@@ -5646,6 +5647,7 @@ impl Niri {
+         pixels: Vec<u8>,
+         write_to_disk: bool,
+         path_arg: Option<String>,
++        silent: bool,
+     ) -> anyhow::Result<()> {
+         let path = write_to_disk
+             .then(|| {
+@@ -5701,7 +5703,10 @@ impl Niri {
+             }
+ 
+             let buf: Arc<[u8]> = Arc::from(buf.into_boxed_slice());
+-            let _ = tx.send(buf.clone());
++            // A silent capture (an agent's) leaves the clipboard alone.
++            if !silent {
++                let _ = tx.send(buf.clone());
++            }
+ 
+             let mut image_path = None;
+ 
+@@ -5732,7 +5737,10 @@ impl Niri {
+             }
+ 
+             #[cfg(feature = "dbus")]
+-            if let Err(err) = crate::utils::show_screenshot_notification(image_path.as_deref()) {
++            if silent {
++            } else if let Err(err) =
++                crate::utils::show_screenshot_notification(image_path.as_deref())
++            {
+                 warn!("error showing screenshot notification: {err:?}");
+             }
+ 

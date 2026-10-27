@@ -20,11 +20,40 @@ Desktop control **starts paused**. Allow it with the bar's Desktop Control widge
 | `windows`  | Focus, move, resize, close windows; launch apps (waits for the window); [window layouts](./window-layouts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `input`    | Type, press keys, click, drag, scroll — exact to the pixel on any monitor and scale; up to 20 steps in one call (`run_steps`), a saved recipe in one call (`run_recipe`)                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `ui`       | Read any app's window through its **accessibility tree** (buttons, fields, labels as numbered text lines) and press, toggle or fill elements without coordinates; wait for an element to appear or disappear                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `browser`  | **Zen through the page itself** (nixbook's extension): list tabs, open, navigate, read a page (its text and the elements to act on, numbered), click, type, pick, check, submit, wait, a picture of a tab — in background tabs and other workspaces, **without the mouse or keyboard**                                                                                                                                                                                                                                                                                                                              |
 | `shell`    | Themes and variants, the wallpaper, **desktop widgets** (notes, to-do, timers, alarms, images, music recognition), the **equalizer**, the **calendar** (read-only), the **to-do lists**, **[contacts](./accounts)** (every account's: search, edit, label, photos), the **notification centre** (list with ids, dismiss by id, app, text or all, click a notification's button or send its inline reply, snooze, Do Not Disturb, clear the history), the **conversation** in the speech bubble (start a fresh one, put it away, list and delete saved ones, make Full AI mode forget what it learned), shell panels |
 | `memory`   | [Desktop memory](#desktop-memory): remember, recall, forget; remind (reminders on a cue); [routine](#routines)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `personal` | [Personal memory](#personal-memory): what you told agents about your life                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 The `memory` group also has `habits`: what you usually do, from [usage habits](#usage-habits) when you turned them on.
+
+## Working alongside you
+
+Agents can work while you do, on the same desktop, without taking your mouse
+or keyboard:
+
+- **The web, in Zen**: the `browser` tools act in the page itself, in any tab,
+  shown or not, in another workspace too. Tabs open in the background unless
+  asked. Off limits: private windows, password fields, the **Banking**
+  container, and password managers, your Google account, PayPal and bank sites
+  (`browser.blockedSites`, `browser.blockedContainers`). A click on "Send",
+  "Pay", "Order"… is asked first (Talk to your desktop > _Ask me before_). Needs
+  `zenBrowserConfig` with `nixbookShellConfig.zenAgent.enable` (on by default):
+  the extension shows in Zen's add-ons as unverified (nixbook builds it).
+  Limits: what a browser keeps for a real person (choosing a file to upload,
+  some clipboard actions, anti-bot checks) and canvas editors (Google Docs).
+- **Any app's controls**: the `ui` tools read and use a window through its
+  accessibility tree by its id, on any workspace, focused or not. Electron apps
+  (Vesktop, Slack, YouTube Music) need `--force-renderer-accessibility`:
+  nixbook starts them with it (`nixbookShellConfig.electronAccessibility`,
+  which follows `desktopMcp.browserAccessibility`; a little more CPU in them).
+- **Seeing other workspaces**: `screenshot` with a `window_id` captures a window
+  where it is, without moving your view. nixbook's niri does it silently
+  (`niri msg action screenshot-window --id N --path P --silent`, a nixbook
+  patch): no clipboard, no "Screenshot captured" notification. The patched niri
+  is used from your next login; until then such a capture still goes through
+  the clipboard (put back afterwards) and notifies. Hidden windows redraw about
+  once a second, so a capture is at most that old; the text tools are live.
 
 Agents are told to read through OCR or the accessibility tree before taking a screenshot, and screenshots are JPEG and **incremental** — only what changed since the agent's last one — to keep each call cheap. Action tools can return a screenshot of the result in the same call, once the screen stops changing.
 **The shell gets out of the way.** When the side panel, Claude's speech bubble, notification popups or a theme's cut-in are over the apps while an agent works on your desktop, they become click-through, let go of the keyboard and are hidden from its screenshots for that instant. You still see them, slightly faded, with _Claude is working under this panel_ on the side panel, so you can follow the chat while it works underneath. This lasts only while each of its actions or screenshots goes on, and 1.5 s after: between its steps, while it thinks, you can use them again, exactly as they were; nothing is dismissed or put away, but a cut-in. A theme's cut-in (an important notification taking over the screen) is dismissed when an agent clicks, types or presses keys, as Escape would, along with those queued behind it: it fought the agent for the keyboard and focus. The notification stays in the notification centre, and the agent is told. Its screenshots alone dismiss nothing. The agent is told what was on screen and can hide popups, a cut-in or the bubble while it works with `set_aside` (they come back the same way), but never the side panel, the lock screen or a password prompt. When nothing of the shell is on screen this costs nothing: it is one small file read per action.
@@ -262,4 +291,4 @@ programs.nixbook-shell.desktopMcp.settings = {
 
 Written to `~/.config/nixbook-shell/desktop-mcp.json`; `nixbook-desktop-mcp config` prints what applies. Other keys tune screenshots (`screenshotFormat`, `screenshotQuality`, `screenshotMaxEdge`) and memory (`memoryPromptChars`, `memoryMaxNotes`, `memoryLearn`, `memoryModel`, `memoryClaude`, `personalPromptChars`, `personalMaxEntries`, `personalContacts`, `personalContactsAccount`).
 
-The `ui` group needs the accessibility bus (`customNixOSModules.niri.accessibility`, on by default); the module sets the variables that make Firefox-based and Chromium/Electron apps publish their tree (apps started before need a restart).
+The `ui` group needs the accessibility bus (`customNixOSModules.niri.accessibility`, on by default); the module sets the variables that make Firefox-based and Chromium/Electron apps publish their tree (apps started before need a restart). Electron apps' pages need `--force-renderer-accessibility` as well (see [Working alongside you](#working-alongside-you)). The `browser` group's `browser` key holds `blockedSites` (regexes on the address) and `blockedContainers` (Zen container names).
