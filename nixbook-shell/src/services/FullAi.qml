@@ -91,6 +91,8 @@ Singleton {
         Voice.session = true;
         QuickAi.askQuestion("", "voice");
         root.say(Translation.tr("I've got it from here. Tell me what to do."));
+        // Listening at once (Voice.start also calls the bubble up).
+        Voice.start();
     }
     function exit() {
         if (!root.active) return;
