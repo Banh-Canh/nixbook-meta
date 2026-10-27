@@ -193,7 +193,10 @@ Singleton {
         property bool reopen: false
         command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" -- "$2"', "_",
             root.voiceStyle, speaker.text]
-        onExited: {
+        stderr: StdioCollector { id: speakerErr }
+        onExited: (code) => {
+            if (code !== 0 && speaker.wanted)
+                root.error = Translation.tr("Speaking failed: %1").arg(speakerErr.text.trim().split("\n").pop() || code);
             if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
             root.speaking = false;
             const again = speaker.reopen;
