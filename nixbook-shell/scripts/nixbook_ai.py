@@ -19,7 +19,14 @@ them):
                           `nixbook-model-provider run`
   call(system, messages…) one Messages API call (retries, the server's
                           refusals remembered, streamed or not, Meta's fast
-                          chat endpoint when asked)
+                          chat endpoint when asked; each tool call to
+                          on_block as soon as it is complete; Cancel stops
+                          it from another thread), on a kept-alive
+                          connection (one pool a process)
+  use_caps_cache()        what the server can't do (the fast endpoint, the
+                          thinking settings) remembered a day across
+                          processes ($XDG_CACHE_HOME/nixbook-shell/
+                          provider-caps.json)
   answer(system, prompt…) one answer: its text, or with a schema its JSON
   dm(argv, stdin)         nixbook-desktop-mcp ARGV: through the helper's
                           socket when it is up, else a process
@@ -30,6 +37,9 @@ them):
                           the kind of step a call is (the trust ladder, the
                           journal: `close_window@firefox`, `calendar:add`)
   config(), routing()     the shell's settings (config.json)
+
+Heavy modules (http.client, ssl, urllib) are imported when first used: the
+scripts that only reach desktop-mcp don't pay for them.
 """
 
 import json
@@ -40,8 +50,6 @@ import socket
 import subprocess
 import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
 
 NO_PROVIDER = "no model provider with an API key (Settings > Desktop agents > Model provider)"
@@ -109,13 +117,17 @@ def config():
 
 def routing(cfg=None):
     """Which model decides on the user's behalf (ai.routing): decisions
-    (the initiative's, Full AI's reactions, the agent's request resolver),
-    its effort, and the quick answers' model."""
+    (the initiative's, Full AI's reactions), its effort, the quick answers'
+    model, the agent's checks (resolve: the request read when it may be
+    ambiguous; verify: the result checked), and effortMinimal (the checks,
+    the reactions and the one-shot answers think as little as the server
+    allows)."""
     r = (((cfg if cfg is not None else config()).get("ai") or {}).get("routing") or {})
     r = r if isinstance(r, dict) else {}
     effort = str(r.get("decisionsEffort") or "low").lower()
     return {"decisions": str(r.get("decisions") or "big"), "decisionsEffort": effort if effort in EFFORTS else "low",
-            "quick": str(r.get("quick") or "small")}
+            "quick": str(r.get("quick") or "small"), "resolve": str(r.get("resolve") or "small"),
+            "verify": str(r.get("verify") or "small"), "effortMinimal": r.get("effortMinimal", True) is not False}
 
 
 # ── The provider ───────────────────────────────────────────────────────────
@@ -192,22 +204,28 @@ class Provider:
             return self.models["big"]
         return n
 
-    def request(self, path, body, stream=False):
-        headers = {"Authorization": f"Bearer {self.key}", "content-type": "application/json"}
+    def headers(self, path, stream=False):
+        headers = {"Authorization": f"Bearer {self.key}", "content-type": "application/json",
+                   # Plain bytes (a stream decoded as it comes), the
+                   # connection kept for the next call.
+                   "accept-encoding": "identity", "connection": "keep-alive"}
         if path.startswith("/v1/messages"):
             # The wire protocol Meta's API speaks, not another vendor's.
             headers["anthropic-version"] = "2023-06-01"
         if stream:
             headers["accept"] = "text/event-stream"
-        return urllib.request.Request(self.base + path, data=json.dumps(body).encode(), method="POST",
-                                      headers=headers)
+        return headers
+
+    def caps_key(self, model_id):
+        return f"{self.base}|{model_id}"
 
 
-def ensure_provider(argv, script=None):
-    """No key here (started outside the provider): this script run again
-    through `nixbook-model-provider run`, which sets NIXBOOK_AI_* (once:
-    it marks the environment). Nothing when the provider isn't installed:
-    Provider.from_env() says what is missing."""
+def ensure_provider(argv, script=None, why=""):
+    """No key here (started outside the provider, and `nixbook-model-provider
+    env` gave none): this script run again through `nixbook-model-provider
+    run`, which sets NIXBOOK_AI_* (once: it marks the environment), said on
+    stderr (WHY: what env answered). Nothing when the provider isn't
+    installed: Provider.from_env() says what is missing."""
     if os.environ.get("NIXBOOK_AI_KEY") or os.environ.get("NIXBOOK_AI_PROVIDED"):
         return
     exe = shutil.which("nixbook-model-provider")
@@ -215,6 +233,9 @@ def ensure_provider(argv, script=None):
         return
     import sys
     path = os.path.abspath(script or sys.argv[0])
+    sys.stderr.write(f"{os.path.basename(path)}: no key from `nixbook-model-provider env`"
+                     + (f" ({why})" if why else "") + ": through `nixbook-model-provider run`\n")
+    sys.stderr.flush()
     os.execvp(exe, [exe, "run", sys.executable, "-I", path, *argv])
 
 
@@ -223,12 +244,87 @@ def ensure_provider(argv, script=None):
 # What the server refused, remembered for the rest of the process: the
 # thinking/effort settings, a max_tokens too big, the fast chat endpoint.
 _STATE = {"tuning": True, "fast": None, "max_tokens": None}
+# The same, across processes (use_caps_cache): {base|model: {fast, tuning,
+# t}}, a day; Quick AI's one-shots don't pay a failed probe each time.
+CAPS_DAYS = 1
+_CAPS = {"on": False, "data": None}
+_CAPS_LOCK = threading.Lock()
+
+
+def use_caps_cache(on=True):
+    """Remember what the provider can't do across processes (the scripts
+    started once per request: quick-ai, the agent)."""
+    _CAPS["on"] = bool(on)
+
+
+def caps_path():
+    return os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "nixbook-shell",
+                        "provider-caps.json")
+
+
+def _caps_all():
+    if _CAPS["data"] is None:
+        try:
+            with open(caps_path(), encoding="utf-8") as f:
+                d = json.load(f)
+            _CAPS["data"] = d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            _CAPS["data"] = {}
+    return _CAPS["data"]
+
+
+def known_caps(p, model_id):
+    """What the cache knows of this provider and model ({} when nothing,
+    or older than a day)."""
+    if not _CAPS["on"]:
+        return {}
+    with _CAPS_LOCK:
+        d = _caps_all().get(p.caps_key(model_id))
+    if not isinstance(d, dict) or time.time() - float(d.get("t") or 0) > CAPS_DAYS * 86400:
+        return {}
+    return d
+
+
+def _remember(p, model_id, **caps):
+    """Something learned of the server: for this process, and in the cache."""
+    _STATE.update(caps)
+    if not _CAPS["on"] or p is None:
+        return
+    with _CAPS_LOCK:
+        data = _caps_all()
+        key = p.caps_key(model_id)
+        entry = dict(data.get(key) or {})
+        if all(entry.get(k) == v for k, v in caps.items()) and time.time() - float(entry.get("t") or 0) < 3600:
+            return
+        entry.update(caps)
+        entry["t"] = int(time.time())
+        data[key] = entry
+        path = caps_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = f"{path}.{os.getpid()}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+
+def _fast_known(p, model_id):
+    if _STATE["fast"] is not None:
+        return _STATE["fast"]
+    v = known_caps(p, model_id).get("fast")
+    return v if isinstance(v, bool) else None
+
+
+def _tuning_ok(p, model_id):
+    return _STATE["tuning"] and known_caps(p, model_id).get("tuning") is not False
 
 
 def http_detail(e):
     try:
         detail = e.read().decode("utf-8", "replace")
-    except (OSError, AttributeError):
+    except (OSError, AttributeError, ValueError):
         detail = ""
     try:
         d = json.loads(detail)
@@ -236,6 +332,183 @@ def http_detail(e):
     except (ValueError, AttributeError):
         pass
     return str(detail)
+
+
+class Cancelled(AIError):
+    """A call stopped by its Cancel (another thread's decision)."""
+
+
+class Cancel:
+    """Stops a call in flight from another thread: its connection shut, the
+    call raising Cancelled (never sent again)."""
+
+    def __init__(self):
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._conn = None
+
+    def attach(self, conn):
+        with self._lock:
+            self._conn = conn
+        if self._event.is_set():
+            self._shut()
+
+    def set(self):
+        self._event.set()
+        self._shut()
+
+    def is_set(self):
+        return self._event.is_set()
+
+    def _shut(self):
+        with self._lock:
+            conn = self._conn
+        sock = getattr(conn, "sock", None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+# Kept-alive connections, per (scheme, host, port): taken by a call, given
+# back once its answer is read whole; one TLS context for the process. A
+# connection idle longer than IDLE_MAX is dropped (servers close them).
+IDLE_MAX = 50.0
+_POOL = {}
+_POOL_LOCK = threading.Lock()
+_SSL = {"ctx": None}
+POOL_MAX = 4
+
+
+def _ssl_context():
+    if _SSL["ctx"] is None:
+        import ssl
+        _SSL["ctx"] = ssl.create_default_context()
+    return _SSL["ctx"]
+
+
+def _take(key, timeout):
+    """(a connection for KEY, whether it was kept from before)."""
+    import http.client
+    now = time.monotonic()
+    with _POOL_LOCK:
+        idle = _POOL.get(key) or []
+        while idle:
+            conn, since = idle.pop()
+            if now - since <= IDLE_MAX and conn.sock is not None:
+                conn.timeout = timeout
+                try:
+                    conn.sock.settimeout(timeout)
+                except OSError:
+                    conn.close()
+                    continue
+                return conn, True
+            conn.close()
+    scheme, host, port = key
+    if scheme == "https":
+        return http.client.HTTPSConnection(host, port, timeout=timeout, context=_ssl_context()), False
+    return http.client.HTTPConnection(host, port, timeout=timeout), False
+
+
+def _give(key, conn, resp):
+    """CONN back to the pool, its answer read whole (else closed)."""
+    if conn is None:
+        return
+    if resp is None or resp.will_close or not resp.isclosed() or conn.sock is None:
+        conn.close()
+        return
+    with _POOL_LOCK:
+        idle = _POOL.setdefault(key, [])
+        if len(idle) >= POOL_MAX:
+            conn.close()
+            return
+        idle.append((conn, time.monotonic()))
+
+
+def close_pool():
+    with _POOL_LOCK:
+        for idle in _POOL.values():
+            for conn, _ in idle:
+                conn.close()
+        _POOL.clear()
+
+
+def _proxied(scheme):
+    """A proxy set for SCHEME: then urllib (it knows proxies), one
+    connection a call."""
+    return bool(os.environ.get(f"{scheme}_proxy") or os.environ.get(f"{scheme.upper()}_PROXY"))
+
+
+class Response:
+    """A request's answer (status 200): read it, then done() (its
+    connection given back for the next call, or closed)."""
+
+    def __init__(self, resp, conn, key):
+        self.resp, self.conn, self.key = resp, conn, key
+        self.headers = resp.headers
+
+    def __iter__(self):
+        return iter(self.resp)
+
+    def read(self):
+        return self.resp.read()
+
+    def done(self, ok=True):
+        if self.conn is None:
+            self.resp.close()
+            return
+        if ok:
+            _give(self.key, self.conn, self.resp)
+        else:
+            self.conn.close()
+
+
+def post(p, path, body, stream=False, timeout=180, cancel=None):
+    """BODY to the provider's PATH: a Response (status 200), or
+    urllib.error.HTTPError (another status), OSError / http.client errors
+    (the network). Kept-alive: a connection kept from before that turns out
+    closed by the server (before any answer) is tried once again on a new
+    one."""
+    import io
+    import urllib.error
+    import urllib.parse
+    url = p.base + path
+    data = json.dumps(body).encode()
+    headers = p.headers(path, stream)
+    u = urllib.parse.urlsplit(url)
+    if _proxied(u.scheme):
+        import urllib.request
+        r = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        return Response(urllib.request.urlopen(r, timeout=timeout), None, None)
+    import http.client
+    key = (u.scheme, u.hostname or "", u.port or (443 if u.scheme == "https" else 80))
+    target = (u.path or "/") + (f"?{u.query}" if u.query else "")
+    for attempt in (0, 1):
+        conn, reused = _take(key, timeout)
+        if cancel is not None:
+            cancel.attach(conn)
+        try:
+            conn.request("POST", target, body=data, headers=headers)
+            resp = conn.getresponse()
+        except (http.client.HTTPException, OSError) as e:
+            conn.close()
+            if cancel is not None and cancel.is_set():
+                raise Cancelled("stopped")
+            stale = isinstance(e, (http.client.RemoteDisconnected, http.client.BadStatusLine,
+                                   ConnectionResetError, BrokenPipeError, ConnectionAbortedError))
+            if reused and stale and attempt == 0:
+                continue
+            raise
+        break
+    if resp.status != 200:
+        try:
+            raw = resp.read()
+        except (http.client.HTTPException, OSError):
+            raw = b""
+        _give(key, conn, resp)
+        raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, io.BytesIO(raw))
+    return Response(resp, conn, key)
 
 
 def normalize_message(msg):
@@ -258,8 +531,9 @@ def normalize_message(msg):
             "usage": msg.get("usage") or {}, "model": msg.get("model") or ""}
 
 
-def synthesize(msg, relay):
-    """A whole reply as the stream events it would have been."""
+def synthesize(msg, relay, on_block=None):
+    """A whole reply as the stream events it would have been (each tool
+    call to on_block too)."""
     relay({"type": "message_start", "message": {"model": msg.get("model"), "role": "assistant", "content": [],
                                                 "usage": msg.get("usage") or {}}})
     for i, b in enumerate(normalize_message(msg)["content"]):
@@ -275,13 +549,24 @@ def synthesize(msg, relay):
             relay({"type": "content_block_delta", "index": i,
                    "delta": {"type": "input_json_delta", "partial_json": json.dumps(b["input"])}})
         relay({"type": "content_block_stop", "index": i})
+        if t == "tool_use" and on_block:
+            _block_done(on_block, b)
     relay({"type": "message_delta", "delta": {"stop_reason": msg.get("stop_reason") or "end_turn"},
            "usage": {"output_tokens": (msg.get("usage") or {}).get("output_tokens", 0)}})
     relay({"type": "message_stop"})
 
 
-def read_sse(resp, relay):
-    """A streamed Messages API reply: the whole message, each event relayed."""
+def _block_done(on_block, b):
+    try:
+        on_block({"type": "tool_use", "id": b.get("id") or "", "name": b.get("name", ""),
+                  "input": b.get("input") if isinstance(b.get("input"), dict) else {}})
+    except Exception:  # noqa: BLE001 — the caller's business, never the stream's
+        pass
+
+
+def read_sse(resp, relay, on_block=None):
+    """A streamed Messages API reply: the whole message, each event relayed,
+    each tool call to on_block as soon as its block ends (its input whole)."""
     blocks, partial = {}, {}
     msg = {"stop_reason": "end_turn", "usage": {}, "model": ""}
     data_lines = []
@@ -320,6 +605,10 @@ def read_sse(resp, relay):
                     b["input"] = json.loads(raw) if raw.strip() else (b.get("input") or {})
                 except ValueError:
                     b["input"] = {}
+                if on_block:
+                    if not b.get("id"):
+                        b["id"] = f"toolu_{uuid.uuid4().hex[:20]}"
+                    _block_done(on_block, b)
         elif t == "message_delta":
             d = ev.get("delta") or {}
             if d.get("stop_reason"):
@@ -357,9 +646,11 @@ def read_sse(resp, relay):
     return normalize_message(msg)
 
 
-def _send(p, body, stream, on_event, timeout):
+def _send(p, body, stream, on_event, timeout, on_block=None, cancel=None):
     """One request, tried again on a busy or failing server (and the
     network) as long as nothing of the answer was relayed yet."""
+    import http.client
+    import urllib.error
     delay = RETRY_DELAY
     for attempt in range(RETRIES + 1):
         started = [False]
@@ -368,18 +659,30 @@ def _send(p, body, stream, on_event, timeout):
             started[0] = True
             if on_event:
                 on_event(ev)
+        if cancel is not None and cancel.is_set():
+            raise Cancelled("stopped")
+        resp = None
         try:
-            with urllib.request.urlopen(p.request("/v1/messages", body, stream), timeout=timeout) as resp:
+            resp = post(p, "/v1/messages", body, stream, timeout, cancel)
+            ok = False
+            try:
                 if stream and "text/event-stream" in (resp.headers.get("content-type") or ""):
-                    return read_sse(resp, relay)
+                    msg = read_sse(resp, relay, on_block)
+                    if cancel is not None and cancel.is_set():
+                        raise Cancelled("stopped")
+                    ok = True
+                    return msg
                 msg = json.loads(resp.read().decode("utf-8", "replace"))
-                if not isinstance(msg, dict):
-                    raise AIError("API error: not a Messages API reply")
-                if msg.get("type") == "error":
-                    raise AIError(f"API error: {(msg.get('error') or {}).get('message') or msg}")
-                if on_event:
-                    synthesize(msg, relay)
-                return normalize_message(msg)
+                ok = True
+            finally:
+                resp.done(ok)
+            if not isinstance(msg, dict):
+                raise AIError("API error: not a Messages API reply")
+            if msg.get("type") == "error":
+                raise AIError(f"API error: {(msg.get('error') or {}).get('message') or msg}")
+            if on_event or on_block:
+                synthesize(msg, relay if on_event else (lambda ev: None), on_block)
+            return normalize_message(msg)
         except urllib.error.HTTPError as e:
             if e.code in RETRY_CODES and attempt < RETRIES and not started[0]:
                 retry = e.headers.get("retry-after") if e.headers else None
@@ -392,12 +695,19 @@ def _send(p, body, stream, on_event, timeout):
                 delay *= 3
                 continue
             raise
-        except (urllib.error.URLError, socket.timeout, ConnectionError, TimeoutError) as e:
+        except Cancelled:
+            raise
+        except (http.client.HTTPException, OSError, ValueError) as e:
+            if cancel is not None and cancel.is_set():
+                raise Cancelled("stopped")
+            if isinstance(e, ValueError) and not isinstance(e, UnicodeError):
+                # Not JSON: not a server to try again.
+                raise AIError("API error: not a Messages API reply")
             if attempt < RETRIES and not started[0]:
                 time.sleep(delay)
                 delay *= 3
                 continue
-            raise AIError(f"API error: {getattr(e, 'reason', e)}")
+            raise AIError(f"API error: {getattr(e, 'reason', None) or e or e.__class__.__name__}")
     raise AIError("API error: the server kept failing")
 
 
@@ -432,46 +742,57 @@ def _fast(p, model, system, messages, max_tokens, timeout):
     Messages API can't ask for that little thinking: about 2 s faster). None
     when it isn't there (404/405, or a 400/422 from a server that never took
     it): the Messages API answers then, and every next call goes there."""
+    import http.client
+    import urllib.error
     body = {"model": model, "max_completion_tokens": max_tokens, "reasoning_effort": "minimal",
             "messages": chat_messages(system, messages)}
     try:
-        with urllib.request.urlopen(p.request("/v1/chat/completions", body), timeout=timeout) as resp:
+        resp = post(p, "/v1/chat/completions", body, timeout=timeout)
+        ok = False
+        try:
             d = json.loads(resp.read().decode("utf-8", "replace"))
+            ok = True
+        finally:
+            resp.done(ok)
         text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content")
         if not isinstance(text, str):
             raise ValueError("no choices")
     except urllib.error.HTTPError as e:
         http_detail(e)
-        if e.code in (404, 405) or (e.code in (400, 422) and not _STATE["fast"]):
-            _STATE["fast"] = False
+        if e.code in (404, 405) or (e.code in (400, 422) and not _fast_known(p, model)):
+            _remember(p, model, fast=False)
         return None
     except (ValueError, KeyError, IndexError, AttributeError, TypeError):
-        if not _STATE["fast"]:
-            _STATE["fast"] = False
+        if not _fast_known(p, model):
+            _remember(p, model, fast=False)
         return None
-    except (urllib.error.URLError, socket.timeout, ConnectionError, TimeoutError):
+    except (http.client.HTTPException, OSError):
         return None
-    _STATE["fast"] = True
+    _remember(p, model, fast=True)
     return {"content": [{"type": "text", "text": text}], "stop_reason": "end_turn", "usage": d.get("usage") or {},
             "model": d.get("model") or model}
 
 
 def call(system, messages, *, model="small", effort=None, tools=None, tool_choice=None, max_tokens=16000,
-         stream=False, on_event=None, fast=False, timeout=180, provider=None):
+         stream=False, on_event=None, fast=False, timeout=180, provider=None, on_block=None, cancel=None):
     """One Messages API call: the reply {content, stop_reason, usage, model}.
 
     effort (minimal|low|medium|high|max): adaptive thinking and
     output_config.effort, dropped for good when the server refuses them (a
     400 naming them), and when a tool is forced (they don't go together).
     A 400 naming max_tokens: asked again with half (not below 4096). stream
-    or on_event: the reply streamed, each event to on_event. fast with no
-    tools: Meta's chat endpoint first (see _fast). Retried on 429/5xx/529 and
-    the network, with backoff and the server's retry-after."""
+    or on_event: the reply streamed, each event to on_event. on_block: each
+    tool call ({type, id, name, input}) as soon as it is complete, while the
+    rest still streams. cancel (a Cancel): stopped from another thread
+    (Cancelled). fast with no tools: Meta's chat endpoint first (see _fast).
+    Retried on 429/5xx/529 and the network, with backoff and the server's
+    retry-after."""
+    import urllib.error
     p = provider or Provider.from_env()
     model_id = p.model(model)
     if not model_id:
         raise AIError(NO_MODEL)
-    if fast and not tools and _STATE["fast"] is not False:
+    if fast and not tools and _fast_known(p, model_id) is not False:
         msg = _fast(p, model_id, system, messages, max_tokens, timeout)
         if msg is not None:
             if on_event:
@@ -479,7 +800,7 @@ def call(system, messages, *, model="small", effort=None, tools=None, tool_choic
             return msg
     effort = effort if effort in EFFORTS else None
     forced = bool(tool_choice) and tool_choice.get("type") in ("tool", "any")
-    stream = bool(stream or on_event)
+    stream = bool(stream or on_event or on_block)
     limit = min(max_tokens, _STATE["max_tokens"] or max_tokens)
     while True:
         body = {"model": model_id, "max_tokens": limit, "system": system, "messages": messages}
@@ -487,18 +808,18 @@ def call(system, messages, *, model="small", effort=None, tools=None, tool_choic
             body["tools"] = tools
         if tool_choice:
             body["tool_choice"] = tool_choice
-        tuned = bool(effort) and _STATE["tuning"] and not forced
+        tuned = bool(effort) and _tuning_ok(p, model_id) and not forced
         if tuned:
             body["thinking"] = {"type": "adaptive"}
             body["output_config"] = {"effort": effort}
         if stream:
             body["stream"] = True
         try:
-            return _send(p, body, stream, on_event, timeout)
+            return _send(p, body, stream, on_event, timeout, on_block, cancel)
         except urllib.error.HTTPError as e:
             detail = http_detail(e)
             if e.code == 400 and tuned and any(w in detail for w in ("thinking", "effort", "output_config")):
-                _STATE["tuning"] = False
+                _remember(p, model_id, tuning=False)
                 continue
             if e.code == 400 and "max_tokens" in detail and limit > 4096:
                 limit = max(4096, limit // 2)
@@ -534,7 +855,9 @@ def answer(system, prompt_or_messages, *, model="small", effort=None, schema=Non
     for, through a `structured_output` tool — offered (with the thinking
     the effort asks for) when there is an effort, else forced; a server that
     can't force one tool is asked for any, then for the JSON as text. A
-    reply missing a required key is told so once. AIError when it fails."""
+    reply missing a required key is told so once. fast: Meta's chat
+    endpoint first (the JSON as text, reasoning_effort minimal). AIError
+    when it fails."""
     if isinstance(prompt_or_messages, str):
         messages = [{"role": "user", "content": prompt_or_messages}]
     else:
@@ -548,6 +871,19 @@ def answer(system, prompt_or_messages, *, model="small", effort=None, schema=Non
     tool = {"name": STRUCTURED, "description": "Give your answer, as the JSON asked for. Call it once.",
             "input_schema": input_schema}
     base = system_text(system)
+    if fast:
+        # Meta's chat endpoint first (reasoning_effort "minimal"): the JSON
+        # as text, the Messages API when it isn't there or the JSON isn't.
+        p = provider or Provider.from_env()
+        provider = p
+        model_id = p.model(model)
+        if model_id and _fast_known(p, model_id) is not False:
+            msg = _fast(p, model_id, base + "\n\nAnswer with the JSON object alone, nothing else: "
+                        + json.dumps(input_schema, ensure_ascii=False), messages, max_tokens, timeout)
+            if msg is not None:
+                value, why = _structured(msg, schema, wrapped)
+                if why is None:
+                    return value
     choices = ([{"type": "auto"}] if effort in EFFORTS else []) + [{"type": "tool", "name": STRUCTURED},
                                                                     {"type": "any"}, None]
     told = False

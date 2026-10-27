@@ -25,6 +25,12 @@ import QtQuick
 // … Undo" line), three yeses in a row for one class bring a suggestion to
 // stop asking ({"type":"trust_suggest"}: `trustSuggest`, a chip), and a
 // standing_order tool result is a card to turn the order on (`orders`).
+//
+// Speed: the turn's final text is complete before its checks
+// ({"type":"answer"}: the message's `answered`, shown and read out at once;
+// `verify` comes after it), and each tool says when it starts, while the
+// answer still streams ({"type":"tool_started"}: `doing`, the bubble's
+// "Doing X…").
 QtObject {
     // Tool calls of the current answer, by id: "name input", shown with
     // their result in one block.
@@ -43,6 +49,12 @@ QtObject {
     property var report: null
     property bool clarify: false
     property string error: ""
+    // The tools running now (tool_started, until their result), by id ->
+    // name; `doing`: the one started last, as the bubble says it.
+    property var running: ({})
+    property string doing: ""
+    // The turn's final answer, before its checks (the `answer` event).
+    property string answer: ""
 
     function reset() {
         toolCalls = ({});
@@ -54,6 +66,17 @@ QtObject {
         report = null;
         clarify = false;
         error = "";
+        running = ({});
+        doing = "";
+        answer = "";
+    }
+    function _ran(id) {
+        if (!(id in running)) return;
+        const left = Object.assign({}, running);
+        delete left[id];
+        running = left;
+        const names = Object.values(left);
+        doing = names.length > 0 ? names[names.length - 1] : "";
     }
 
     // The answer's text as it streams, without its <report> block (the
@@ -176,17 +199,37 @@ QtObject {
                 if (block.type !== "tool_use") continue;
                 toolCalls[block.id] = `**${toolLabel(block.name)}** ${brief(block.input, 300)}`;
                 toolNames[block.id] = toolName(block.name);
-                setStep(block.id, { tool: toolName(block.name), summary: brief(block.input, 80), status: "run" });
+                // Started while the message streamed, maybe done already.
+                const before = steps.find(x => x.id === block.id);
+                setStep(block.id, { tool: toolName(block.name), summary: brief(block.input, 80),
+                                    status: before && before.status !== "run" ? before.status : "run" });
             }
         } else if (ev.type === "user") {
             for (const block of (ev.message?.content ?? [])) {
                 if (block.type !== "tool_result") continue;
+                _ran(block.tool_use_id);
                 const call = toolCalls[block.tool_use_id] ?? "**tool**";
                 const text = brief(resultText(block.content), 400);
                 setStep(block.tool_use_id, { status: block.is_error ? "error" : "ok", result: brief(resultText(block.content), 120) });
                 if (!block.is_error && toolNames[block.tool_use_id] === "standing_order") _order(message, resultText(block.content));
                 append(message, `\n\n<think>\n${call}\n\n${block.is_error ? "⚠ " : "→ "}${text}\n</think>\n\n`);
             }
+        } else if (ev.type === "tool_started") {
+            // Started as soon as its call was complete, the message still
+            // streaming (no approval needed).
+            const id = String(ev.id ?? "");
+            const name = toolName(ev.name);
+            running = Object.assign({}, running, { [id]: name });
+            doing = name;
+            if (!steps.some(x => x.id === id)) setStep(id, { tool: name, summary: "", status: "run" });
+        } else if (ev.type === "answer") {
+            // The final text, complete before the checks: shown as done and
+            // read out now; `verify` and `result` follow.
+            flush(message);
+            answer = stripReport(unmask(String(ev.text ?? "")));
+            message.answered = true;
+            message.thinking = false;
+            out.answer = answer;
         } else if (ev.type === "approval_request") {
             // A risky step waiting for the user's OK (--confirm).
             out.approval = { id: String(ev.id ?? ""), tool: toolName(ev.tool), input: ev.input ?? {},
@@ -207,6 +250,8 @@ QtObject {
         } else if (ev.type === "result") {
             flush(message);
             finished = true;
+            running = ({});
+            doing = "";
             out.finished = true;
             if (ev.is_error) {
                 const why = ev.result || (ev.errors ?? []).join("; ") || ev.subtype;

@@ -474,6 +474,31 @@ costs the model about width × height / 750 tokens (~1,250 at 1280px, `screensho
 most screenshots after an action change a small part (`full: true` sends
 it all).
 
+The tools wait as little as they can: `launch_app` polls for the new window
+every 50 ms and waits for a splash screen to give way only when its first
+window looks like one (no title, "splash"); `type_text` pastes as soon as the
+clipboard is its own (`wl-paste` checked, up to 0.3 s) and puts the old one
+back 0.4 s later; `run_steps`, `ui_act`, `restore_layout` and `record_start`
+wait on conditions instead of fixed sleeps. Replies are compact JSON. An
+acting tool that reads its own effect back (≤ 0.15 s: the window appeared or
+is gone, focused, moved; the player's state, the theme, Do Not Disturb, the
+equalizer; an event, task or note created with its id) says so in
+`_meta.verified: true`; the others carry `_meta.observe` {tool, args}, the
+read-only call that would show the effect, so a client checking its work
+needs no model to pick one. 29 tools carry `_meta["nixbook/core"]` (what most
+requests need: windows, apps, workspaces, keys, clicks, screenshots, `ui_*`,
+notifications, memory, standing orders, background tasks, Zen's tabs and
+pages, `machine_help`, `tool_help`) and every tool a `_meta["nixbook/bundle"]`
+(a finer grouping than its group: `pim`, `notifications`, `widgets`, `look`,
+`media`, `conversations`, `improve`), for clients loading tools by bundle.
+Long descriptions are trimmed to what a model needs to call the tool right
+(72 tools: 60k → 37k characters, the core ones 14.6k); the whole guide comes
+back with `help: true` on the tool, or from `tool_help {name}`.
+`machine_help {query}` (read-only) searches
+`~/.config/nixbook-shell/system-context.md` (how-tos, key bindings, Neovim
+keymaps, modules, packages) and returns the parts about the query, at most
+3000 characters, so prompts only carry its summary.
+
 **Desktop memory**, so the next task is faster: agents keep notes of what
 worked (`remember`: an app's shortcut, where a setting is, which app does
 what; `run_steps` with `remember_as` saves the steps as a recipe; `recall`,
@@ -596,7 +621,9 @@ time, 40 and 90 min: the agent reports no cost, so `budgetUsd` is unused;
 plain code applies `guard.go` (forbidden paths, `maxFiles`/`maxLines`, no
 new non-Markdown, deleted or binary files) and the checks (`treefmt`,
 `tests/run.sh shell|repo` by path, `tests/shell-loads.sh` at the base and
-with the change, comparing QML warnings without line numbers). It gives the
+with the change, comparing QML warnings without line numbers; the shell under
+test gets a scratch home and no session bus, niri socket, display or ssh
+agent of the user's session). It gives the
 session one retry with the output, then commits `fix|polish(scope): …`
 with an `Agent-Fix:` trailer, pushes and opens the PR with its own token
 (`token.go`: kept by secret-tool, `token set` on stdin from Settings; gh
@@ -651,7 +678,7 @@ screens on again or unlocked after a while, or the first start of the day:
 today's events and tasks, personal-memory events within 3 days or 2 days
 past, the usual session when not set up), `focus` (a new app in front, at
 most every 3 minutes: a broken recipe of it) with
-`ai.initiative.readNotifications`, `notifications` (batched for 45 s;
+`ai.initiative.readNotifications`, `notifications` (batched for 20 s;
 they and Routines' `happened` events reach it through `services/Reactor.qml`,
 the one event queue, which gives each event to at most one model decision:
 Full AI mode first while it is on, priority 0, the initiative at 10), and
@@ -716,9 +743,18 @@ call until clicked. Watches (the `watch` tool, `initiative.json`
 an offer's button that needs no thinking is
 done by the shell (`Initiative._direct`: `setup`, `tasks`, `settings`,
 `forget`, `log`; `extract` through `nixbook-desktop-mcp extract`), never a
-model run, and a plain command typed in the bubble (`QuickIntent.qml`:
-strict patterns, an app only when its name is certain) is done at once,
-the bubble saying what it did (kind `quick`, gone after 5 s);
+model run, and a plain command typed or said in the bubble
+(`QuickIntent.qml`: the music, the volume, the brightness, open / close /
+switch to an app, workspace N / next / previous, move the window to N, dark
+or light mode, Do Not Disturb, night light, a screenshot, lock, a timer, a
+pomodoro, a saved layout, a task, the settings; en/fr/de/vi; strict
+patterns, an app only when its name is certain) is done at once with no
+model, the bubble saying "Done: …" with Undo when it can be undone (kind
+`quick`, gone after 5 s). It also works in the middle of a conversation
+(`run(text, inConversation)`) for commands that name their target ("pause
+the music", "volume 30", "open Firefox"; never "pause", "next" nor "it" /
+"that": those go to the agent), and the turn is kept in the chat as a
+`quick` message that the session hears of with the next prompt;
 each small-model call is kept in `sent.jsonl` (`sent_note`, shown in
 Settings); with `policies.ai` 2, `ask_model` uses `localModel` (loopback
 only) for pairing and notifications. Left alone (25 s,
@@ -948,7 +984,11 @@ undoing are the user's clicks or command line (see the guardrails below).
   `flock`):
   `{id, text, status running|waiting|done|failed|stopped, started, updated, steps, approval?, question?, report?, answer?, sessionId, error?, told, trustSuggest}`;
   control socket `$XDG_RUNTIME_DIR/nixbook-shell/tasks/<id>.sock` (0600,
-  `SO_PEERCRED`), JSON lines `approval` / `answer` / `stop` / `status`. An
+  `SO_PEERCRED`), JSON lines `approval` / `answer` / `stop` / `status`; the
+  runner's and its agent's output (the agent's stderr) in
+  `$XDG_RUNTIME_DIR/nixbook-shell/tasks/<id>.log`, a failed agent's last line
+  there in the task's `error`; the agent inherits the runner's provider
+  settings (`NIXBOOK_AI_*`), else asks the provider itself. An
   approval or a clarifying question (or a final answer ending in "?") →
   `waiting` and `notify-send -a Muse` "Muse needs you: …"; done → a
   notification with the summary. Its notifications carry the hint
@@ -983,7 +1023,7 @@ the latest triage verdicts).
   in the event's `lang` ("Thomas wrote: …"). Each verdict is logged with its
   outcome. `Reactor.react` calls it first for notifications and cue events:
   drop → nothing more (Routines' fixed actions and digests had it already),
-  direct → `Initiative.direct` at once (no 45 s batch, no model; 20 an hour,
+  direct → `Initiative.direct` at once (no 20 s batch, no model; 20 an hour,
   `Reactor.directPerHour`, past that the model's path), model → today's path.
   Offers skip it.
 - **Context triggers** (`services/ContextTriggers.qml`, needs the initiative
@@ -1212,8 +1252,12 @@ running on a Claude subscription login). It sends the conversation to
 `POST $NIXBOOK_AI_BASE_URL/v1/messages` (`Authorization: Bearer`; the
 `anthropic-version` header is only the wire protocol Meta's API speaks) and
 loops through tool calls until the model answers; without
-`NIXBOOK_AI_KEY` (and no `NIXBOOK_AI_PROVIDED`) it re-execs itself through
-`nixbook-model-provider run`. Its command line is the usual print-mode one,
+`NIXBOOK_AI_KEY` (and no `NIXBOOK_AI_PROVIDED`) it takes the provider from
+`nixbook-model-provider env`, and re-execs itself through
+`nixbook-model-provider run` only when that fails. The wrappers run
+precompiled scripts (`meta-agent.pyc`, `quick-ai.pyc`, `muse-task.pyc`,
+`nix-onboard.pyc` in package.nix's `aiScripts`; the source beside them for
+tracebacks), so a start doesn't compile them. Its command line is the usual print-mode one,
 so callers changed little: the prompt on stdin (`-p`); `--model
 small|main|big` or a provider id (`haiku`/`sonnet`/`opus` still read as
 small/main/big); `--effort low|medium|high` (adaptive thinking, dropped
@@ -1250,20 +1294,45 @@ calls, `result` without it), `--lazy-mcp N` (a server other than the
 desktop's with more than N tools offered as one `open_tools__<server>` tool;
 the shell passes 12), `--learn` (a turn that acted: its episode {task, app
 from the desktop tools' replies, actions} to `nixbook-desktop-mcp episode
--`), `--resolve` (an action or an unclear request read first by the
-decisions model, schema {intent, readings, ambiguous, question}: ambiguous
-with two readings or more, the turn's answer is the question, result
-`clarify: true`, no tool run; else an `<intent>` line; not right after a
-question of its own) and `--verify` (after a turn that acted, a `[verify]`
-round with read-only tools only, schema {met, note}, one fix round of 4
-turns at most when not met; a `verify` event, result `verified`), `--trust`
+-`), `--resolve` (only a request a local heuristic finds plausibly
+ambiguous — an ordinal or "the other one", a verb alone, a pronoun with
+nothing in the last turn to point at; never one naming its app, a number or
+a target; not right after a question of its own — read by `ai.routing.resolve`
+(`small`, minimal effort) in parallel with the main call, schema {intent,
+readings, ambiguous, question}: the streamed text doesn't wait, the tools
+do, 12 s at most; ambiguous with two readings or more, the main stream is
+cancelled and the question is the answer, result `clarify: true`, no tool
+run) and `--verify` (the `verification` tool is in the list from the first
+call, so the prompt cache holds; after a turn that acted: nothing when every
+acting tool's reply carries `_meta.verified`, a `verify` event `by: "tools"`;
+else one call on `ai.routing.verify`, `small`, 300 tokens, given the turn's
+acting calls and the read-only re-observation the engine makes itself from
+their `_meta.observe`, schema {met, note}, no tool loop; not met → one fix
+round of 4 turns at most on the main model; a `verify` event, result
+`verified`), `--core-tools` (the desktop server's `nixbook/core` tools up
+front, the others behind one `open_tools__desktop_<bundle>` tool per
+`nixbook/bundle`, else group, loaded when it is called or one of its tools
+is; what was loaded persists across `--resume`), `--tool-result-max N` (MCP
+tool results cut to N characters for the model, 6000 by default, the
+built-ins keep their own limits unless it is given; JSON sent compact),
+`--max-tokens N` (16000; the shell passes 1200 for the bubble, 8000 for the
+panel), `--trust`
 (the trust ladder, see **Autonomy**), `--journal-source SRC` and `--task ID`
 (whose its journaled steps are) and `--fork-session` (with `--resume`: that
 conversation goes on under a session of its own). Every process it starts
 (Bash, MCP servers) has `NIXBOOK_META_AGENT_CHILD=1`. Other
-Claude Code flags are accepted and ignored. Events are stream-json lines of
+Claude Code flags are accepted and ignored. A tool call starts as soon as its
+`tool_use` block has streamed (its input complete), unless it waits for the
+user's OK or the resolver; the results are collected in block order when the
+message ends. The prompt cache gets breakpoints at the end of the tools, of
+the system prompt, of the previous turn and of the last user message; the
+older turns' `<context>` blocks are left out of what is sent (the transcript
+keeps them); thinking is never sent back. Events are stream-json lines of
 the usual shapes: `system`/`init` (session id, model, tools),
-`stream_event` deltas, `assistant`, `user` (tool results) and `result`
+`stream_event` deltas, `tool_started` {id, name} (a tool call running),
+`answer` {text} (the turn's answer as soon as it is complete, before the
+check; again with `revised: true` after a fix round, `clarify: true` for the
+resolver's question), `verify`, `assistant`, `user` (tool results) and `result`
 (`subtype` `success`, `error_max_turns` or `error_during_execution`, the
 answer, `structured_output`, usage; `total_cost_usd` always 0); exit 0, or
 1 on an error (the result is still printed). WebSearch reads DuckDuckGo's
@@ -1279,10 +1348,18 @@ event queue, for every AI feature.
   the scripts in the package; meta-agent, quick-ai, nix-onboard and
   desktop-mcp import it): `Provider.from_env()` (the `NIXBOOK_AI_*`
   environment, else `nixbook-model-provider env`, cached 10 minutes),
-  `call()` (retries 429/5xx/529 and network errors with backoff and
+  `call()` (on a kept-alive `http.client` connection: a small pool per host
+  and port, one SSL context per process, `Connection: keep-alive`, no gzip;
+  a stale connection is retried once on a fresh one, never after the server
+  started answering; behind a proxy, urllib; each tool call handed to
+  `on_block` as soon as it is complete, `Cancel` stops it from another
+  thread; retries 429/5xx/529 and network errors with backoff and
   `retry-after`, drops thinking/effort on a 400 naming them, halves
   `max_tokens` on one naming it, SSE streaming; `fast` without tools tries
-  Meta's `/v1/chat/completions` with `reasoning_effort: minimal` first),
+  Meta's `/v1/chat/completions` with `reasoning_effort: minimal` first;
+  what the server refused, the fast endpoint or the thinking settings, kept
+  a day in `$XDG_CACHE_HOME/nixbook-shell/provider-caps.json` by base URL
+  and model, `use_caps_cache()`, so a one-shot doesn't probe each time),
   `answer()` (text, or an object for a schema through a forced
   `structured_output` tool, then `tool_choice: any`, then JSON as text),
   `dm()` (a `nixbook-desktop-mcp` command through the helper socket, else a
@@ -1304,9 +1381,11 @@ event queue, for every AI feature.
   written by the shell every 60 s and on changes: time, weather, battery,
   events, music), `corrections`, `preferences`, `personal`, `desktop` (as
   `memory_digest`), `activity` (`recent.txt`), `habits`, in that order, each
-  with its share of the budget (6000 chat/bubble, 2500 react/triage, 1500
-  scan/text, 2000 routine/pair), whole lines dropped from the bottom; not
-  masked (callers mask). The notes it gave are kept 30 minutes
+  with its share of the budget (5000 chat, 3000 bubble, 2500 react/triage,
+  1500 scan/text, 2000 routine/pair), whole lines dropped from the bottom;
+  for `chat` and `bubble` a section about nothing in the query is left out
+  rather than filling the budget (a relevance floor; what matters most still
+  comes); contacts cached 30 s; not masked (callers mask). The notes it gave are kept 30 minutes
   (`context-given.json`) for feedback to credit. desktop-mcp's own passes
   build theirs with it too.
 - `nixbook-desktop-mcp feedback add JSON` ({verdict up|down, request,
@@ -1323,12 +1402,17 @@ event queue, for every AI feature.
   prewarmed by `Initiative.prepare()`; `Ai.agentScript` adds
   `--context-for bubble`, `--confirm <ai.quick.confirm>`, `--report`,
   `--lazy-mcp 12`, `--learn`, `--resolve` / `--verify` per
-  `ai.agent.resolve` / `ai.agent.verify`, and `--model <ai.routing.quick>`;
-  the side panel the same with `--context-for chat`, its own model and no
-  confirm/report). `approval_request` events are
-  the bubble's Allow / No chips, the report its REPORT brief, `clarify` /
-  `verify` its "? needs a detail" / "✓ Checked" / "⚠ Couldn't confirm" lines
-  (the panel's messages show them too). `scripts/quick-ai.py` keeps the
+  `ai.agent.resolve` / `ai.agent.verify`, `--core-tools` per
+  `ai.agent.coreTools`, `--tool-result-max 6000 --max-tokens 1200`, and
+  `--model <ai.routing.quick>`; the side panel the same with
+  `--context-for chat`, `--max-tokens 8000`, its own model and no confirm/report; the system
+  prompt masked through `DesktopHelper` beforehand, the script masking it
+  itself only as a fallback). `approval_request` events are
+  the bubble's Allow / No chips, the report its REPORT brief, `answer` shows
+  (and starts reading out) the answer at once, `tool_started` the status
+  "Doing X…", `clarify` / `verify` its "? needs a detail" / "… Checking it
+  worked" then "✓ Checked" / "⚠ Couldn't confirm" lines, arriving under the
+  shown answer (the panel's messages show them too). `scripts/quick-ai.py` keeps the
   one-shot modes (explain, summarize, translate, rewrite, fix, extract, ask,
   reply, screen, scan) and Full AI's `react`, their context from the broker
   (`text`, `scan`, `react`); its own tool loop is gone (`do` execs
@@ -1345,8 +1429,35 @@ event queue, for every AI feature.
   `quick` (the bubble's agent, `small`), `decisions` (`big`) with
   `decisionsEffort` (`low`) for what decides on the user's behalf: the
   initiative's consider and notification triage, pairing, a routine's
-  judgment (`routine_agent`, unless `routineModel` is set), Full AI's react
-  and `--resolve`. The memory passes keep `memoryModel`.
+  judgment (`routine_agent`, unless `routineModel` is set) and Full AI's
+  react; `resolve` and `verify` (both `small`) for `--resolve` and
+  `--verify`; `effortMinimal` (on): the checks, the reactions and the
+  one-shot modes ask minimal effort (no thinking where the server allows).
+  The memory passes keep `memoryModel`.
+- Speed (measured against the fake API, model time excluded): a bubble
+  request went from ~150 KB (≈ 37k tokens: system-context.md alone was
+  58.7k characters, 83 tool schemas 75k) to ~43 KB (≈ 11k); "open Firefox"
+  from 5 model calls (resolve, tool, text, verify, verification; ≈ 151k
+  tokens) to 2 (≈ 22k), its answer on screen at 169 ms instead of 672 ms;
+  "pause the music" to none (`QuickIntent`). The system prompt is
+  byte-stable (no clock, nothing live: those are the broker's `facts`) and
+  carries `system-context-summary.md` instead of the whole
+  `system-context.md` (`scripts/context-summary.py`, run by the Home Manager
+  module: host, shell, enabled modules, operating system, the niri binds one
+  line each, ≤ 6000 characters, what it left out named for `machine_help`;
+  bubble 64.6k → 10.2k characters, panel 64.5k → 11.8k); the bubble's also
+  drops the configured prompt's presentation sections (Markdown, tables,
+  LaTeX). Speech: `nixbook-voice-speak --stream` reads the answer on stdin
+  as it streams and says each sentence once complete (the next one made
+  while one plays), one process per answer fed by `Voice.qml` from the
+  deltas. Timers on the request path: the panel's prewarm at once (was
+  300 ms), Full AI's pump 400 ms (1.2 s), the voice's relisten 300 ms
+  (700 ms), the initiative's notification batch 20 s (45 s); the agents
+  stay warm `ai.agent.keepWarmMinutes` (60) while unlocked, 15 while
+  locked, and start again ahead on unlock or the screens waking
+  (`Ai.prewarmAll`). Settings → Desktop agents → Accuracy and models →
+  Speed (`ai.routing.effortMinimal`, `ai.agent.coreTools`,
+  `ai.agent.keepWarmMinutes`); how-tos `fastCommands`, `speedSettings`.
 
 **Muse in the side panel**: when `nixbook-meta-agent` is on the PATH (the
 package puts it there), the AI chat offers a **Muse** model (`/model muse`,
@@ -1363,7 +1474,9 @@ once). The agent (`Ai.agentScript`) keeps running between messages, each
 one a line on its stdin, so a message doesn't wait for it and the desktop
 MCP server to start: it starts when you open the panel on Muse, again
 (resuming the conversation's session, `agentSessionId`) when a setting or an
-attached file changes its command line, and closes after 15 minutes unused.
+attached file changes its command line, and closes after
+`ai.agent.keepWarmMinutes` (60) unused while unlocked, 15 while locked
+(started again ahead on unlock).
 Stop ends the agent process (SIGTERM; killed after 5 s); the next message
 resumes its session, which holds the turns it finished. It runs with the
 desktop MCP server attached (its guardrails, the pause button and the memory
@@ -1680,8 +1793,9 @@ answers you read. It works in plain code, with no model involved:
     holds what was really sent.
   - The side panel: the message and its context go through `privacy mask`,
     and so does the system prompt (the machine's context, your own words in
-    it, paths), in the script that starts `nixbook-meta-agent`. If either
-    fails, nothing is sent. Its `--privacy` covers the other MCP servers'
+    it, paths), through the shell's helper (`DesktopHelper`, a millisecond),
+    else in the script that starts `nixbook-meta-agent` (a process). If
+    either fails, nothing is sent. Its `--privacy` covers the other MCP servers'
     tools: their inputs unmasked and their results masked through
     `nixbook-desktop-mcp privacy unmask|mask --json`. WebSearch and
     WebFetch keep their placeholders. Answers are unmasked as they stream
@@ -1934,7 +2048,7 @@ ignored.
 ## Tests
 
 ```sh
-bash tests/scripts.sh
+bash tests/scripts.sh        # the shell's scripts (context-summary.py included)
 bash tests/desktop-mcp.sh    # the desktop control MCP server, against stub niri/wtype/grim… and a fake compositor
 bash tests/muse-task.sh      # background tasks (nixbook-muse-task), against the fake Messages API and a stub desktop-mcp
 nix-instantiate --eval --strict --json --expr 'import ./tests/lib.nix { }'   # []

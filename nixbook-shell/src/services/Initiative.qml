@@ -501,12 +501,18 @@ Singleton {
         const said = String(text ?? "").trim()
         if (said.length === 0) return
         const item = root.speaking
-        // A plain command asked for (open an app, pause the music, dark
-        // mode…): done at once, no Muse run; it says what it did.
-        if (root.isAsk(item) && !root.conversing && !attach) {
-            const did = QuickIntent.run(said)
-            if (did.length > 0) {
-                root.speaking = { id: "", kind: "quick", text: did }
+        root.lastQuickText = ""
+        // A plain command asked for (open an app, pause the music, volume
+        // 30, workspace 2, dark mode…): done at once, no Muse run, zero
+        // tokens, at any point of a conversation; in one, only when it names
+        // what it acts on (never "pause it": that one is Muse's). It says
+        // what it did ("Done: …", with Undo when it can be undone), and the
+        // turn goes in the conversation as an offSession note: the agent
+        // hears of it with the next message (Ai.agentPrompt).
+        if (!attach) {
+            const did = QuickIntent.run(said, root.conversing)
+            if (did) {
+                root._quickDone(item, said, did)
                 return
             }
         }
@@ -525,6 +531,34 @@ Singleton {
         if (attach) root.chat.attachFile(attach)
         if (DesktopControl.refuseIfAgentInput(Translation.tr("a message to Muse in the speech bubble"))) return
         root.chat.sendFromBubble(said, root.skipContext ? { noActivity: true } : {}, said)
+    }
+    // What the last plain command did, said out loud by Voice (deliver).
+    property string lastQuickText: ""
+    function _quickDone(item, said, did) {
+        root.lastQuickText = did.text
+        const line = Translation.tr("Done: %1").arg(did.text)
+        if (!root.chat) root.prepare()
+        const chat = root.chat
+        if (!chat) {
+            root.speaking = { id: "", kind: "quick", text: line }
+            return
+        }
+        if (!root.isAsk(item)) root._taken(item)
+        chat.addMessage(said, "user")
+        chat.addMessage(line, "assistant")
+        const ids = chat.messageIDs
+        const answer = chat.messageByID[ids[ids.length - 1]]
+        const asked = chat.messageByID[ids[ids.length - 2]]
+        if (asked) {
+            asked.offSession = true
+            asked.quick = true
+        }
+        if (answer) {
+            answer.offSession = true
+            answer.quick = true
+            answer.quickUndo = did.undo ?? null
+        }
+        chat.lastActivity = Date.now()
     }
     // A routine it offered: "Yes, do it" turns it on.
     function accept(from) {
@@ -976,7 +1010,9 @@ Singleton {
     // Notifications (from the Reactor, _take), in batches: a burst is read once.
     Timer {
         id: batchTimer
-        interval: 45000
+        // 20 s: a burst still read once (the urgent ones are said at once by
+        // the triage, services/Reactor.qml).
+        interval: 20000
         onTriggered: {
             const items = root._batch
             root._batch = []

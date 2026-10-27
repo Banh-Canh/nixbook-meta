@@ -95,11 +95,17 @@ Scope {
         }
         return out.slice(-8)
     }
-    // While it answers: what it is doing (its last tool), else thinking.
+    // While it answers: what it is doing (the tool running now, said the
+    // moment it starts: meta-agent's tool_started; else its last tool),
+    // else thinking; nothing once the answer is there (its checks follow,
+    // under it).
     readonly property string status: {
         if (!root.responding) return ""
+        const doing = root.chat?.strategy?.doing ?? ""
+        if (doing) return Translation.tr("Doing %1…").arg(doing.replace(/_/g, " "))
         const ids = root.chat.messageIDs
         const m = ids.length > 0 ? root.chat.messageByID[ids[ids.length - 1]] : null
+        if (m?.answered) return ""
         const raw = m?.rawContent ?? ""
         const open = raw.lastIndexOf("<think>") > raw.lastIndexOf("</think>")
         const re = /<think>\n\*\*([^*]+)\*\*/g
@@ -112,6 +118,17 @@ Scope {
     readonly property bool asks: /[?？]\s*$/.test(root.item?.text ?? "")
     // Quick answers under what it said: {label, main, run}.
     readonly property var chips: {
+        // A plain command just done at once (QuickIntent): its Undo.
+        const last = root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+        if (!root.responding && last?.role === "assistant" && typeof last?.quickUndo === "function")
+            return [{ label: Translation.tr("Undo"), main: false, run: () => {
+                const undo = last.quickUndo
+                last.quickUndo = null
+                undo()
+                const note = ` (${Translation.tr("undone")})`
+                last.content += note
+                last.rawContent += note
+            } }]
         // Quick AI's: Allow / No, the replies, a region's modes, Copy.
         if (root.quick && QuickAi.chips.length > 0) return QuickAi.chips
         const it = root.item
@@ -582,15 +599,22 @@ Scope {
                     RowLayout {
                         id: checks
                         readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+                        // The answer is there, its check still running
+                        // (meta-agent's answer before verify): said so, the
+                        // ✓ / ⚠ replaces it when it comes.
+                        readonly property bool pending: root.responding && checks.last?.answered === true && !checks.last?.verify
+                            && (Config.options.ai.agent.verify ?? true) && (root.chat?.strategy?.steps?.length ?? 0) > 0
                         Layout.fillWidth: true
-                        visible: root.conversing && !threadList.visible && !root.responding && checks.last?.role === "assistant"
-                            && ((checks.last?.clarify ?? false) || !!checks.last?.verify)
+                        visible: root.conversing && !threadList.visible && checks.last?.role === "assistant"
+                            && (checks.pending || ((!root.responding || checks.last?.answered === true)
+                                && ((checks.last?.clarify ?? false) || !!checks.last?.verify)))
                         spacing: 6
                         StyledText {
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
                             textFormat: Text.PlainText
-                            text: checks.last?.clarify ? Translation.tr("? Muse needs a detail before doing anything")
+                            text: checks.pending ? Translation.tr("… Checking it worked")
+                                : checks.last?.clarify ? Translation.tr("? Muse needs a detail before doing anything")
                                 : checks.last?.verify?.met ? Translation.tr("✓ Checked: done")
                                 : Translation.tr("⚠ Couldn't confirm it worked%1").arg(checks.last?.verify?.note ? `: ${checks.last.verify.note}` : "")
                             font.family: root.font

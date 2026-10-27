@@ -167,7 +167,7 @@ Singleton {
     // over an order of the user's being done or the mascot speaking.
     Timer {
         id: pump
-        interval: 1200
+        interval: 400
         onTriggered: {
             if (!root.active || root.reacting || root.queue.length === 0) return;
             if (QuickAi.busy || QuickAi.pending) { pump.restart(); return; }
@@ -277,8 +277,9 @@ Singleton {
             flashOff.restart();
             saidOff.restart();
             talk.restart();
-            // Said out loud: the report's outcome (and what needs the user).
-            Voice.speak(Voice.lastAnswer() || root.said);
+            // Said out loud: the report's outcome (and what needs the user),
+            // unless the answer was read out as it streamed.
+            if (!Voice.streamedTurn) Voice.speak(Voice.lastAnswer() || root.said);
         }
     }
     Timer {

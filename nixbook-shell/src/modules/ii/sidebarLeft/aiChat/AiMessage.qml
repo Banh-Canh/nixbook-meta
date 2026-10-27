@@ -515,7 +515,10 @@ Rectangle {
         // question back instead of a guess, and what it did looked at again.
         RowLayout {
             Layout.fillWidth: true
-            visible: (root.messageData?.done ?? false) && ((root.messageData?.clarify ?? false) || root.messageData?.verify)
+            // Also before the turn's end: the check can come after the
+            // answer (meta-agent's answer, then verify).
+            visible: ((root.messageData?.done ?? false) || (root.messageData?.answered ?? false))
+                && ((root.messageData?.clarify ?? false) || root.messageData?.verify)
             spacing: 6
             MaterialSymbol {
                 text: root.messageData?.clarify ? "help" : root.messageData?.verify?.met ? "task_alt" : "error"

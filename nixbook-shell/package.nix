@@ -71,7 +71,11 @@ let
 
   # The scripts that call the model, next to the client they share
   # (scripts/nixbook_ai.py: each puts its own directory on sys.path, -I
-  # leaves PYTHONPATH out), the client precompiled for its imports.
+  # leaves PYTHONPATH out), all precompiled: a script run as __main__ is
+  # never cached, and compiling meta-agent.py alone took ~60 ms of every
+  # agent start (the bubble's, each routine run, each background task).
+  # SCRIPT.pyc is what the wrappers run (tracebacks still show the
+  # source, kept next to it), the client's in __pycache__ for its import.
   aiScripts = pkgs.runCommand "nixbook-ai-scripts" { } ''
     mkdir -p $out
     cp ${./scripts/nixbook_ai.py} $out/nixbook_ai.py
@@ -79,15 +83,23 @@ let
     cp ${./scripts/quick-ai.py} $out/quick-ai.py
     cp ${./scripts/nix-onboard.py} $out/nix-onboard.py
     cp ${./scripts/muse-task.py} $out/muse-task.py
-    ${pkgs.python3}/bin/python3 -c 'import importlib.util, py_compile, sys; py_compile.compile(sys.argv[1], cfile=importlib.util.cache_from_source(sys.argv[1]), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)' $out/nixbook_ai.py
+    ${pkgs.python3}/bin/python3 -c '
+    import importlib.util, py_compile, sys
+    out = sys.argv[1]
+    mode = py_compile.PycInvalidationMode.UNCHECKED_HASH
+    py_compile.compile(out + "/nixbook_ai.py", cfile=importlib.util.cache_from_source(out + "/nixbook_ai.py"), doraise=True, invalidation_mode=mode)
+    for name in ("meta-agent", "quick-ai", "nix-onboard", "muse-task"):
+        py_compile.compile(f"{out}/{name}.py", cfile=f"{out}/{name}.pyc", dfile=f"{out}/{name}.py", doraise=True, invalidation_mode=mode)
+    ' $out
   '';
 
   # The headless agent on Meta's Model API (scripts/meta-agent.py,
   # `nixbook-meta-agent`): a print-mode command line and stream-json
   # events, built-in tools (files, Bash, the web) and MCP servers. Every
   # agent the shell starts runs it (the side panel's Muse, the equalizer
-  # agent, desktop-mcp's passes and routines, nixbook-improve); it re-runs
-  # itself through nixbook-model-provider for the key.
+  # agent, desktop-mcp's passes and routines, nixbook-improve); the key
+  # from `nixbook-model-provider env` (run again through `run` only when
+  # that fails).
   metaAgent = pkgs.writeShellScriptBin "nixbook-meta-agent" ''
     export PATH=${
       lib.makeBinPath [
@@ -97,7 +109,7 @@ let
         pkgs.coreutils
       ]
     }:$PATH
-    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/meta-agent.py "$@"
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/meta-agent.pyc "$@"
   '';
 
   # Muse's background tasks (scripts/muse-task.py, `nixbook-muse-task`):
@@ -114,7 +126,7 @@ let
       ]
     }:$PATH:/run/current-system/sw/bin
     export NIXBOOK_META_AGENT=${metaAgent}/bin/nixbook-meta-agent
-    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/muse-task.py "$@"
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/muse-task.pyc "$@"
   '';
 
   # Quick AI's answers (scripts/quick-ai.py, services/QuickAi.qml): the
@@ -123,7 +135,7 @@ let
   quickAi = pkgs.writeShellScriptBin "nixbook-quick-ai" ''
     # `do`: handed to nixbook-meta-agent.
     export PATH=$PATH:${metaAgent}/bin
-    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/quick-ai.py "$@"
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/quick-ai.pyc "$@"
   '';
 
   # Quick AI's voice (scripts/voice-transcribe.sh, services/Voice.qml):
@@ -261,7 +273,7 @@ let
     export NIXBOOK_NIXPKGS_LIB=${nixOnboardInputs}/nixpkgs-lib
     # nix-instantiate: the system's (the shell's PATH may not carry it).
     export PATH=$PATH:/run/current-system/sw/bin
-    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/nix-onboard.py "$@"
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/nix-onboard.pyc "$@"
   '';
 
   # Desktop control for AI agents (scripts/desktop-mcp.py): an MCP server

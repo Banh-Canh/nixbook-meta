@@ -285,6 +285,49 @@ else
   fail "assistant-facts.py: works without keybinds (niri disabled)" "$(cat "$tmp/err")"
 fi
 
+# -- context-summary.py: the machine part of Muse's system prompt -------------
+cat >"$tmp/context.md" <<'CTX'
+# System context
+
+## This machine
+Host totoro, an ASUS Zenbook, user khoa.
+
+## Desktop shell (nixbook-shell)
+The shell draws the bar and the panels.
+Settings set in Nix on this machine:
+- `bar.bottom` = `false`
+- `appearance.persona.enable` = `true`
+
+## Operating system
+NixOS unstable, kernel 7.2.
+
+## How things are done on this machine
+Apply a change with colmena apply-local --sudo switch. A very long how-to.
+
+## Keyboard shortcuts (niri)
+```
+binds {
+    Mod+Q { close-window; }
+    Mod+D { spawn "nixbook-shell" "ipc" "call" "search" "toggle"; }
+    Mod+Return { spawn "kitty"; }
+}
+```
+CTX
+summary=$(python3 "$scripts/context-summary.py" "$tmp/context.md" 6000)
+expect_contains "context-summary.py: keeps the machine" "$summary" "Host totoro"
+expect_contains "context-summary.py: the Nix-set settings counted, not listed" "$summary" \
+  "locked in its Settings window): 2."
+expect_contains "context-summary.py: a bind, one line" "$summary" "Mod+Q close-window"
+expect_contains "context-summary.py: a shell IPC bind named" "$summary" "Mod+D shell search toggle"
+expect_contains "context-summary.py: another spawn named" "$summary" "Mod+Return run kitty"
+expect_eq "context-summary.py: the how-tos left for machine_help" "" \
+  "$(grep -F 'A very long how-to' <<<"$summary" || true)"
+expect_contains "context-summary.py: points to machine_help" "$summary" "machine_help"
+expect_eq "context-summary.py: deterministic (byte-stable for the prompt cache)" "$summary" \
+  "$(python3 "$scripts/context-summary.py" "$tmp/context.md" 6000)"
+expect_eq "context-summary.py: the cap holds" 1 \
+  "$([ "$(python3 "$scripts/context-summary.py" "$tmp/context.md" 200 | wc -c)" -le 220 ] && echo 1 || echo 0)"
+
 # -- theme-palettes.py + greeter-theme.sh: the login screen theme -------------
 
 if python3 "$scripts/theme-palettes.py" "$root/src/modules/common/themes.json" >"$tmp/palettes.json" 2>"$tmp/err"; then

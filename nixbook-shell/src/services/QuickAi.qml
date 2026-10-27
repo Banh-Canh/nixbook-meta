@@ -501,9 +501,10 @@ Singleton {
             // is on and the user didn't take it off with the bubble's ×).
             activity: RecentContext.enabled && !Initiative.skipContext ? RecentContext.text : "",
             facts: root.facts(),
-            // What the side panel's Muse knows (its system prompt: the
-            // configured one, this machine and the live settings).
-            panel: Ai.stableSystemPrompt,
+            // What Muse in the bubble knows (its system prompt: the
+            // configured one without its presentation rules, this machine's
+            // summary), byte-stable: the cached prefix of the call.
+            panel: Ai.stableBubblePrompt,
         };
         // Modes about a text or an image ask nothing themselves.
         if (!c.question && !followUp) req.question = "";

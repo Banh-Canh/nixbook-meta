@@ -12,7 +12,10 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
     streamed when the request asks for it. The file may also be an object
     {steps: [the list], system: {TEXT: reply}}: a request whose system
     prompt contains TEXT gets that reply (a side call: the agent's request
-    resolver), the others the steps;
+    resolver), the others the steps. A reply object may also carry
+    "delay" (seconds before answering) and "hold" (seconds after its last
+    content block, before message_stop: a tool call complete while the
+    message still streams);
   - text with RETRY429:N: an HTTP 429 (retry-after 0) the first N times;
   - GET /page: an HTML page; GET /search?q=: a search engine's results page;
   - tools offered: a tool call (launch_app firefox, or close_window 7 when
@@ -21,20 +24,31 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
   - text with FAIL500: an HTTP 500; NOEFFORT: a 400 while output_config is
     sent; BIGTOKENS: a 400 naming max_tokens above 8192; PRIVATE: an answer
     naming the masked person back;
+  - text with CLOSEAFTER: answered, then the connection dropped without a
+    word (a keep-alive connection the server closed: the client's next
+    request on it fails and is sent again on a new one);
   - otherwise "Hello world", streamed in two deltas when asked to stream.
+
+HTTP/1.1 with keep-alive (streams chunked), one thread per connection; each
+logged request also carries t (when it arrived), conn (its connection's
+number) and bytes (its body's size).
 """
 
 import json
 import os
 import re
 import sys
+import threading
+import time
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT_FILE, LOG = sys.argv[1], sys.argv[2]
 SCRIPTS = sys.argv[3] if len(sys.argv) > 3 else ""
 count = 0
+conns = 0
 busy = {}
+lock = threading.Lock()
 
 PAGE = """<!doctype html><html><head><title>Fake page</title><style>p{color:red}</style>
 <script>var hidden = 1;</script></head><body><h1>Muse news</h1><p>The answer is <b>42</b>.</p></body></html>"""
@@ -89,8 +103,37 @@ def text_of(body):
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, *args):
         pass
+
+    def setup(self):
+        global conns
+        super().setup()
+        with lock:
+            conns += 1
+            self.conn_no = conns
+
+    def stream(self, events, hold=0.0, hold_after=None):
+        """Events as a chunked text/event-stream; HOLD seconds after the
+        event HOLD_AFTER (an index) before the rest."""
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("transfer-encoding", "chunked")
+        self.end_headers()
+        try:
+            for i, ev in enumerate(events):
+                data = f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()
+                self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
+                self.wfile.flush()
+                if hold and i == hold_after:
+                    time.sleep(hold)
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # The client went away (a stream it cancelled).
+            self.close_connection = True
 
     def send(self, code, obj):
         data = json.dumps(obj).encode()
@@ -109,6 +152,7 @@ class Handler(BaseHTTPRequestHandler):
             data, ctype = SEARCH.replace("NixOS", "NixOS" if q else "none").encode(), "text/html"
         else:
             self.send_response(404)
+            self.send_header("content-length", "0")
             self.end_headers()
             return
         self.send_response(200)
@@ -135,6 +179,8 @@ class Handler(BaseHTTPRequestHandler):
         if isinstance(reply, dict) and "otherwise" in reply:
             # {"tool_choice": A, "otherwise": B}: A when a tool is forced.
             reply = reply["tool_choice"] if body.get("tool_choice") else reply["otherwise"]
+        if isinstance(reply, dict) and reply.get("delay"):
+            time.sleep(float(reply["delay"]))
         if isinstance(reply, dict) and "status" in reply:
             self.send(reply["status"], {"type": "error", "error": {"message": reply.get("error", "")}})
             return True
@@ -146,20 +192,30 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, {"type": "message", "role": "assistant", "model": body.get("model"), "content": content,
                             "stop_reason": stop, "usage": {"input_tokens": 10, "output_tokens": 5}})
             return True
-        self.send_response(200)
-        self.send_header("content-type", "text/event-stream")
-        self.end_headers()
-        for ev in events_of(content, stop, body.get("model")):
-            self.wfile.write(f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode())
-        self.wfile.flush()
+        events = events_of(content, stop, body.get("model"))
+        hold = float(reply.get("hold") or 0) if isinstance(reply, dict) else 0.0
+        # Held after the last content block's stop (before message_delta).
+        last_stop = max((i for i, ev in enumerate(events) if ev["type"] == "content_block_stop"), default=None)
+        self.stream(events, hold, last_stop)
         return True
 
     def do_POST(self):
         global count
-        count += 1
-        body = json.loads(self.rfile.read(int(self.headers["content-length"])))
-        with open(LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"n": count, "path": self.path, "body": body}, ensure_ascii=False) + "\n")
+        raw = self.rfile.read(int(self.headers["content-length"]))
+        body = json.loads(raw)
+        with lock:
+            count += 1
+            n = count
+            with open(LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"n": n, "t": time.time(), "conn": self.conn_no, "bytes": len(raw),
+                                    "path": self.path, "body": body}, ensure_ascii=False) + "\n")
+        self.answer(body)
+        if "CLOSEAFTER" in text_of(body) and not busy.get(("closed", n)):
+            # Dropped without a word, as a server closing an idle connection.
+            busy[("closed", n)] = True
+            self.close_connection = True
+
+    def answer(self, body):
         if self.headers.get("Authorization") != "Bearer test-key":
             return self.send(401, {"error": {"message": "bad key"}})
         text = text_of(body)
@@ -187,7 +243,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"content": [{"type": "text", "text": content}]})
         m = re.search(r"RETRY429:(\d+)", text)
         if m:
-            busy[m.group(0)] = busy.get(m.group(0), 0) + 1
+            with lock:
+                busy[m.group(0)] = busy.get(m.group(0), 0) + 1
             if busy[m.group(0)] <= int(m.group(1)):
                 data = json.dumps({"error": {"message": "slow down"}}).encode()
                 self.send_response(429)
@@ -244,20 +301,19 @@ class Handler(BaseHTTPRequestHandler):
             answer = "Hello world"
         if not body.get("stream"):
             return self.send(200, {"content": [{"type": "text", "text": answer}]})
-        self.send_response(200)
-        self.send_header("content-type", "text/event-stream")
-        self.end_headers()
         pieces = ["Hello ", "world"] if answer == "Hello world" else [answer]
         events = [{"type": "message_start", "message": {"model": body.get("model")}},
                   {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}]
         events += [{"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": p}} for p in pieces]
         events += [{"type": "message_stop"}]
-        for ev in events:
-            self.wfile.write(f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode())
-        self.wfile.flush()
+        self.stream(events)
 
 
-server = HTTPServer(("127.0.0.1", 0), Handler)
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+
+server = Server(("127.0.0.1", 0), Handler)
 with open(PORT_FILE, "w") as f:
     f.write(str(server.server_address[1]))
 server.serve_forever()

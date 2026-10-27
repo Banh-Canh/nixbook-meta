@@ -321,7 +321,13 @@ def turn(path):
 
 def main(argv):
     if len(argv) == 3 and argv[1] == "turn":
-        nixbook_ai.ensure_provider(argv[1:], __file__)
+        # The key: the environment's, else `nixbook-model-provider env`; run
+        # again through `run` only when that fails.
+        nixbook_ai.use_caps_cache()
+        try:
+            nixbook_ai.Provider.from_env()
+        except nixbook_ai.AIError as e:
+            nixbook_ai.ensure_provider(argv[1:], __file__, why=str(e))
         return turn(argv[2])
     if len(argv) == 2 and argv[1] == "catalog":
         print(catalog())

@@ -63,15 +63,38 @@ to do behind the options below (all off by default).
                              failed, needsYou}, `result` without the block
   --lazy-mcp N               an MCP server (not the desktop's) with more than N
                              tools offered as one open_tools__SERVER tool
+  --core-tools               the desktop server's core tools (its
+                             _meta["nixbook/core"]) up front, the others by
+                             bundle (_meta["nixbook/bundle"], else its
+                             group) behind one
+                             open_tools__desktop_GROUP tool each, loaded when
+                             it is called (or one of its tools is)
+  --tool-result-max N        what a tool answers, cut to N characters for the
+                             model (MCP tools: 6000 by default; the built-ins
+                             keep their own limits unless it is given); JSON
+                             sent compact
+  --max-tokens N             the answer's limit (16000; the bubble 1200)
   --learn                    a turn that acted: its episode {task, app,
                              actions} to `nixbook-desktop-mcp episode -`
-  --resolve                  a request for an action, or an unclear one, read
-                             first by the decisions model (ai.routing): an
-                             ambiguous one gets a clarifying question back
-                             (result `clarify: true`), else its <intent>
-  --verify                   after a turn that acted: a check with read-only
-                             tools ({"type": "verify", met, note}; result
-                             `verified`), one fix round when it isn't done
+  --resolve                  a request that may be ambiguous (a local
+                             heuristic: "close it" with nothing to point at,
+                             "the other one", a verb alone; never one naming
+                             its app, number or target) read by the routing's
+                             resolve model (ai.routing.resolve, small) in
+                             parallel with the main call: the tools wait for
+                             its verdict, the text doesn't; an ambiguous one
+                             stops the call and gets a clarifying question
+                             back (result `clarify: true`)
+  --verify                   after a turn that acted: nothing when every
+                             acting tool checked its own effect (its reply's
+                             _meta.verified), else one check by the routing's
+                             verify model (ai.routing.verify, small): the
+                             acting calls and the re-observation the engine
+                             makes (_meta.observe), a single call ({"type":
+                             "verify", met, note}; result `verified`); one fix
+                             round when it isn't done. The `verification`
+                             tool is offered from the first call (the prompt
+                             cache stays valid)
   --trust                    the trust ladder: each step that doesn't only
                              read is of a class (nixbook_ai.action_class:
                              `close_window@firefox`, `calendar:add`) the user
@@ -90,19 +113,22 @@ to do behind the options below (all off by default).
   --fork-session             with --resume: a copy of that conversation goes on
                              under a session of its own (--session-id or new)
 
-Stdlib only.
+Events besides the usual ones (stream-json): {"type": "tool_started", id,
+name} as soon as a tool runs (a tool call runs as soon as its block has
+streamed, unless it waits for the user or the resolver), {"type": "answer",
+text} as soon as the turn's answer is complete (before the check; again with
+"revised": true after a fix round), then the result.
+
+The prompt cache: breakpoints at the end of the tools, of the system prompt,
+of the previous turn and of the last user message; the older turns' <context>
+blocks are left out of what is sent (the transcript keeps them).
+
+Stdlib only; the heavy modules (the web's, http) imported when first used.
 """
 
-import base64
-import concurrent.futures
-import queue
-import fnmatch
-import hashlib
-import html
-import html.parser
-import ipaddress
 import json
 import os
+import queue
 import re
 import shutil
 import signal
@@ -111,9 +137,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 
 # The shared client (nixbook_ai.py), next to this script in the source tree
@@ -129,16 +152,22 @@ VALUE_FLAGS = {"--model", "--effort", "--system-prompt", "--append-system-prompt
                "--resume", "-r", "--session-id", "--setting-sources", "--settings", "--permission-mode", "--name",
                "--fallback-model", "--system-prompt-file", "--append-system-prompt-file", "--agents",
                "--permission-prompt-tool", "--debug-file", "--context-for", "--confirm", "--lazy-mcp",
-               "--journal-source", "--task"}
+               "--journal-source", "--task", "--tool-result-max", "--max-tokens"}
 MULTI_FLAGS = {"--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools", "--add-dir",
                "--write-dir", "--mcp-config", "--plugin-dir", "--betas"}
 BOOL_FLAGS = {"-p", "--print", "--verbose", "--include-partial-messages", "--strict-mcp-config",
               "--no-session-persistence", "--privacy", "--restricted", "--safe-mode", "--continue", "-c",
               "--dangerously-skip-permissions", "--fork-session", "--replay-user-messages", "--debug", "-d",
-              "--report", "--learn", "--resolve", "--verify", "--trust"}
+              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools"}
 
 MAX_TOKENS = int(os.environ.get("NIXBOOK_AI_MAX_TOKENS") or 16000)
 TOOL_OUTPUT_MAX = 60000
+# What an MCP tool's answer may be for the model (--tool-result-max).
+TOOL_RESULT_MAX = 6000
+# The checks' answers (the resolver's, the verifier's): short.
+CHECK_TOKENS = 300
+# How long the tools wait for the resolver's verdict at most.
+RESOLVE_WAIT = float(os.environ.get("NIXBOOK_AGENT_RESOLVE_WAIT") or 12)
 READ_LINES = 2000
 LINE_MAX = 2000
 IMAGE_MAX = 5 * 1024 * 1024
@@ -157,8 +186,11 @@ SKIP_DIRS = {".git", "node_modules", ".direnv", "__pycache__", ".devenv", "resul
 STRUCTURED = nixbook_ai.STRUCTURED
 # The tool the verification round (--verify) answers through.
 VERIFY = "verification"
-VERIFY_TURNS = 4
 FIX_TURNS = 4
+VERIFY_SPEC = {"name": VERIFY, "description": "Only when the computer asks you to check ([verify]): say whether what "
+               "the user asked for is done (met) and what you saw (note, one line).",
+               "input_schema": {"type": "object", "properties": {"met": {"type": "boolean"}, "note": {"type": "string"}},
+                                "required": ["met", "note"]}}
 # The built-ins that only read.
 READ_BUILTINS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
 # The MCP server whose tools are always given up front (--lazy-mcp): the
@@ -196,9 +228,15 @@ RESOLVE_SCHEMA = {"type": "object", "properties": {
 VERIFY_SCHEMA = {"type": "object", "properties": {"met": {"type": "boolean"}, "note": {"type": "string"}},
                  "required": ["met", "note"]}
 VERIFY_PROMPT = (
-    "[verify] Before answering the user: check, with tools that only read (looking at the windows, the screen, the "
-    "lists; nothing that changes anything: those are refused now), whether what they asked for is really done. Then "
-    "call `verification` with met (true when it is done) and note (one line: what you saw)."
+    "[verify] Before answering the user: from the steps' replies and what the computer sees now (below), is what "
+    "they asked for really done? Call `verification` with met (true when it is done) and note (one line: what you "
+    "saw)."
+)
+VERIFY_SYSTEM = (
+    "You check whether the user's desktop agent (nixbook: NixOS, the niri compositor, its own shell) did what the "
+    "user asked. You get the request, the steps it took with their replies, and what the computer sees now. Call "
+    "`verification` with met = true when the request is done, false when it clearly isn't, and note = one short line "
+    "of what you saw. When the replies say it worked and nothing contradicts them, it is done."
 )
 # A request that asks for something to be done, in the user's languages, or
 # that points at something ("it", "that") without naming it: read first
@@ -213,6 +251,25 @@ ACTION_WORDS = re.compile(
     r"nh[ắa]c|t[ìi]m)\b", re.I)
 DEICTIC = re.compile(r"\b(it|this|that|these|those|them|him|her|there|ça|cela|celui|celle|lui|das|dies|es|ihn|dort|"
                      r"nó|đó|này)\b", re.I)
+# "The other one", "the second one", "the last one" (fr, de, vi too).
+ORDINAL = re.compile(r"\b(the\s+)?(other|second|third|last|previous|first)\s+one\b|\bthe\s+other\b|\bl'autre\b|"
+                     r"\b(le|la)\s+(deuxi[eè]me|troisi[eè]me|derni[eè]re?|premi[eè]re?|pr[ée]c[ée]dente?)\b|"
+                     r"\b(der|die|das|den)\s+(andere|anderen|zweite|zweiten|letzte|letzten|erste|ersten)\b|"
+                     r"\bc[áa]i\s+(kia|kh[áa]c|th[ứu]\s+hai|cu[ốo]i)\b", re.I)
+# A request naming its target: a number, a quoted name, a known app or thing
+# (then the resolver isn't needed).
+CONCRETE = re.compile(
+    r"\d|[\"«“'][^\"»”']{2,}[\"»”']|\b(firefox|zen|browser|navigateur|browser|chrome|chromium|kitty|terminal|"
+    r"konsole|shell|dolphin|files?|fichiers?|dateien|nautilus|spotify|music|musique|musik|nh[ạa]c|song|track|"
+    r"chanson|lied|youtube|vesktop|discord|slack|signal|telegram|whatsapp|thunderbird|mail|email|e-mail|calendar|"
+    r"calendrier|kalender|l[ịi]ch|settings|param[eè]tres|einstellungen|c[àa]i\s+đ[ặa]t|steam|obsidian|code|vscode|"
+    r"vim|nvim|neovim|editor|[ée]diteur|volume|lautst[äa]rke|[âa]m\s+l[ượu]ng|brightness|luminosit[ée]|helligkeit|"
+    r"workspace|bureau|arbeitsbereich|wallpaper|fond\s+d'[ée]cran|hintergrund|theme|th[èe]me|screenshot|capture|"
+    r"bildschirmfoto|notification|notifications|benachrichtigung|wifi|wi-fi|bluetooth|night\s+light|dnd|"
+    r"do\s+not\s+disturb|window|fen[êe]tre|fenster|c[ửu]a\s+s[ổo]|tab|onglet|weather|m[ée]t[ée]o|wetter|th[ờo]i\s+ti[ếe]t|"
+    r"battery|batterie|akku|pin)\b", re.I)
+POLITE = {"please", "pls", "plz", "now", "stp", "svp", "bitte", "jetzt", "maintenant", "đi", "giùm", "giúp", "nhé",
+          "the", "a", "le", "la", "les", "un", "une", "das", "die", "der", "den", "ein", "eine"}
 
 DEFAULT_SYSTEM = (
     "You are Muse, the AI agent built into the user's desktop (nixbook: NixOS, the niri compositor and its own "
@@ -279,6 +336,67 @@ def child_env(extra=None):
     if extra:
         env.update({str(k): str(v) for k, v in extra.items()})
     return env
+
+
+def parallel(fn, items, workers=8):
+    """fn(item) for each item, at most WORKERS at once on threads: the
+    results in order (an exception raised where its result would be)."""
+    items = list(items)
+    if len(items) <= 1:
+        return [fn(i) for i in items]
+    results = [None] * len(items)
+    todo = queue.Queue()
+    for n, item in enumerate(items):
+        todo.put((n, item))
+
+    def work():
+        while True:
+            try:
+                n, item = todo.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                results[n] = fn(item)
+            except BaseException as e:  # noqa: BLE001 — re-raised by the caller's thread
+                results[n] = _Raised(e)
+    threads = [threading.Thread(target=work, daemon=True) for _ in range(min(workers, len(items)))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for r in results:
+        if isinstance(r, _Raised):
+            raise r.error
+    return results
+
+
+class _Raised:
+    def __init__(self, error):
+        self.error = error
+
+
+class Job:
+    """A function run on a thread of its own: result() waits for it."""
+
+    def __init__(self, fn, *args):
+        self.done = threading.Event()
+        self.value = None
+        self.error = None
+
+        def run():
+            try:
+                self.value = fn(*args)
+            except BaseException as e:  # noqa: BLE001 — handed to result()
+                self.error = e
+            self.done.set()
+        threading.Thread(target=run, daemon=True).start()
+
+    def result(self, timeout=None):
+        if not self.done.wait(timeout):
+            raise TimeoutError("still running")
+        if self.error is not None:
+            raise self.error
+        return self.value
 
 
 def cap(text, limit=TOOL_OUTPUT_MAX):
@@ -354,6 +472,9 @@ class Options:
         self.fork = False
         self.journal_source = "agent"
         self.task = ""
+        self.core_tools = False
+        self.tool_result_max = None
+        self.max_tokens = MAX_TOKENS
         self.prompt_args = []
         self.parse(argv)
 
@@ -475,6 +596,17 @@ class Options:
                 raise AgentError(f"--lazy-mcp: a number, not {v}")
         elif name in ("--report", "--learn", "--resolve", "--verify", "--trust"):
             setattr(self, name[2:], True)
+        elif name == "--core-tools":
+            self.core_tools = True
+        elif name in ("--tool-result-max", "--max-tokens"):
+            try:
+                n = int(v)
+            except ValueError:
+                raise AgentError(f"{name}: a number, not {v}")
+            if name == "--max-tokens":
+                self.max_tokens = max(64, n)
+            else:
+                self.tool_result_max = max(200, n)
         elif name == "--fork-session":
             self.fork = True
         elif name == "--journal-source":
@@ -490,20 +622,81 @@ class Options:
 
 # ── The model ──────────────────────────────────────────────────────────────
 
-def api_messages(messages):
+CONTEXT_BLOCK = re.compile(r"<context>.*?</context>\s*", re.S)
+CACHE = {"type": "ephemeral"}
+
+
+def has_context(m):
+    if m.get("role") != "user":
+        return False
+    c = m.get("content")
+    if isinstance(c, str):
+        return "<context>" in c
+    return any(b.get("type") == "text" and "<context>" in str(b.get("text") or "") for b in c or [])
+
+
+def api_messages(messages, cache=True):
     """The history as it is sent: no thinking blocks (kept in the
     transcript; Meta's API continues a tool call without them, as Quick AI
-    has always done) and no empty text block (refused)."""
+    has always done), no empty text block (refused), the <context> block of
+    the latest turn only (the older ones were for their own turn), and two
+    prompt cache breakpoints: the end of the previous turns (stable from
+    now on) and the last user message (rolling: the next call of this turn
+    reads all of it from the cache)."""
+    last_ctx = max((i for i, m in enumerate(messages) if has_context(m)), default=-1)
     out = []
-    for m in messages:
+    for i, m in enumerate(messages):
         c = m.get("content")
+        strip = i != last_ctx and m.get("role") == "user"
         if isinstance(c, list):
-            kept = [b for b in c if b.get("type") not in ("thinking", "redacted_thinking")
-                    and not (b.get("type") == "text" and not str(b.get("text") or "").strip())]
+            kept = []
+            for b in c:
+                if b.get("type") in ("thinking", "redacted_thinking"):
+                    continue
+                if b.get("type") == "text":
+                    text = str(b.get("text") or "")
+                    if strip and "<context>" in text:
+                        text = CONTEXT_BLOCK.sub("", text)
+                    if not text.strip():
+                        continue
+                    b = {**b, "text": text}
+                kept.append(b)
             out.append({**m, "content": kept or [{"type": "text", "text": "…"}]})
         else:
-            out.append({**m, "content": c if str(c or "").strip() else "…"})
+            text = str(c or "")
+            if strip and "<context>" in text:
+                text = CONTEXT_BLOCK.sub("", text)
+            out.append({**m, "content": text if text.strip() else "…"})
+    if cache and out:
+        # The previous turns end before the latest message carrying a
+        # context block (this turn's), else before the last user message.
+        turn = last_ctx if last_ctx >= 0 else max((i for i, m in enumerate(out) if m["role"] == "user"), default=-1)
+        marks = {i for i in (turn - 1, max((i for i, m in enumerate(out) if m["role"] == "user"), default=-1)) if i >= 0}
+        for i in marks:
+            out[i] = with_cache(out[i])
     return out
+
+
+def with_cache(m):
+    """M with a cache breakpoint on its last block (a copy)."""
+    c = m.get("content")
+    blocks = [{"type": "text", "text": c}] if isinstance(c, str) else [dict(b) for b in c or []]
+    if not blocks:
+        return m
+    blocks[-1]["cache_control"] = CACHE
+    return {**m, "content": blocks}
+
+
+def compact(text):
+    """A JSON text without its indentation (what a tool answers, for the
+    model); any other text as it is."""
+    t = text.strip()
+    if len(t) > 1 and t[0] in "{[" and t[-1] in "}]" and ("\n" in t or ": " in t or ", " in t):
+        try:
+            return json.dumps(json.loads(t), ensure_ascii=False, separators=(",", ":"))
+        except ValueError:
+            return text
+    return text
 
 
 # ── The privacy mask (nixbook-desktop-mcp privacy) ─────────────────────────
@@ -676,6 +869,8 @@ class HttpMcp:
         self.lock = threading.Lock()
 
     def post(self, obj, timeout):
+        import urllib.error
+        import urllib.request
         headers = {"content-type": "application/json", "accept": "application/json, text/event-stream",
                    **self.headers}
         if self.session:
@@ -735,16 +930,22 @@ class Mcp:
     with more than N tools (the user's photos: ~90) is first offered as one
     open_tools__SERVER tool, its own tools added once the model opens it
     (Quick AI's open_app_tools): every request doesn't carry them all. The
-    desktop's server never waits so."""
+    desktop's server never waits so; with core (--core-tools) only its core
+    tools (_meta["nixbook/core"]) come up front, the others by group behind
+    one open_tools__desktop_GROUP tool each (all of them up front when it
+    marks none core: an older server)."""
 
-    def __init__(self, configs, allowed, disallowed, lazy=0):
+    def __init__(self, configs, allowed, disallowed, lazy=0, core=False):
         self.servers = {}
         self.status = []
         self.instructions = {}
         self.tools = {}
-        # Lazy servers: their tools ({exposed: info}) and the opener's name.
+        # What waits to be opened, by key (a server, or desktop_GROUP): its
+        # tools ({exposed: info}); the openers' names → their key; a key's
+        # (server, group).
         self.lazy = {}
         self.openers = {}
+        self.lazy_of = {}
         specs = {}
         for c in configs:
             try:
@@ -789,10 +990,10 @@ class Mcp:
 
         if not specs:
             return
-        with concurrent.futures.ThreadPoolExecutor(min(8, len(specs))) as pool:
-            jobs = [pool.submit(start, n, s if isinstance(s, dict) else {}) for n, s in specs.items()]
-            for job in jobs:
-                name, client, init, tools, err = job.result()
+        for got in parallel(lambda item: start(item[0], item[1] if isinstance(item[1], dict) else {}),
+                            specs.items()):
+            if True:
+                name, client, init, tools, err = got
                 if err:
                     warn(f"MCP server {name}: {err}")
                     self.status.append({"name": name, "status": "failed", "error": err})
@@ -814,7 +1015,9 @@ class Mcp:
                     schema = {k: v for k, v in schema.items() if k != "$schema"}
                     schema.setdefault("type", "object")
                     ann = t.get("annotations") if isinstance(t.get("annotations"), dict) else {}
+                    meta = t.get("_meta") if isinstance(t.get("_meta"), dict) else {}
                     found[exposed] = {"server": name, "tool": tname, "full": full,
+                                      "core": meta.get("nixbook/core") is True,
                                       # What --confirm asks about: its annotations, and
                                       # for the few servers that annotate nothing, a
                                       # name that only reads.
@@ -823,33 +1026,63 @@ class Mcp:
                                       "destructive": bool(ann.get("destructiveHint")),
                                       # The desktop's tool groups (observe, windows,
                                       # input…), as its tools/list says them.
-                                      "group": str(((t.get("_meta") if isinstance(t.get("_meta"), dict) else {})
-                                                    or {}).get("nixbook/group") or ""),
+                                      "group": str(meta.get("nixbook/group") or ""),
+                                      # What --core-tools loads together: the
+                                      # finer bundle (pim, media, widgets…) when
+                                      # the server gives one, else the group
+                                      # (the "shell" group alone is most tools).
+                                      "bundle": str(meta.get("nixbook/bundle") or meta.get("nixbook/group") or ""),
                                       "spec": {"name": exposed, "description": str(t.get("description") or "")[:8000],
                                                "input_schema": schema}}
                 if lazy and name != DESKTOP_SERVER and len(found) > lazy:
                     self.lazy[name] = found
+                    self.lazy_of[name] = (name, "")
                     self.openers[safe_tool_name(f"open_tools__{name}")] = name
+                elif core and name == DESKTOP_SERVER and any(i["core"] for i in found.values()):
+                    for exposed, info in found.items():
+                        if info["core"]:
+                            self.tools[exposed] = info
+                            continue
+                        group = re.sub(r"[^a-z0-9_]", "_", (info["bundle"] or "other").lower())
+                        key = f"{DESKTOP_SERVER}_{group}"
+                        self.lazy.setdefault(key, {})[exposed] = info
+                        self.lazy_of[key] = (name, group)
+                        self.openers[safe_tool_name(f"open_tools__{key}")] = key
                 else:
                     self.tools.update(found)
 
     def opener_specs(self):
         out = []
-        for opener, server in self.openers.items():
-            names = [i["tool"] for i in self.lazy.get(server, {}).values()]
-            hint = self.instructions.get(server, "")[:300]
-            out.append({"name": opener, "description": (
-                f"Get the tools of {server}, one of the user's apps ({len(names)} tools: {', '.join(names[:12])}…), "
-                "to use them in your next steps." + (f" {hint}" if hint else "")),
-                "input_schema": {"type": "object", "properties": {}}})
+        for opener, key in self.openers.items():
+            names = [i["tool"] for i in self.lazy.get(key, {}).values()]
+            server, group = self.lazy_of.get(key, (key, ""))
+            if group:
+                desc = f"Load the {group} tools: {', '.join(names)}."
+            else:
+                hint = self.instructions.get(server, "")[:300]
+                desc = (f"Get the tools of {server}, one of the user's apps ({len(names)} tools: "
+                        f"{', '.join(names[:12])}…), to use them in your next steps." + (f" {hint}" if hint else ""))
+            out.append({"name": opener, "description": desc, "input_schema": {"type": "object", "properties": {}}})
         return out
 
-    def open(self, server):
-        """A lazy server's tools offered from now on: their names."""
-        found = self.lazy.pop(server, None) or {}
-        self.openers = {o: s for o, s in self.openers.items() if s != server}
+    def open(self, key):
+        """What waits behind KEY (a lazy server, a desktop group) offered from
+        now on: its tools' names."""
+        found = self.lazy.pop(key, None) or {}
+        self.openers = {o: k for o, k in self.openers.items() if k != key}
         self.tools.update(found)
         return list(found)
+
+    def lazy_key(self, exposed):
+        """The key a tool not offered yet waits behind, or None."""
+        return next((k for k, found in self.lazy.items() if exposed in found), None)
+
+    def info(self, exposed):
+        """A tool's info, offered or still waiting."""
+        if exposed in self.tools:
+            return self.tools[exposed]
+        key = self.lazy_key(exposed)
+        return self.lazy[key][exposed] if key else None
 
     def call(self, exposed, args):
         """(content blocks, is_error, the reply's _meta: {} or e.g. its
@@ -862,7 +1095,7 @@ class Mcp:
             t = c.get("type")
             if t == "text":
                 blocks.append({"type": "text", "text": cap(str(c.get("text") or ""))})
-            elif t == "image" and c.get("data"):
+            elif t == "image" and c.get("data"):  # base64 already
                 blocks.append({"type": "image", "source": {"type": "base64", "media_type": c.get("mimeType") or "image/png",
                                                            "data": c["data"]}})
             elif t == "resource":
@@ -905,6 +1138,7 @@ APP_READS = re.compile(r"(get|list|search|find|show|read|now_playing|my_|status|
 
 
 def pattern_allows(pattern, server, tool):
+    import fnmatch
     p = pattern.split("(", 1)[0]
     if p in (f"mcp__{server}", f"mcp__{server}__*", f"mcp__{server}__{tool}"):
         return True
@@ -915,53 +1149,58 @@ def safe_tool_name(name):
     clean = re.sub(r"[^A-Za-z0-9_-]", "_", name)
     if len(clean) <= 64:
         return clean
+    import hashlib
     return clean[:55] + "_" + hashlib.sha1(name.encode()).hexdigest()[:8]
 
 
 # ── Built-in tools ─────────────────────────────────────────────────────────
 
-class HtmlText(html.parser.HTMLParser):
-    SKIP = {"script", "style", "noscript", "svg", "head", "template"}
-    BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "header",
-             "footer", "pre", "blockquote", "table", "ul", "ol", "dt", "dd"}
+def _html_text_class():
+    import html.parser
 
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.out, self.skip, self.title, self.in_title = [], 0, "", False
+    class HtmlText(html.parser.HTMLParser):
+        SKIP = {"script", "style", "noscript", "svg", "head", "template"}
+        BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "header",
+                 "footer", "pre", "blockquote", "table", "ul", "ol", "dt", "dd"}
 
-    def handle_starttag(self, tag, attrs):
-        if tag in self.SKIP:
-            self.skip += 1
-        if tag == "title":
-            self.in_title = True
-        if tag in self.BLOCK:
-            self.out.append("\n")
-        if tag == "a" and not self.skip:
-            self.href = dict(attrs).get("href")
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.out, self.skip, self.title, self.in_title = [], 0, "", False
 
-    def handle_endtag(self, tag):
-        if tag in self.SKIP:
-            self.skip = max(0, self.skip - 1)
-        if tag == "title":
-            self.in_title = False
-        if tag in self.BLOCK:
-            self.out.append("\n")
+        def handle_starttag(self, tag, attrs):
+            if tag in self.SKIP:
+                self.skip += 1
+            if tag == "title":
+                self.in_title = True
+            if tag in self.BLOCK:
+                self.out.append("\n")
+            if tag == "a" and not self.skip:
+                self.href = dict(attrs).get("href")
 
-    def handle_data(self, data):
-        if self.in_title:
-            self.title += data
-        if not self.skip:
-            self.out.append(data)
+        def handle_endtag(self, tag):
+            if tag in self.SKIP:
+                self.skip = max(0, self.skip - 1)
+            if tag == "title":
+                self.in_title = False
+            if tag in self.BLOCK:
+                self.out.append("\n")
 
-    def text(self):
-        s = "".join(self.out)
-        s = re.sub(r"[ \t\r\f\v]+", " ", s)
-        s = re.sub(r"\n\s*\n+", "\n\n", s)
-        return s.strip()
+        def handle_data(self, data):
+            if self.in_title:
+                self.title += data
+            if not self.skip:
+                self.out.append(data)
+
+        def text(self):
+            s = "".join(self.out)
+            s = re.sub(r"[ \t\r\f\v]+", " ", s)
+            s = re.sub(r"\n\s*\n+", "\n\n", s)
+            return s.strip()
+    return HtmlText
 
 
 def html_to_text(raw):
-    p = HtmlText()
+    p = _html_text_class()()
     try:
         p.feed(raw)
         p.close()
@@ -974,6 +1213,7 @@ def public_host(host):
     """The host's addresses are all on the internet (no local network)."""
     if os.environ.get("NIXBOOK_AGENT_WEBFETCH_LOCAL") == "1":
         return True
+    import ipaddress
     try:
         infos = socket.getaddrinfo(host, None)
     except OSError:
@@ -988,15 +1228,17 @@ def public_host(host):
     return True
 
 
-class CheckedRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        u = urllib.parse.urlsplit(newurl)
-        if u.scheme not in ("http", "https") or not public_host(u.hostname or ""):
-            raise urllib.error.URLError(f"redirect to {newurl} refused")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 def fetch(url, timeout=30, limit=2_000_000):
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    class CheckedRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            u = urllib.parse.urlsplit(newurl)
+            if u.scheme not in ("http", "https") or not public_host(u.hostname or ""):
+                raise urllib.error.URLError(f"redirect to {newurl} refused")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
     u = urllib.parse.urlsplit(url)
     if u.scheme not in ("http", "https") or not u.hostname:
         raise AgentError("only http(s) URLs")
@@ -1137,6 +1379,7 @@ class Builtins:
             raise AgentError(f"{path} is a directory: use Glob to list it")
         ext = os.path.splitext(path)[1].lower()
         if ext in IMAGE_TYPES:
+            import base64
             size = os.path.getsize(path)
             if size > IMAGE_MAX:
                 raise AgentError(f"the image is too big ({size // 1024} kB, at most {IMAGE_MAX // 1024} kB)")
@@ -1168,6 +1411,7 @@ class Builtins:
         return cap(text)
 
     def walk(self, root, pattern=None):
+        import fnmatch
         rx = glob_regex(pattern) if pattern else None
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
@@ -1369,6 +1613,7 @@ class Builtins:
         return args + ["--chdir", self.cwd, "--", bash, "-c", command]
 
     def t_webfetch(self, a):
+        import urllib.error
         url = str(a.get("url") or "").strip()
         if url.startswith("http://") and not os.environ.get("NIXBOOK_AGENT_WEBFETCH_LOCAL"):
             url = "https://" + url[len("http://"):]
@@ -1388,6 +1633,9 @@ class Builtins:
         return head + "\n" + cap(text, FETCH_MAX)
 
     def t_websearch(self, a):
+        import html
+        import urllib.error
+        import urllib.parse
         query = str(a.get("query") or "").strip()
         if not query:
             raise AgentError("no query")
@@ -1603,14 +1851,58 @@ FOCUSED = re.compile(r"Focused: (\S+) — ")
 
 # ── The agent ──────────────────────────────────────────────────────────────
 
+class Gate:
+    """The resolver's verdict (--resolve), awaited by the tools: open at
+    once when the resolver doesn't run."""
+
+    def __init__(self, running=False):
+        self.event = threading.Event()
+        self.verdict = None
+        if not running:
+            self.event.set()
+
+    def set(self, verdict):
+        self.verdict = verdict
+        self.event.set()
+
+    def wait(self, timeout=RESOLVE_WAIT):
+        """True when the tools may run (the verdict isn't "ambiguous")."""
+        self.event.wait(timeout)
+        return not is_ambiguous(self.verdict)
+
+
+def is_ambiguous(reading):
+    return bool(reading) and reading.get("ambiguous") is True and len(reading.get("readings") or []) >= 2 \
+        and bool(str(reading.get("question") or "").strip())
+
+
+class Early:
+    """The tool calls of a message, started while it still streams: each one
+    as soon as its block is complete, when it needs no OK from the user (and
+    the resolver's verdict allows it); the others decided at its end, as
+    before. Results collected in block order (run_tools)."""
+
+    def __init__(self, agent, checking=False):
+        self.agent = agent
+        self.checking = checking
+        self.jobs = {}
+
+    def on_block(self, call):
+        name = call.get("name", "")
+        if name == STRUCTURED or not call.get("id") or call["id"] in self.jobs:
+            return
+        step = self.agent.new_step(call)
+        self.jobs[call["id"]] = (step, Job(self.agent.early_job, call, step, self.checking))
+
+
 class Agent:
-    def __init__(self, opts, out, inbox=None):
+    def __init__(self, opts, out, inbox=None, provider=None):
         self.opts = opts
         self.out = out
         self.inbox = inbox
         self.cwd = os.path.realpath(os.getcwd())
         try:
-            self.provider = nixbook_ai.Provider.from_env()
+            self.provider = provider or nixbook_ai.Provider.from_env()
         except nixbook_ai.AIError as e:
             raise AgentError(str(e))
         self.model = self.provider.model(opts.model)
@@ -1626,6 +1918,8 @@ class Agent:
         # --trust: each class's level, asked once a turn.
         self.trust_cache = {}
         self.lock = threading.Lock()
+        self.gate_ = Gate()
+        self.cancel = None
         prune_sessions()
         self.state = {}
         if opts.resume:
@@ -1643,11 +1937,12 @@ class Agent:
             self.messages = []
             if opts.session_id and opts.persist and os.path.exists(session_path(opts.session_id)):
                 raise AgentError(f"Session ID {opts.session_id} is already in use")
-        self.mcp = Mcp(opts.mcp_configs, opts.allowed, opts.disallowed, opts.lazy_mcp)
-        # The lazy servers this conversation already opened, open again.
-        for server in self.state.get("opened") or []:
-            if server in self.mcp.lazy:
-                self.mcp.open(server)
+        self.mcp = Mcp(opts.mcp_configs, opts.allowed, opts.disallowed, opts.lazy_mcp, opts.core_tools)
+        # The lazy servers and desktop groups this conversation already
+        # opened, open again.
+        for key in self.state.get("opened") or []:
+            if key in self.mcp.lazy:
+                self.mcp.open(key)
         self.refresh_tools()
         self.system = self.build_system()
 
@@ -1658,13 +1953,19 @@ class Agent:
                 if self.wrapped else {k: v for k, v in self.schema.items() if k != "$schema"}
             tools.append({"name": STRUCTURED, "description": "Give your final answer, as the JSON the caller "
                           "asked for. Call it once, last, when the task is done.", "input_schema": schema})
+        elif self.opts.verify:
+            # From the first call: the check doesn't change the tools (the
+            # prompt cache stays valid).
+            tools.append(VERIFY_SPEC)
         self.tools = tools
 
     def build_system(self):
         o = self.opts
         parts = [o.system_prompt if o.system_prompt is not None else DEFAULT_SYSTEM]
         if self.builtins.names:
-            env = [f"Working directory: {self.cwd}", f"Today: {time.strftime('%A %d %B %Y, %H:%M')}"]
+            # The day, not the time: the prompt stays the same all day (the
+            # cache); the time comes with each message's context.
+            env = [f"Working directory: {self.cwd}", f"Today: {time.strftime('%A %d %B %Y')}"]
             if set(self.builtins.names) & {"Read", "Glob", "Grep"}:
                 env.append("Folders you can read: " + ", ".join(self.builtins.read_dirs))
             if set(self.builtins.names) & {"Edit", "Write"}:
@@ -1681,10 +1982,13 @@ class Agent:
                          "steps, and tells you when they say no.")
         if o.report:
             parts.append(REPORT_PROMPT)
+        if self.mcp.openers and any(self.mcp.lazy_of.get(k, ("", ""))[1] for k in self.mcp.openers.values()):
+            parts.append("More desktop tools wait behind the open_tools__desktop_* tools: call one to load its group "
+                         "(or call one of the tools it names directly).")
         if self.schema:
             parts.append(f"When the task is done, give your final answer by calling the `{STRUCTURED}` tool, once, "
                          "with the JSON it asks for; nothing after it.")
-        return [{"type": "text", "text": "\n\n".join(p for p in parts if p), "cache_control": {"type": "ephemeral"}}]
+        return [{"type": "text", "text": "\n\n".join(p for p in parts if p), "cache_control": CACHE}]
 
     def emit(self, obj):
         if self.opts.output_format != "stream-json":
@@ -1697,7 +2001,7 @@ class Agent:
 
     def init_event(self):
         self.emit({"type": "system", "subtype": "init", "cwd": self.cwd, "session_id": self.session_id,
-                   "model": self.model, "tools": [t["name"] for t in self.tools if t["name"] != STRUCTURED],
+                   "model": self.model, "tools": [t["name"] for t in self.tools if t["name"] not in (STRUCTURED, VERIFY)],
                    "mcp_servers": self.mcp.status, "permissionMode": self.opts.permission_mode or "default",
                    "apiKeySource": "nixbook-model-provider"})
 
@@ -1708,28 +2012,44 @@ class Agent:
             except (OSError, AgentError) as e:
                 warn(f"the session wasn't saved: {e}")
 
-    def call(self, tool_choice=None, tools=None):
+    def sent_tools(self, tools):
+        """The tools as sent: a cache breakpoint on the last one."""
+        if not tools:
+            return tools
+        return tools[:-1] + [{**tools[-1], "cache_control": CACHE}]
+
+    def call(self, tool_choice=None, tools=None, early=None, extra=None, max_tokens=None, record=True):
+        """One model call on the conversation (and EXTRA messages, not kept):
+        its message, recorded in the conversation unless told not to."""
         partial = self.opts.partial and self.opts.output_format == "stream-json"
         on_event = (lambda ev: self.emit({"type": "stream_event", "event": ev, "parent_tool_use_id": None})) \
             if partial else None
         try:
-            msg = nixbook_ai.call(self.system, api_messages(repair(self.messages)),
+            msg = nixbook_ai.call(self.system, api_messages(repair(self.messages + list(extra or []))),
                                   model=self.model, effort=self.effort,
-                                  tools=self.tools if tools is None else tools, tool_choice=tool_choice,
-                                  max_tokens=MAX_TOKENS, on_event=on_event, timeout=300, provider=self.provider)
+                                  tools=self.sent_tools(self.tools if tools is None else tools), tool_choice=tool_choice,
+                                  max_tokens=max_tokens or self.opts.max_tokens, on_event=on_event, timeout=300,
+                                  provider=self.provider, on_block=early.on_block if early else None,
+                                  cancel=self.cancel)
+        except nixbook_ai.Cancelled:
+            raise
         except nixbook_ai.AIError as e:
             raise AgentError(str(e))
+        self.count_usage(msg)
+        content = msg["content"] or [{"type": "text", "text": ""}]
+        if record:
+            self.emit({"type": "assistant", "message": {"id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message",
+                                                        "role": "assistant", "model": msg.get("model") or self.model,
+                                                        "content": content, "stop_reason": msg["stop_reason"],
+                                                        "usage": msg.get("usage") or {}}, "parent_tool_use_id": None})
+            self.messages.append({"role": "assistant", "content": content})
+        return msg
+
+    def count_usage(self, msg):
         u = msg.get("usage") or {}
         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
             if isinstance(u.get(k), int):
                 self.usage[k] = self.usage.get(k, 0) + u[k]
-        content = msg["content"] or [{"type": "text", "text": ""}]
-        self.emit({"type": "assistant", "message": {"id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message",
-                                                    "role": "assistant", "model": msg.get("model") or self.model,
-                                                    "content": content, "stop_reason": msg["stop_reason"],
-                                                    "usage": u}, "parent_tool_use_id": None})
-        self.messages.append({"role": "assistant", "content": content})
-        return msg
 
     # ── Steps ──
 
@@ -1738,13 +2058,14 @@ class Agent:
         own name), shown, read_only, server}."""
         if name in self.builtins.names:
             return {"tool": name, "shown": name, "read_only": name in READ_BUILTINS, "server": "", "group": ""}
-        info = self.mcp.tools.get(name)
+        info = self.mcp.info(name)
         if info:
             shown = info["tool"] if info["server"] == DESKTOP_SERVER else f"{info['server']}: {info['tool']}"
             return {"tool": info["tool"], "shown": shown, "read_only": info.get("read_only", False),
                     "server": info["server"], "group": info.get("group", "")}
-        if name in self.mcp.openers:
-            return {"tool": name, "shown": name, "read_only": True, "server": self.mcp.openers[name], "group": ""}
+        if name in self.mcp.openers or name == VERIFY:
+            return {"tool": name, "shown": name, "read_only": True, "server": self.mcp.openers.get(name, ""),
+                    "group": ""}
         return {"tool": name, "shown": name, "read_only": False, "server": "", "group": ""}
 
     def reads(self, name, args):
@@ -1830,12 +2151,15 @@ class Agent:
             return None
         return got.get("id") if isinstance(got, dict) else None
 
-    def gate(self, call, checking, step=None):
-        """None when the call may run, else why not (its tool_result)."""
+    def decide(self, call, checking, step=None):
+        """What becomes of a call: ("run", None, ""), ("refuse", why,
+        status) or ("ask", None, "") — the user's OK needed first."""
         name, args = call.get("name", ""), call.get("input") or {}
+        if name == VERIFY:
+            return "run", None, ""
         reads = self.reads(name, args)
         if checking and not reads:
-            return CHECK_ONLY, "refused"
+            return "refuse", CHECK_ONLY, "refused"
         ask = self.needs_ok(name, args)
         cls = ""
         if self.opts.trust and not reads and name not in self.mcp.openers:
@@ -1848,9 +2172,16 @@ class Agent:
             if step is not None:
                 step["class"], step["trust"] = cls, level
         if not ask:
-            return None, ""
+            return "run", None, ""
         if self.inbox is None:
-            return NO_ONE_TO_ASK, "error"
+            return "refuse", NO_ONE_TO_ASK, "error"
+        return "ask", None, ""
+
+    def ask_user(self, call, step=None):
+        """A step's OK asked (approval_request): (None, "") when allowed,
+        else (why, status)."""
+        name, args = call.get("name", ""), call.get("input") or {}
+        cls = (step or {}).get("class") or ""
         shown = self.privacy.unmask_args(args)
         summary = nixbook_ai.step_summary(shown)
         req = {"type": "approval_request", "id": call["id"], "tool": self.meta(name)["shown"], "input": shown,
@@ -1865,16 +2196,51 @@ class Agent:
             return None, ""
         return DENIED, "denied"
 
+    def gate(self, call, checking, step=None):
+        """None when the call may run, else why not (its tool_result)."""
+        what, why, status = self.decide(call, checking, step)
+        if what == "run":
+            return None, ""
+        if what == "refuse":
+            return why, status
+        return self.ask_user(call, step)
+
+    def shape(self, name, content):
+        """What a tool answered, as the model gets it: JSON compact, cut to
+        --tool-result-max (MCP tools: 6000 characters by default)."""
+        limit = self.opts.tool_result_max
+        if limit is None and name not in self.builtins.names:
+            limit = TOOL_RESULT_MAX
+        if isinstance(content, str):
+            text = compact(content)
+            return cap(text, limit) if limit else text
+        out = []
+        for b in content:
+            if b.get("type") == "text":
+                text = compact(str(b.get("text") or ""))
+                b = {**b, "text": cap(text, limit) if limit else text}
+            out.append(b)
+        return out
+
     def run_tool(self, call, step=None):
         name, args = call.get("name", ""), call.get("input") or {}
         meta = {}
-        if name in self.mcp.openers:
-            server = self.mcp.openers[name]
-            with self.lock:
-                names = self.mcp.open(server)
-                self.state["opened"] = sorted(set(self.state.get("opened") or []) | {server})
-                self.refresh_tools()
-            content, err = f"{server}'s tools are yours now: " + ", ".join(names), False
+        self.emit({"type": "tool_started", "id": call.get("id"), "name": name})
+        if name == VERIFY:
+            # Offered for the checks; the model's own word isn't one.
+            return {"type": "tool_result", "tool_use_id": call["id"], "content": "noted"}
+        key = self.mcp.openers.get(name)
+        if key is None and name not in self.mcp.tools:
+            # A tool of a group not loaded yet, called by its name: loaded.
+            key = self.mcp.lazy_key(name)
+            if key is not None:
+                self.open_lazy(key)
+                key = None
+        if key is not None:
+            names = self.open_lazy(key)
+            server, group = self.mcp.lazy_of.get(key, (key, ""))
+            content, err = (f"The {group} tools are yours now: " if group else f"{server}'s tools are yours now: ") \
+                + ", ".join(names), False
         else:
             args = self.privacy.unmask_input(name, args)
             try:
@@ -1888,11 +2254,13 @@ class Agent:
                 content, err = str(e), True
             except Exception as e:  # noqa: BLE001 — a tool's failure is the model's to read
                 content, err = f"{e.__class__.__name__}: {e}", True
+            content = self.shape(name, content)
         raw = content if isinstance(content, str) else "\n".join(
             str(b.get("text") or "") for b in content if b.get("type") == "text")
         if step is not None:
             step["status"] = "error" if err else "ok"
             step["result"] = raw[:300]
+            step["meta"] = meta
             # The app in front, as the desktop tools' replies say it (the
             # episode's app for --learn).
             seen = FOCUSED.findall(raw)
@@ -1910,19 +2278,63 @@ class Agent:
         content = self.privacy.mask_result(name, content)
         return {"type": "tool_result", "tool_use_id": call["id"], "content": content, **({"is_error": True} if err else {})}
 
-    def run_tools(self, calls, checking=False):
-        """The calls' results, in order: those needing the user's OK asked
-        first, one at a time, then the allowed ones run in parallel."""
+    def open_lazy(self, key):
+        with self.lock:
+            names = self.mcp.open(key)
+            self.state["opened"] = sorted(set(self.state.get("opened") or []) | {key})
+            self.refresh_tools()
+        return names
+
+    def new_step(self, call):
+        """A call's step (the report's, the journal's, --learn's), in order."""
+        name, args = call.get("name", ""), call.get("input") or {}
+        m = self.meta(name)
+        step = {"id": call["id"], "tool": m["shown"], "bare": m["tool"], "server": m["server"],
+                "summary": nixbook_ai.step_summary(self.privacy.unmask_args(args)),
+                "status": "run", "result": "", "read_only": self.reads(name, args)}
+        if name not in self.mcp.openers and name != VERIFY:
+            self.steps.append(step)
+        return step
+
+    def early_job(self, call, step, checking):
+        """A call started while its message streams: decided; run at once
+        when it needs no OK (after the resolver's verdict); else left for the
+        message's end."""
+        what, why, status = self.decide(call, checking, step)
+        if what == "refuse":
+            return ("refused", why, status)
+        if what == "ask":
+            return ("ask", None, "")
+        if not self.gate_.wait():
+            return ("held", None, "")
+        return ("done", self.run_tool(call, step), "")
+
+    def run_tools(self, calls, checking=False, early=None):
+        """The calls' results, in order: those started while the message
+        streamed collected, those needing the user's OK asked first, one at
+        a time, then the allowed ones run in parallel."""
         results, todo = [None] * len(calls), []
         for i, c in enumerate(calls):
-            name, args = c.get("name", ""), c.get("input") or {}
-            m = self.meta(name)
-            step = {"id": c["id"], "tool": m["shown"], "bare": m["tool"], "server": m["server"],
-                    "summary": nixbook_ai.step_summary(self.privacy.unmask_args(args)),
-                    "status": "run", "result": "", "read_only": self.reads(name, args)}
-            if name not in self.mcp.openers:
-                self.steps.append(step)
-            why, status = self.gate(c, checking, step)
+            started = (early.jobs.get(c.get("id")) if early else None)
+            if started is not None:
+                step, job = started
+                kind, value, status = job.result()
+                if kind == "done":
+                    results[i] = value
+                    continue
+                if kind == "held":
+                    step["status"], step["result"] = "refused", "not run"
+                    results[i] = {"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
+                                  "content": "Not run: the request was unclear."}
+                    continue
+                if kind == "refused":
+                    step["status"], step["result"] = status, value
+                    results[i] = {"type": "tool_result", "tool_use_id": c["id"], "is_error": True, "content": value}
+                    continue
+                why, status = self.ask_user(c, step)
+            else:
+                step = self.new_step(c)
+                why, status = self.gate(c, checking, step)
             if why:
                 # denied: the user said no; error: no one to ask; refused:
                 # not now (the check round), left out of the report.
@@ -1930,13 +2342,14 @@ class Agent:
                 results[i] = {"type": "tool_result", "tool_use_id": c["id"], "is_error": True, "content": why}
             else:
                 todo.append((i, c, step))
-        if len(todo) == 1:
-            i, c, step = todo[0]
-            results[i] = self.run_tool(c, step)
-        elif todo:
-            with concurrent.futures.ThreadPoolExecutor(min(8, len(todo))) as pool:
-                for (i, _, _), r in zip(todo, pool.map(lambda t: self.run_tool(t[1], t[2]), todo)):
-                    results[i] = r
+        if todo and not self.gate_.wait():
+            for i, c, step in todo:
+                step["status"], step["result"] = "refused", "not run"
+                results[i] = {"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
+                              "content": "Not run: the request was unclear."}
+            return results
+        for (i, _, _), r in zip(todo, parallel(lambda t: self.run_tool(t[1], t[2]), todo)):
+            results[i] = r
         return results
 
     def acted(self):
@@ -2020,12 +2433,42 @@ class Agent:
             block = ""
         return self.privacy.mask_text(block) if block else ""
 
+    def last_turn_text(self):
+        """The previous user message (its own words), "" when none."""
+        for m in reversed(self.messages):
+            if m.get("role") != "user":
+                continue
+            if all(b.get("type") == "tool_result" for b in as_blocks(m.get("content"))):
+                continue
+            t = content_text(m.get("content")).strip()
+            if not t or t.startswith("[verify]"):
+                continue
+            t = CONTEXT_BLOCK.sub("", t)
+            return re.sub(r"^<intent>.*?</intent>\s*", "", t, flags=re.S).strip()
+        return ""
+
     def wants_resolve(self, text, clarified):
+        """Whether the request may be ambiguous (a local heuristic: no model
+        call): "close it" with nothing it can point at in the last turn, "the
+        other one", a verb alone. Never for one naming its app, number or
+        target, nor right after a clarifying question (its answer)."""
         t = text.strip()
-        # Right after a clarifying question: the answer to it, not read again.
         if not self.opts.resolve or not t or len(t) > 1500 or self.schema or clarified:
             return False
-        return bool(ACTION_WORDS.search(t)) or (len(t.split()) <= 12 and bool(DEICTIC.search(t)))
+        if ORDINAL.search(t):
+            return True
+        if CONCRETE.search(t):
+            return False
+        words = [w for w in re.findall(r"[\w'’-]+", t.lower()) if w not in POLITE]
+        if len(words) == 1 and ACTION_WORDS.fullmatch(words[0]):
+            # A verb alone: "close", "send", "envoie".
+            return True
+        if len(words) <= 12 and DEICTIC.search(t):
+            # It points at something: settled when the last turn named a
+            # target (its words, or what it acted on).
+            last = self.last_turn_text()
+            return not (last and CONCRETE.search(last)) and not self.state.get("targets")
+        return False
 
     def recent_text(self, limit=6):
         """The last exchanges as plain text, the internal ones left out."""
@@ -2040,58 +2483,137 @@ class Agent:
                 lines.append(f"{'User' if m['role'] == 'user' else 'You'}: {t[:300]}")
         return "\n".join(lines[-limit:])
 
-    def resolve(self, text, block):
-        """The decisions model's reading of the request: {intent, readings,
-        ambiguous, question}, or None when it couldn't be read."""
+    def resolve(self, text, block, convo):
+        """The resolve model's reading of the request (ai.routing.resolve,
+        small; minimal effort): {intent, readings, ambiguous, question}, or
+        None when it couldn't be read."""
         r = nixbook_ai.routing()
         parts = []
         if block:
             parts.append(f"What the desktop knows:\n{block}")
-        convo = self.recent_text()
         if convo:
             parts.append(f"The conversation so far (latest last):\n{convo}")
         parts.append(f"The request:\n<<<\n{text[:1500]}\n>>>")
+        minimal = r["effortMinimal"]
         try:
-            got = nixbook_ai.answer(RESOLVE_SYSTEM, "\n\n".join(parts), model=r["decisions"],
-                                    effort=r["decisionsEffort"], schema=RESOLVE_SCHEMA, timeout=60,
-                                    max_tokens=4000, provider=self.provider)
+            got = nixbook_ai.answer(RESOLVE_SYSTEM, "\n\n".join(parts), model=r["resolve"],
+                                    effort="minimal" if minimal else r["decisionsEffort"], schema=RESOLVE_SCHEMA,
+                                    timeout=60, max_tokens=CHECK_TOKENS if minimal else 4000, fast=minimal,
+                                    provider=self.provider)
         except nixbook_ai.AIError as e:
             warn(f"--resolve: {e}")
             return None
         return got if isinstance(got, dict) else None
 
+    def start_resolve(self, text, block):
+        """The resolver, in parallel with the main call: the tools wait for
+        its verdict (self.gate_); an ambiguous one stops the call."""
+        gate = Gate(running=True)
+        self.gate_ = gate
+        convo = self.recent_text()
+
+        def run():
+            verdict = None
+            try:
+                verdict = self.resolve(text, block, convo)
+            finally:
+                gate.set(verdict)
+            cancel = self.cancel
+            if is_ambiguous(verdict) and self.gate_ is gate and cancel is not None:
+                cancel.set()
+        threading.Thread(target=run, daemon=True).start()
+        return gate
+
     # ── After the turn: verification, report, learning ──
 
-    def verify(self):
-        """One round with tools that only read: {met, note}, or None when
-        the model gave no verdict."""
-        spec = {"name": VERIFY, "description": "Say whether what the user asked for is done: met, and a one-line "
-                "note of what you saw.", "input_schema": VERIFY_SCHEMA}
-        self.messages.append({"role": "user", "content": VERIFY_PROMPT})
-        for i in range(VERIFY_TURNS):
-            choice = {"type": "tool", "name": VERIFY} if i == VERIFY_TURNS - 1 else None
+    def observe(self, steps):
+        """The engine's own look at the effect (the last acting step's
+        _meta.observe: a read-only tool and its arguments): content blocks,
+        or []."""
+        for s in reversed(steps):
+            hint = (s.get("meta") or {}).get("observe")
+            if not isinstance(hint, dict) or not hint.get("tool"):
+                continue
+            server = s.get("server") or DESKTOP_SERVER
+            name = safe_tool_name(f"mcp__{server}__{hint['tool']}")
+            info = self.mcp.info(name)
+            args = hint.get("args") if isinstance(hint.get("args"), dict) else {}
+            if not info or not (info.get("read_only") or nixbook_ai.reads_only(name, args, {name: info})):
+                continue
             try:
-                msg = self.call(choice, tools=self.tools + [spec])
+                blocks, err, _ = self.mcp.call(name, args)
             except AgentError as e:
+                warn(f"--verify: {hint['tool']}: {e}")
+                return []
+            if err:
+                return []
+            out = [{"type": "text", "text": f"{hint['tool']} now says:"}]
+            images = 0
+            for b in self.shape(name, blocks):
+                if b.get("type") == "image":
+                    if images:
+                        continue
+                    images += 1
+                out.append(b)
+            return out
+        return []
+
+    def verdict(self, msg):
+        call = next((b for b in msg["content"] if b.get("type") == "tool_use" and b.get("name") == VERIFY), None)
+        v = call.get("input") if call is not None else json_in(nixbook_ai.text_of(msg))
+        if isinstance(v, dict) and isinstance(v.get("met"), bool):
+            return {"met": v["met"], "note": str(v.get("note") or "")[:300]}
+        return None
+
+    def verify(self, request):
+        """The turn's result checked: {met, note, by}. Nothing to call when
+        every acting step's reply says it checked its own effect
+        (_meta.verified); else one call on the verify model (ai.routing.
+        verify): the acting calls, their replies and the engine's own look
+        (observe). None when no verdict came."""
+        acting = [s for s in self.steps if not s["read_only"] and s["status"] in ("ok", "error")]
+        if not acting:
+            return None
+        if all(s["status"] == "ok" and (s.get("meta") or {}).get("verified") is True for s in acting):
+            return {"met": True, "note": "the tools checked their own effect", "by": "tools"}
+        lines = [f"- {nixbook_ai.step_line({**s, 'summary': s.get('summary')})}: {s['status']}"
+                 + (f" — {str(s.get('result') or '').strip()[:300]}" if s.get("result") else "") for s in acting]
+        seen = self.observe(acting)
+        r = nixbook_ai.routing()
+        alias = r["verify"]
+        same = self.provider.model(alias) == self.model
+        text = ("The steps taken:\n" + "\n".join(lines))
+        if same:
+            # The main model: the same prefix as the turn's calls (the cache),
+            # the check as an extra message.
+            content = [{"type": "text", "text": VERIFY_PROMPT + "\n\n" + text}] + seen
+            extra = [{"role": "user", "content": content}]
+            system, messages, tools = None, None, None
+        else:
+            content = [{"type": "text", "text": f"The request:\n<<<\n{request[:1500]}\n>>>\n\n{text}"}] + (
+                seen or [{"type": "text", "text": "(nothing more to look at)"}])
+            system, messages, tools = VERIFY_SYSTEM, [{"role": "user", "content": content}], [VERIFY_SPEC]
+        for choice in ({"type": "tool", "name": VERIFY}, {"type": "any"}, None):
+            try:
+                if same:
+                    msg = self.call(choice, extra=extra, max_tokens=CHECK_TOKENS, record=False)
+                else:
+                    msg = nixbook_ai.call(system + ("" if choice else "\n\nAnswer with JSON alone: "
+                                                    "{\"met\": true|false, \"note\": \"…\"}"),
+                                          messages, model=alias, tools=tools if choice else None, tool_choice=choice,
+                                          max_tokens=CHECK_TOKENS, timeout=60, provider=self.provider)
+                    self.count_usage(msg)
+            except (AgentError, nixbook_ai.AIError) as e:
+                if "HTTP 400" in str(e) and choice is not None:
+                    continue
                 warn(f"--verify: {e}")
                 return None
-            calls = [b for b in msg["content"] if b.get("type") == "tool_use"]
-            verdict = next((c for c in calls if c.get("name") == VERIFY), None)
-            if verdict is not None:
-                v = verdict.get("input") or {}
-                self.messages.append({"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": c["id"], "content": "ok" if c is verdict else "not run",
-                     **({} if c is verdict else {"is_error": True})} for c in calls]})
-                return {"met": v.get("met") is True, "note": str(v.get("note") or "")[:300]}
-            if not calls:
-                found = json_in("".join(b.get("text", "") for b in msg["content"] if b.get("type") == "text"))
-                if isinstance(found, dict) and isinstance(found.get("met"), bool):
-                    return {"met": found["met"], "note": str(found.get("note") or "")[:300]}
-                self.messages.append({"role": "user", "content": f"[verify] Call `{VERIFY}` with what you found."})
-                continue
-            results = self.run_tools(calls, checking=True)
-            self.messages.append({"role": "user", "content": results})
-            self.emit({"type": "user", "message": {"role": "user", "content": results}, "parent_tool_use_id": None})
+            got = self.verdict(msg)
+            if got is not None:
+                got["by"] = "model"
+                return got
+            if choice is not None and choice.get("type") == "tool":
+                break
         return None
 
     def learn(self, task, hints):
@@ -2118,7 +2640,8 @@ class Agent:
 
     def loop(self, limit, result=""):
         """Calls and tools until an answer or LIMIT turns: (result, subtype,
-        error, structured, turns)."""
+        error, structured, turns). Tool calls start while their message
+        streams (unless --json-schema: the answer may come with them)."""
         subtype, error, structured, turns = "success", False, None, 0
         while True:
             if turns >= limit:
@@ -2130,7 +2653,8 @@ class Agent:
                     result = result or f"Reached the maximum number of turns ({limit})"
                 break
             turns += 1
-            msg = self.call()
+            early = None if self.schema else Early(self)
+            msg = self.call(early=early)
             texts = [b.get("text", "") for b in msg["content"] if b.get("type") == "text"]
             if "".join(texts).strip():
                 result = "".join(texts).strip()
@@ -2163,13 +2687,13 @@ class Agent:
                     subtype, error, result = "error_during_execution", True, "the answer was cut (max_tokens)"
                 break
             self.save()
-            results = self.run_tools(calls)
+            results = self.run_tools(calls, early=early)
             self.messages.append({"role": "user", "content": results})
             self.emit({"type": "user", "message": {"role": "user", "content": results}, "parent_tool_use_id": None})
             self.save()
         return result, subtype, error, structured, turns
 
-    def clarify(self, content, question, started):
+    def clarify(self, question, started):
         """The turn answered with the resolver's question alone: no tools."""
         self.messages.append({"role": "assistant", "content": [{"type": "text", "text": question}]})
         msg = {"content": [{"type": "text", "text": question}], "stop_reason": "end_turn", "usage": {},
@@ -2180,6 +2704,7 @@ class Agent:
         self.emit({"type": "assistant", "message": {"id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message",
                                                     "role": "assistant", "model": self.model, **msg},
                    "parent_tool_use_id": None})
+        self.emit({"type": "answer", "text": question, "clarify": True})
         self.state["clarified"] = True
         self.save()
         ev = self.result_event("success", False, question, 0, started)
@@ -2196,6 +2721,13 @@ class Agent:
                           "cache_creation_input_tokens": self.usage.get("cache_creation_input_tokens", 0)},
                 "permission_denials": []}
 
+    def shown(self, result):
+        """The answer as the user reads it (the report's block out)."""
+        if self.opts.report:
+            plain, _ = nixbook_ai.strip_report(result)
+            return plain or result
+        return result
+
     def turn(self, content, hints=None):
         """One user turn to its result event."""
         started = time.monotonic()
@@ -2204,33 +2736,45 @@ class Agent:
         self.steps = []
         self.trust_cache = {}
         self.focused_app = ""
+        self.gate_ = Gate()
+        self.cancel = nixbook_ai.Cancel()
         if not as_blocks(content):
             content = "(empty message)"
         text = content_text(content)
         result, subtype, error, structured, turns = "", "success", False, None, 0
         check = None
+        gate = None
         try:
             block = self.context_block(text, hints)
             clarified = self.state.pop("clarified", False)
-            reading = self.resolve(text, block) if self.wants_resolve(text, clarified) else None
             sent = content
-            if reading and reading.get("ambiguous") is True and len(reading.get("readings") or []) >= 2 \
-                    and str(reading.get("question") or "").strip():
-                if block:
-                    sent = prepend(sent, f"<context>\n{block}\n</context>\n\n")
-                self.messages.append({"role": "user", "content": sent})
-                return self.clarify(sent, str(reading["question"]).strip(), started)
-            if reading and str(reading.get("intent") or "").strip():
-                sent = prepend(sent, f"<intent>{str(reading['intent']).strip()[:300]}</intent>\n\n")
             if block:
                 sent = prepend(sent, f"<context>\n{block}\n</context>\n\n")
+            if self.wants_resolve(text, clarified):
+                gate = self.start_resolve(text, block)
             self.messages.append({"role": "user", "content": sent})
+            base = len(self.messages)
             self.save()
-            result, subtype, error, structured, turns = self.loop(self.opts.max_turns)
+            try:
+                result, subtype, error, structured, turns = self.loop(self.opts.max_turns)
+            except nixbook_ai.Cancelled:
+                if gate is None or not is_ambiguous(gate.verdict):
+                    raise AgentError("the call was stopped")
+                # The resolver found the request ambiguous: what the call
+                # began is dropped, its question is the answer.
+                del self.messages[base:]
+                self.steps = []
+                self.cancel = None
+                return self.clarify(str(gate.verdict["question"]).strip(), started)
+            finally:
+                # A late verdict stops nothing any more.
+                self.cancel = None
+            if not error and not self.schema:
+                self.emit({"type": "answer", "text": self.shown(result)})
             if self.opts.verify and not error and not self.schema and self.acted():
-                check = self.verify()
+                check = self.verify(text)
                 if check is not None:
-                    self.emit({"type": "verify", "met": check["met"], "note": check["note"]})
+                    self.emit({"type": "verify", "met": check["met"], "note": check["note"], "by": check["by"]})
                     if not check["met"]:
                         self.messages.append({"role": "user", "content": (
                             f"[verify] Not done yet: {check['note'] or 'the check found it unfinished'}. Fix it now "
@@ -2240,10 +2784,20 @@ class Agent:
                         if subtype == "error_max_turns":
                             # The fix round's limit, not the user's task failing.
                             subtype, error = "success", False
+                        if not error:
+                            self.emit({"type": "answer", "text": self.shown(result), "revised": True})
         except AgentError as e:
             subtype, error, result = "error_during_execution", True, str(e)
         except Exception as e:  # noqa: BLE001 — the caller gets a result line whatever happens
             subtype, error, result = "error_during_execution", True, f"{e.__class__.__name__}: {e}"
+        # What this turn acted on: a later "close it" points at it (the
+        # resolver isn't needed then).
+        targets = [s.get("summary") for s in self.steps if not s["read_only"] and s["status"] == "ok"
+                   and s.get("summary")]
+        if targets:
+            self.state["targets"] = targets[-3:]
+        elif not error:
+            self.state.pop("targets", None)
         self.save()
         report = None
         if self.opts.report and not error and not self.schema:
@@ -2300,7 +2854,15 @@ def main(argv):
         opts = Options(argv)
     except (AgentError, OSError) as e:
         return error_result(None, str(e))
-    nixbook_ai.ensure_provider(argv, __file__)
+    # The provider's key: from the environment, else `nixbook-model-provider
+    # env` (no second Python start); run again through the provider only
+    # when that fails.
+    nixbook_ai.use_caps_cache()
+    try:
+        provider = nixbook_ai.Provider.from_env()
+    except nixbook_ai.AIError as e:
+        nixbook_ai.ensure_provider(argv, __file__, why=str(e))
+        return error_result(opts, str(e), opts.resume or opts.session_id)
     state = {}
 
     def stop(*_):
@@ -2324,7 +2886,7 @@ def main(argv):
     signal.signal(signal.SIGHUP, stop)
     inbox = Inbox(sys.stdin) if opts.input_format == "stream-json" else None
     try:
-        agent = Agent(opts, sys.stdout, inbox)
+        agent = Agent(opts, sys.stdout, inbox, provider)
     except (AgentError, OSError) as e:
         return error_result(opts, str(e), opts.resume or opts.session_id)
     state["agent"] = agent

@@ -368,6 +368,68 @@ ContentPage {
                 from: 0; to: 240; stepSize: 5
                 onValueChanged: Config.options.ai.fullAi.reactPerHour = value
             }
+            ConfigSelectionArray {
+                configKey: "ai.routing.resolve"
+                text: Translation.tr("Model that tells whether a request is ambiguous (beside the answer, only when it may be)")
+                icon: "help"
+                currentValue: Config.options.ai.routing.resolve
+                onSelected: newValue => { Config.options.ai.routing.resolve = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big"), icon: "psychology", value: "big" }
+                ]
+            }
+            ConfigSelectionArray {
+                configKey: "ai.routing.verify"
+                text: Translation.tr("Model that checks the result (when the tool didn't confirm it itself)")
+                icon: "task_alt"
+                currentValue: Config.options.ai.routing.verify
+                onSelected: newValue => { Config.options.ai.routing.verify = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big"), icon: "psychology", value: "big" }
+                ]
+            }
+
+            // Speed (ai.routing.effortMinimal, ai.agent.coreTools,
+            // ai.agent.keepWarmMinutes): what makes Muse answer and act
+            // nearly at once, with as few tokens as possible.
+            ContentSubsection {
+                title: Translation.tr("Speed")
+
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    text: Translation.tr("Plain commands (pause the music, volume 30, open Firefox, workspace 2, Do Not Disturb, night light, a screenshot, lock) are done at once without any model, also in the middle of a conversation when they name what they act on, with an Undo. Muse's answers show and are read out as they come, its tools start while it is still writing, and its checks run on the small model after the answer is shown.")
+                }
+                GroupedList {
+                    ConfigSwitch {
+                        configKey: "ai.routing.effortMinimal"
+                        buttonIcon: "bolt"
+                        text: Translation.tr("Minimal thinking for the checks, the reactions and the one-shot answers")
+                        checked: Config.options.ai.routing.effortMinimal ?? true
+                        onCheckedChanged: Config.options.ai.routing.effortMinimal = checked
+                    }
+                    ConfigSwitch {
+                        configKey: "ai.agent.coreTools"
+                        buttonIcon: "construction"
+                        text: Translation.tr("Only the core desktop tools up front (the others loaded when needed)")
+                        checked: Config.options.ai.agent.coreTools ?? true
+                        onCheckedChanged: Config.options.ai.agent.coreTools = checked
+                    }
+                }
+                ConfigSpinBox {
+                    configKey: "ai.agent.keepWarmMinutes"
+                    icon: "local_fire_department"
+                    text: Translation.tr("Keep Muse warm (minutes)")
+                    value: Config.options.ai.agent.keepWarmMinutes ?? 60
+                    from: 1; to: 480; stepSize: 5
+                    onValueChanged: Config.options.ai.agent.keepWarmMinutes = value
+                }
+            }
         }
 
         // The privacy mask (desktop-mcp.py, "Privacy mask"): what models read

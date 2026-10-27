@@ -57,6 +57,12 @@ config=$(nix-build --no-out-link "$shell_dir" -A package.passthru.shell 2>>"$out
 mkdir -p "$home"/{config/quickshell,state,cache,data}
 ln -s "$config" "$home/config/quickshell/nixbook-shell"
 
+# Nothing of the user's session reaches the shell under test: no session bus
+# (the keyring with the model provider's key, notifications), no niri or
+# other display, no ssh agent, and a scratch home.
+unset DBUS_SESSION_BUS_ADDRESS NIRI_SOCKET SWAYSOCK DISPLAY WAYLAND_SOCKET SSH_AUTH_SOCK
+export HOME=$home
+
 printf 'output HEADLESS-1 resolution 1280x800\nxwayland disable\n' >"$home/sway.cfg"
 XDG_RUNTIME_DIR=$run WAYLAND_DISPLAY='' WLR_BACKENDS=headless WLR_RENDERER=pixman \
   WLR_LIBINPUT_NO_DEVICES=1 sway -c "$home/sway.cfg" >"$out/sway.txt" 2>&1 &

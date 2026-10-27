@@ -344,6 +344,8 @@ EOF
 cat >"$bin/nixbook-accounts" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_CALLS.google"
+# A fresh state (no account yet): no answer at all.
+[ -z "${STUB_ACCOUNTS_SILENT:-}" ] || exit 0
 if [ -n "${STUB_GOOGLE_SIGNED_OUT:-}" ]; then echo '{"error":"no Google account connected","auth":true}'; exit 2; fi
 case "$1 $2" in
   "status ") echo '{"accounts":[{"id":"google-1","provider":"google","name":"me@example.com","connected":true}]}' ;;
@@ -469,7 +471,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 70 tools" 70 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 72 tools" 72 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -593,6 +595,178 @@ expect_eq "type_text: an empty clipboard stays empty" "wl-copy --clear" "$(last_
 reset_calls
 call type_text '{"text":"plain words 42"}' >/dev/null
 expect_eq "type_text: plain text still typed" "wtype - <<plain words 42" "$(last_call)"
+
+# Speed: tool calls over one MCP session, each timed (ms) with its result:
+# `timed TOOL ARGS [TOOL ARGS…]` prints one {ms, result} line per call.
+timed() {
+  python3 - "$mcp" "$@" <<'PY'
+import json, subprocess, sys, time
+mcp, rest = sys.argv[1], sys.argv[2:]
+p = subprocess.Popen([sys.executable, mcp], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+def rpc(i, method, params):
+    p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params}) + "\n")
+    p.stdin.flush()
+    while True:
+        reply = json.loads(p.stdout.readline())
+        if reply.get("id") == i:
+            return reply
+rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "timing"}})
+for n in range(0, len(rest), 2):
+    start = time.monotonic()
+    reply = rpc(n + 2, "tools/call", {"name": rest[n], "arguments": json.loads(rest[n + 1])})
+    print(json.dumps({"ms": round((time.monotonic() - start) * 1000), "result": reply.get("result")}))
+p.stdin.close()
+p.wait()
+PY
+}
+# launch_app names the window as soon as it maps (looked at every 50 ms;
+# the splash wait only for a splash): it used to take 0.5 s at least.
+rm -f "$calls.launched"
+out=$(timed launch_app '{"app":"firefox"}')
+expect_contains "launch_app (speed): the window named" "$(jq -r '.result.content[0].text' <<<"$out")" '"title": "New Tab"'
+expect_eq "launch_app (speed): well under 0.5 s when the window appears at once" yes \
+  "$([ "$(jq .ms <<<"$out")" -lt 400 ] && echo yes || echo "no ($(jq .ms <<<"$out") ms)")"
+expect_eq "launch_app: _meta.verified (its window appeared)" true "$(jq '.result._meta.verified' <<<"$out")"
+rm -f "$calls.launched"
+# A paste no longer sleeps half a second: the key once the clipboard is
+# ours, the user's put back a moment later (and before the server exits).
+printf 'user text' | wl-copy
+reset_calls
+out=$(timed type_text '{"text":"déjà vu"}')
+expect_contains "type_text (speed): pasted" "$(jq -r '.result.content[0].text' <<<"$out")" "pasted"
+expect_eq "type_text (speed): no fixed sleep" yes \
+  "$([ "$(jq .ms <<<"$out")" -lt 300 ] && echo yes || echo "no ($(jq .ms <<<"$out") ms)")"
+expect_eq "type_text (speed): the clipboard still put back" "user text" "$(wl-paste)"
+expect_eq "type_text (speed): the same sequence" "wl-copy <<déjà vu|wtype -M ctrl -k v -m ctrl|wl-copy <<user text" \
+  "$(grep -v '^wl-paste\|^notify-send' "$calls" | paste -sd'|')"
+# Two pastes in a row: the second doesn't save the first's text as the user's.
+reset_calls
+timed type_text '{"text":"un é"}' type_text '{"text":"deux è"}' >/dev/null
+expect_eq "type_text: back to back, the user's clipboard put back" "user text" "$(wl-paste)"
+expect_eq "type_text: back to back, restored once, at the end" \
+  "wl-copy <<un é|wtype -M ctrl -k v -m ctrl|wl-copy <<deux è|wtype -M ctrl -k v -m ctrl|wl-copy <<user text" \
+  "$(grep -v '^wl-paste\|^notify-send' "$calls" | paste -sd'|')"
+
+# Replies are compact JSON (no indentation: tokens for nothing).
+out=$(call list_workspaces)
+expect_eq "compact JSON: one line" 1 "$(wc -l <<<"$out" | tr -d ' ')"
+expect_contains "compact JSON: still readable" "$out" '"index": 1'
+
+# Acting tools say whether they checked their own effect (_meta.verified),
+# else which read-only call would show it (_meta.observe).
+out=$(timed focus_window '{"id":1}' move_window_to_workspace '{"id":1,"workspace":1}' \
+  move_window_to_workspace '{"id":1,"workspace":2}' close_window '{"id":2}' type_text '{"text":"hi"}' \
+  notify '{"title":"speed test"}' list_windows '{}')
+# (Its undo aside: a reversible call says how to take it back too.)
+meta() { sed -n "${1}p" <<<"$out" | jq -c '.result._meta // {} | del(.undo)'; }
+expect_eq "verified: focus_window read back" '{"verified":true}' "$(meta 1)"
+expect_eq "verified: the window is on that workspace" '{"verified":true}' "$(meta 2)"
+expect_eq "not verified: niri didn't show it moved; observe instead" '{"observe":{"tool":"list_windows","args":{}}}' "$(meta 3)"
+expect_eq "not verified: the window still open (the app may ask to save)" '{"observe":{"tool":"list_windows","args":{}}}' "$(meta 4)"
+expect_contains "close_window: says it is not gone yet" "$(sed -n 4p <<<"$out" | jq -r '.result.content[0].text')" "not gone yet"
+expect_eq "observe: typing, a screenshot of the focused window" '{"observe":{"tool":"screenshot","args":{"window_id":1}}}' "$(meta 5)"
+expect_eq "verified: done once it answers (a notification shown)" '{"verified":true}' "$(meta 6)"
+expect_eq "read-only: neither" '{}' "$(meta 7)"
+expect_eq "call --meta: verified there too" true "$(python3 "$mcp" call focus_window '{"id":1}' --meta | jq '._meta.verified')"
+# Never the reply held for a check: an effect that doesn't show (the stub
+# niri never changes) is looked for briefly, then observe is said instead.
+out=$(timed move_window_to_workspace '{"id":1,"workspace":2}' close_window '{"id":2}' focus_window '{"id":4}' \
+  focus_workspace '{"workspace":3}' window_action '{"id":1,"action":"toggle_floating"}' press_keys '{"keys":["ctrl+l"]}')
+expect_eq "unconfirmed: every acting tool answers within 300 ms" "" \
+  "$(jq -r 'select(.ms >= 300) | "\(.ms) ms: \(.result.content[0].text)"' <<<"$out")"
+expect_eq "unconfirmed: observe, a read-only tool's bare name" "list_windows list_windows list_windows list_workspaces list_windows screenshot" \
+  "$(jq -r '.result._meta.observe.tool' <<<"$out" | paste -sd' ')"
+expect_eq "unconfirmed: never verified" "" "$(jq -r 'select(.result._meta.verified) | .result.content[0].text' <<<"$out")"
+# Media keys: the player's state read back (a stub playerctl that follows
+# what was pressed); a key whose effect doesn't show: no wait, no hint.
+mkdir -p "$tmp/mediabin"
+cat >"$tmp/mediabin/playerctl" <<'EOF'
+#!/usr/bin/env bash
+if grep -q XF86AudioPause "$STUB_CALLS"; then echo "Paused|Song|Artist"; else echo "Playing|Song|Artist"; fi
+EOF
+chmod +x "$tmp/mediabin/playerctl"
+reset_calls
+out=$(PATH="$tmp/mediabin:$PATH" timed press_keys '{"keys":["XF86AudioPause"]}' press_keys '{"keys":["XF86AudioNext"]}')
+expect_eq "media keys: the pause read back" true "$(sed -n 1p <<<"$out" | jq '.result._meta.verified')"
+expect_eq "media keys: no change shown, not verified, no hint" '{}' "$(sed -n 2p <<<"$out" | jq -c '.result._meta // {}')"
+expect_eq "media keys: within 300 ms either way" "" "$(jq -r 'select(.ms >= 300) | .ms' <<<"$out")"
+
+# Core tools (offered up front) and the guides behind short descriptions.
+tools=$(python3 "$mcp" tools)
+expect_eq "core: the commonest tools" "click focus_window launch_app list_windows machine_help press_keys screenshot tool_help type_text" \
+  "$(jq -r '[.[] | select(._meta["nixbook/core"]) | .name | select(IN("launch_app","focus_window","list_windows","press_keys","type_text","click","screenshot","machine_help","tool_help"))] | sort | join(" ")' <<<"$tools")"
+expect_eq "core: not the rarer ones" "" "$(jq -r '.[] | select(._meta["nixbook/core"]) | .name | select(IN("routine","contacts","widget","equalizer","drag"))' <<<"$tools")"
+expect_eq "core: every tool keeps its group" "" "$(jq -r '.[] | select(._meta["nixbook/group"] | not) | .name' <<<"$tools")"
+expect_eq "core: within 15000 characters (descriptions and schemas)" yes \
+  "$(jq '[.[] | select(._meta["nixbook/core"]) | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 15000 ? "yes" : "no (" $1 ")")}')"
+expect_eq "all tools: within 40000 characters" yes \
+  "$(jq '[.[] | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 40000 ? "yes" : "no (" $1 ")")}')"
+expect_eq "brief: a short description offers help" true \
+  "$(jq '.[] | select(.name=="routine") | (.description | test("help: true")) and .inputSchema.properties.help.type == "boolean"' <<<"$tools")"
+expect_not_contains "brief: the long reference left out" "$(jq -r '.[] | select(.name=="routine") | .description' <<<"$tools")" \
+  "a state (\"whenever there's no music\") is music_silent"
+out=$(call routine '{"help": true}')
+expect_contains "help: true gives the full guide" "$out" "a state (\"whenever there's no music\") is music_silent"
+expect_contains "help: the events explained" "$out" "music_silent:"
+expect_contains "help: every argument's full description" "$(call screenshot '{"help": true}')" \
+  "Only needed with an older niri (it then copies the capture to the user's clipboard"
+expect_contains "tool_help: the same guide" "$(call tool_help '{"name":"contacts"}')" "Google keeps it 30 days in its Trash"
+expect_contains "tool_help: the action tools' full arguments" "$(call tool_help '{"name":"click"}')" "to check the result without another call"
+expect_contains "tool_help: every tool in a line" "$(call tool_help '{}')" "routine: Routines:"
+expect_contains "tool_help: an unknown tool" "$(call tool_help '{"name":"nope"}')" "no tool 'nope'"
+python3 "$mcp" pause >/dev/null
+expect_contains "help: answers while paused" "$(call widget '{"help": true}')" "alarm_set"
+python3 "$mcp" resume >/dev/null
+
+# machine_help: the parts of system-context.md a question needs.
+cat >"$XDG_CONFIG_HOME/nixbook-shell/system-context.md" <<'MD'
+# About this machine (reference)
+The sections below are generated from this machine's configuration.
+
+## This machine (generated from its Nix configuration)
+- Host `testhost`, NixOS 26.11
+- Enabled nixbook NixOS modules (`customNixOSModules.<name>.enable`): core, greetd, niri, tailscale, tools
+## Packages installed for this user (Home Manager)
+alacritty, bat, btop, curl, eza, fd, git, htop, jq, kitty, lazygit, neovim, ripgrep, zen-twilight, zoxide
+## Keyboard shortcuts (niri, rendered from the configuration)
+```kdl
+binds {
+    Mod+T { spawn "nixbook-shell" "ipc" "call" "voice" "toggle"; }
+    Mod+Q { close-window; }
+    Print { spawn "nixbook-shell" "ipc" "call" "region" "screenshot"; }
+}
+```
+## How things are done on this machine
+- Ask Muse for a routine: "whenever the music ends, play something I like". It never fights you.
+- To install a program for good, add it to home.packages in the configuration, then apply it.
+## Neovim keymaps (nixvim, rendered from the configuration)
+- `<leader>ff` (normal mode): run :Telescope find_files
+MD
+out=$(call machine_help '{"query":"screenshot shortcut"}')
+expect_contains "machine_help: the key binding" "$out" 'Print { spawn "nixbook-shell" "ipc" "call" "region" "screenshot"; }'
+expect_not_contains "machine_help: not the other bindings" "$out" "Mod+T"
+expect_contains "machine_help: a key named" "$(call machine_help '{"query":"what does Mod+T do"}')" "Mod+T {"
+out=$(call machine_help '{"query":"is kitty installed"}')
+expect_contains "machine_help: a package, its section" "$out" "## Packages installed for this user (Home Manager)"
+expect_contains "machine_help: only that package of the list" "$out" "kitty (of 15)"
+expect_contains "machine_help: not installed, said so" "$(call machine_help '{"query":"is firefox installed"}')" "firefox: not among the installed packages"
+expect_contains "machine_help: a how-to" "$(call machine_help '{"query":"how do I add a routine"}')" "Ask Muse for a routine"
+expect_contains "machine_help: Neovim keymaps" "$(call machine_help '{"query":"neovim find files"}')" "<leader>ff"
+expect_contains "machine_help: nothing about it" "$(call machine_help '{"query":"zzqx"}')" "Nothing about 'zzqx'"
+python3 - "$XDG_CONFIG_HOME/nixbook-shell/system-context.md" <<'PY'
+import sys
+with open(sys.argv[1], "a") as f:
+    f.write("## How things are done on this machine (more)\n")
+    for i in range(200):
+        f.write(f"- The routine number {i} does routine things with routines, every day, for a routine life.\n")
+PY
+expect_eq "machine_help: at most 3000 characters" yes \
+  "$(
+    n=$(call machine_help '{"query":"routine"}' | wc -c)
+    [ "$n" -le 3001 ] && [ "$n" -gt 100 ] && echo yes || echo "no ($n)"
+  )"
+rm "$XDG_CONFIG_HOME/nixbook-shell/system-context.md"
+expect_contains "machine_help: no reference file" "$(call machine_help '{"query":"x"}')" "isn't there"
 
 # The shell's notification history, as text.
 mkdir -p "$XDG_STATE_HOME/quickshell/user"
@@ -3399,7 +3573,7 @@ out=$(call focus_window '{"id":1}')
 expect_eq "resume" "focused window 1" "$(head -n 1 <<<"$out")"
 
 echo '{"tools":["observe"],"actionsPerMinute":2}' >"$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
-expect_eq "config: disabled groups not listed" 7 "$(python3 "$mcp" tools | jq length)"
+expect_eq "config: disabled groups not listed" 9 "$(python3 "$mcp" tools | jq length)"
 out=$(call type_text '{"text":"x"}')
 expect_contains "config: disabled tool not callable" "$out" "unknown or disabled tool"
 echo '{"actionsPerMinute":2}' >"$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
@@ -3960,6 +4134,24 @@ done
 t=$(python3 "$mcp" context build --for chat --query "anything" | jq -r '.sections[] | select(.name=="personal") | .text')
 expect_contains "broker: plans coming up" "$t" "dentist, $(date -d '+2 days' +%F) (event): Dentist appointment"
 expect_contains "broker: the other subjects by name" "$t" "Other subjects you know about (recall_about_user):"
+# The relevance floor: with a request, what isn't about it (the strongest
+# entries) stays out instead of filling the budget; its subject is named.
+t=$(python3 "$mcp" context build --for bubble --query "anything" | jq -r '.sections[] | select(.name=="personal") | .text')
+expect_not_contains "broker floor: an entry not about the request left out" "$t" "Likes sailing"
+expect_contains "broker floor: its subject still named" "$t" "sailing"
+expect_contains "broker floor: what the request is about kept" \
+  "$(python3 "$mcp" context build --for bubble --query "sailing this weekend" | jq -r '.sections[] | select(.name=="personal") | .text')" "Likes sailing"
+expect_contains "broker: without a request, the strongest entries fill it" \
+  "$(python3 "$mcp" context build --for chat | jq -r '.sections[] | select(.name=="personal") | .text')" "Likes "
+expect_eq "broker: the bubble's and the panel's budgets" "3000 5000" \
+  "$(python3 -c "import importlib.util as u; s=u.spec_from_file_location('m', '$mcp'); m=u.module_from_spec(s); s.loader.exec_module(m); print(m.CONTEXT_BUDGETS['bubble'], m.CONTEXT_BUDGETS['chat'])")"
+# A fresh state: nixbook-accounts answers nothing (no account yet). The
+# personal part used to fail on it ("'NoneType' object has no attribute
+# 'get'") at every call.
+err=$(STUB_ACCOUNTS_SILENT=1 python3 "$mcp" context build --for bubble --query "call Bob about sailing" 2>&1 >/dev/null)
+expect_not_contains "broker: no accounts' answer, no error" "$err" "personal:"
+expect_contains "broker: no accounts' answer, the personal part still there" \
+  "$(STUB_ACCOUNTS_SILENT=1 python3 "$mcp" context build --for bubble --query "sailing" | jq -r '.sections[] | select(.name=="personal") | .text')" "Likes sailing"
 
 # In this process (nixbook_ai), not a meta-agent per pass: against a fake
 # module beside a copy of the script.

@@ -39,7 +39,10 @@
     "routing": {
       "decisions": "big",
       "decisionsEffort": "low",
-      "quick": "small"
+      "quick": "small",
+      "resolve": "small",
+      "verify": "small",
+      "effortMinimal": true
     },
     "voice": {
       "enable": true,
@@ -64,7 +67,9 @@
       "memoryModel": "small",
       "model": "main",
       "resolve": true,
-      "verify": true
+      "verify": true,
+      "keepWarmMinutes": 60,
+      "coreTools": true
     },
     "immich": {
       "apiKeyFile": "",

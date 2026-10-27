@@ -34,7 +34,12 @@ line each way: {"type": "approval", "id", "allow"} | {"type": "answer",
 
 At most ai.autonomy.maxTasks (3) at once, an hour each run; nothing while
 policies.ai isn't 1 (Muse is an online model) or ai.autonomy.tasks is off.
-NIXBOOK_MUSE_TASK_SPAWN=plain: never systemd-run (tests). Stdlib only.
+NIXBOOK_MUSE_TASK_SPAWN=plain: never systemd-run (tests). The runner's and
+its agent's output (stderr: what went wrong) in $XDG_RUNTIME_DIR/
+nixbook-shell/tasks/<id>.log; a failed agent's last line there is in the
+task's error too. The agent gets the provider's settings when the runner has
+them (it keeps them from its own tools), else asks the provider itself.
+Stdlib only.
 """
 
 import fcntl
@@ -114,6 +119,24 @@ def sock_path(tid):
 
 def lock_path(tid):
     return os.path.join(run_dir(), check_id(tid) + ".lock")
+
+
+def log_path(tid):
+    """The task's log: its runner's and its agent's output."""
+    return os.path.join(run_dir(), check_id(tid) + ".log")
+
+
+def last_log_line(tid, start=0):
+    """The last line the agent wrote to the task's log since START (its
+    error, mostly), "" when none."""
+    try:
+        with open(log_path(tid), "rb") as f:
+            f.seek(start)
+            lines = [line.strip() for line in f.read().decode("utf-8", "replace").splitlines()]
+    except OSError:
+        return ""
+    lines = [line for line in lines if line and not line.startswith("[")]
+    return lines[-1][:300] if lines else ""
 
 
 def load(tid):
@@ -263,7 +286,7 @@ def spawn(task):
                 return
         except (OSError, subprocess.SubprocessError):
             pass
-    log = open(os.path.join(run_dir(), task["id"] + ".log"), "ab")
+    log = open(log_path(task["id"]), "ab")
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
                      close_fds=True)
     log.close()
@@ -555,9 +578,16 @@ class Runner:
         # NIXBOOK_MUSE_TASK_ID: everything the task starts is the task's
         # (desktop-mcp starts no task from a task, and refuses the user's
         # own answers from it).
-        env = nixbook_ai.child_env({"NIXBOOK_AGENT_APPROVAL_TIMEOUT": str(max(60, int(deadline - time.time()))),
-                                    "NIXBOOK_MUSE_TASK_ID": self.tid})
-        log = open(os.path.join(run_dir(), self.tid + ".agent.log"), "ab")
+        # The provider's settings (NIXBOOK_AI_*) go to the agent when the
+        # runner has them: it needs them, and keeps them from its tools (its
+        # own child_env); without them it asks nixbook-model-provider.
+        env = {**os.environ, "NIXBOOK_AGENT_APPROVAL_TIMEOUT": str(max(60, int(deadline - time.time()))),
+               "NIXBOOK_MUSE_TASK_ID": self.tid}
+        path = log_path(self.tid)
+        log = open(path, "ab")
+        self.log_start = log.tell()
+        log.write(f"[{time.strftime('%H:%M:%S')}] agent: {' '.join(argv[:3])} …\n".encode())
+        log.flush()
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True,
                                      cwd=workdir, env=env, preexec_fn=die_with_parent)
         log.close()
@@ -749,7 +779,9 @@ class Runner:
             self.stop_agent()
             code = self.proc.wait() if self.proc else 0
             if self.task.get("status") in LIVE and not self.stopping:
-                self.update(status="failed", error=f"the agent stopped (exit {code})", approval=None)
+                why = last_log_line(self.tid, getattr(self, "log_start", 0))
+                self.update(status="failed", error=f"the agent stopped (exit {code})" + (f": {why}" if why else ""),
+                            approval=None)
         finally:
             try:
                 if self.srv is not None:

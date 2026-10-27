@@ -35,6 +35,14 @@ QtObject {
     // again with read-only tools: {met: bool, note} (null: not checked).
     property bool clarify: false
     property var verify: null
+    // Its final text was complete (meta-agent's `answer` event): shown and
+    // read out, its checks (verify) still to come.
+    property bool answered: false
+    // A plain command QuickIntent did at once in the bubble (`quick`: the
+    // command and its "Done: …"), and its Undo (a function), offered under
+    // it while it is the last message.
+    property bool quick: false
+    property var quickUndo: null
     // The user's 👍 / 👎 on the answer (services/AnswerFeedback.qml): "",
     // "up", "down" (the correction field open), "downSent" (👎 alone),
     // "corrected" (with `correction`, offered to ask again) or "retried".

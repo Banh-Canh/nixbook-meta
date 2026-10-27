@@ -34,9 +34,10 @@ is replayed).
 
 What you say or type in the bubble is an order or a question:
 
-1. **Plain commands are done at once, in code, with no model**: the music (play,
-   pause, next), the volume and brightness, dark mode, Do Not Disturb, opening an
-   app, a saved window layout, a timer. The bubble says what it did.
+1. **Plain commands are done at once, in code, with no model**: the music, the
+   volume and brightness, an app, a workspace, dark mode, Do Not Disturb, night
+   light, a screenshot, a timer… (the [whole list](#fast-commands)), also in the
+   middle of a conversation. The bubble says **Done: …**, with **Undo**.
 2. **What the desktop already knows comes with every question**: the date and
    time, the weather, the battery, your next events, the music playing. "Quel
    temps fait-il ?" or "what's next today?" is answered at once, without a tool,
@@ -76,10 +77,13 @@ mode:
 
 - every desktop tool you have enabled (screenshots included: it sees them) and
   your apps' own tools;
-- the side panel's whole system prompt: your configured prompt, this machine's
-  reference (modules, packages, shortcuts, Neovim keymaps, how things are done)
-  and the shell's live settings, when _Include system context_ is on. It is
-  cached by the provider, so it costs no time after the first request;
+- the side panel's system prompt: your configured prompt (without its
+  formatting rules: the bubble answers in short plain text) and a summary of
+  this machine (host, shell, modules, key bindings), when _Include system
+  context_ is on; the how-tos, packages and Neovim keymaps it looks up with its
+  `machine_help` tool when a question needs them. The prompt never changes
+  between messages, so the provider caches it and it costs no time after the
+  first request;
 - what the desktop knows for each message, from one place (the context broker,
   `nixbook-desktop-mcp context build`): the time, weather, battery, next events
   and music, your corrections and preferences, what agents remember about you
@@ -100,10 +104,14 @@ models**, both on by default):
 - **It asks back when a request could mean several things** ("Which Julien:
   the one from work or your cousin?"), before doing anything; the bubble says
   **? Muse needs a detail before doing anything**. A clear request just gets
-  done (`ai.agent.resolve`).
-- **It checks its work**: after acting, it looks again with read-only tools
-  and fixes it once when it isn't done; the bubble says **✓ Checked: done** or
-  **⚠ Couldn't confirm it worked** with why (`ai.agent.verify`).
+  done, with no extra cost: only a request that may be ambiguous ("close it",
+  "the other one") is read by the small model, beside the answer
+  (`ai.agent.resolve`, `ai.routing.resolve`).
+- **It checks its work**: after acting, and fixes it once when it isn't done.
+  Most tools confirm their own effect, which is enough; otherwise one quick
+  check on the small model (`ai.agent.verify`, `ai.routing.verify`). The answer
+  shows first, then **… Checking it worked**, and **✓ Checked: done** or
+  **⚠ Couldn't confirm it worked** with why.
 - **👍 / 👎 under its answers** (`ai.agent.feedback`): 👍 tells it that was
   right (what it used counts up); 👎 asks **What did you mean?**, and the
   correction is remembered for similar requests from then on, with an offer to
@@ -136,6 +144,50 @@ the mascot's balloon in Full AI mode). It comes up only for what needs your
 eyes: replies to pick, an error, an OK you can't give by voice. `Mod+C` shows
 it, and hides it again while you talk. With _Read the answers out_ on
 _Never_, the bubble always shows (something has to answer you).
+
+## Speed
+
+The bubble answers as fast as the model writes, and sends it as little as it
+can:
+
+- **Plain commands use no model** (below): done in a few milliseconds, no
+  tokens.
+- **The answer shows and is read out as it is written**: the first sentence
+  plays before the answer is over.
+- **Its tools start while it is still writing**, and the bubble says
+  **Doing …** at once; the checks come after the answer is shown.
+- **A small, cached prompt**: the core desktop tools only (the others loaded
+  when a task needs them), a summary of the machine, the latest context only;
+  the agent kept running, on one open connection to the provider.
+
+For example "open Firefox" through the agent is one model call plus at most one
+quick check, where it took five.
+
+### Fast commands
+
+Typed or said (`Mod+T`), in English, French, German or Vietnamese, these are
+done at once without the model. The bubble says **Done: …** with **Undo** when
+it can be undone, and Muse hears of it with your next message.
+
+| What               | Say                                                                         |
+| ------------------ | --------------------------------------------------------------------------- |
+| Music              | pause the music, play the music, next song, previous song                   |
+| Volume             | volume 30, volume up, volume down, mute the sound                           |
+| Brightness         | brightness up, brightness down                                              |
+| Apps               | open Firefox, close Firefox, switch to Firefox                              |
+| Workspaces         | workspace 2, next workspace, previous workspace, move window to workspace 3 |
+| Look               | dark mode, light mode                                                       |
+| Notifications      | do not disturb on, do not disturb off                                       |
+| Night light        | night light on, night light off                                             |
+| Screen             | take a screenshot, lock the screen                                          |
+| Timers             | timer 10 min, pomodoro                                                      |
+| Layouts and others | work layout (a saved layout), task: buy milk, settings                      |
+
+Starting a conversation, the short forms work too ("pause", "next", "louder",
+"lock"). In a conversation, only commands that name what they act on go this way:
+"pause it", "open the file I just downloaded" or "the other one" go to Muse,
+who knows what you were talking about. An app is opened only when its name is
+certain; anything unsure goes to Muse as before.
 
 ## Full AI mode
 
@@ -251,6 +303,8 @@ computer by Meta's MMS voices (Massively Multilingual Speech), in English or
 French, picked from the answer's language: Meta's Model API has no speech
 synthesis. After acting, it says what it did (a report's outcome and what needs you, when there is one); when
 a step waits for your OK, it asks "May I …?"; a plain command says what it did.
+The answer is read as it is written: each sentence is said as soon as it is
+complete, while the next one is made.
 _Voice_ picks **Cute** (higher and bouncier, the default) or **Natural** (MMS's
 own voice). The microphone doesn't take it for you, and `Mod+T` or `Esc` cuts
 it short. The voices are MMS's (CC-BY-NC: for personal use).
@@ -294,7 +348,12 @@ model of the one-shot answers (`ai.quick.model`: small, main or big). **Accuracy
 and models**: asking back, checking the result, 👍 / 👎, the bubble's model
 (`ai.routing.quick`), the model and thinking of the decisions made for you
 (`ai.routing.decisions`, `ai.routing.decisionsEffort`) and Full AI's hourly
-reactions. `policies.ai` (AI features off) turns all of it off.
+reactions, the models of the two checks (`ai.routing.resolve`,
+`ai.routing.verify`: small) and **Speed**: minimal thinking for the checks,
+reactions and one-shots (`ai.routing.effortMinimal`), only the core desktop
+tools up front (`ai.agent.coreTools`), and how long the agent stays running
+after the last message (`ai.agent.keepWarmMinutes`, 60; 15 while locked).
+`policies.ai` (AI features off) turns all of it off.
 
 The options are under `ai.quick`, `ai.voice`, `ai.agent` and `ai.routing` in the shell's settings, so Nix
 can set them like any other (`programs.nixbook-shell.settings.ai.quick.confirm = "actions";`).

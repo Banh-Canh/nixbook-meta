@@ -7,7 +7,12 @@ every AI script of the shell shares), so it answers in a couple of seconds.
 Run through `nixbook-model-provider run nixbook-quick-ai ask REQUEST.json`,
 which sets the provider's environment (NIXBOOK_AI_BASE_URL, NIXBOOK_AI_KEY,
 NIXBOOK_AI_MODEL, NIXBOOK_AI_SMALL_MODEL, NIXBOOK_AI_BIG_MODEL); run without
-it, the script goes through the provider itself.
+it, the script asks `nixbook-model-provider env` (and goes through `run`
+only when that fails). What the provider can't do (Meta's fast chat
+endpoint, the thinking settings) is remembered a day
+($XDG_CACHE_HOME/nixbook-shell/provider-caps.json): a one-shot doesn't pay a
+failed probe each time. With ai.routing.effortMinimal (on by default) the
+one-shots and the reactions think as little as the server allows.
 
 The request (JSON): {mode, question, text, image, context: {app, title,
 source}, history: [{role, text}], lang, effort, model: small|main|big}. The
@@ -179,11 +184,20 @@ def model_alias(req, default="small"):
     return str(req.get("model") or default)
 
 
+def effort_of(req, default="low"):
+    """The request's effort; "low" (the default) is "minimal" while
+    ai.routing.effortMinimal is on."""
+    effort = str(req.get("effort") or default)
+    if effort == "low" and nixbook_ai.routing()["effortMinimal"]:
+        return "minimal"
+    return effort
+
+
 def answer_text(req, p, system, messages, on_delta):
     """The text modes' answer: Meta's fast chat endpoint first when the
     effort is low (reasoning_effort "minimal": about 2 s faster), else the
     Messages API streamed, its effort settings dropped if refused."""
-    effort = str(req.get("effort") or "low")
+    effort = effort_of(req)
     stream = []
 
     def relay(ev):
@@ -221,7 +235,11 @@ def do_mode(req):
             "--strict-mcp-config", "--mcp-config", json.dumps(servers), "--allowedTools", "mcp__desktop",
             "--context-for", "bubble", "--confirm", confirm if confirm in ("destructive", "actions", "never")
             else "destructive", "--report", "--lazy-mcp", "12", "--learn",
-            "--model", model_alias(req, nixbook_ai.routing(cfg)["quick"]), "--no-session-persistence"]
+            "--model", model_alias(req, nixbook_ai.routing(cfg)["quick"]), "--no-session-persistence",
+            # The bubble's budget: a short answer, short tool results.
+            "--max-tokens", "1200", "--tool-result-max", "6000"]
+    if agent.get("coreTools", True) is not False:
+        args.append("--core-tools")
     if agent.get("resolve", True) is not False:
         args.append("--resolve")
     if agent.get("verify", True) is not False:
@@ -381,7 +399,7 @@ def react(req, started, p):
     past, prefs = learned_for(ev, d)
     r = nixbook_ai.routing()
     model = str(req.get("model") or r["decisions"])
-    effort = str(req.get("effort") or r["decisionsEffort"])
+    effort = str(req.get("effort") or ("minimal" if r["effortMinimal"] else r["decisionsEffort"]))
     parts = ["What happened: " + json.dumps({k: v for k, v in ev.items() if v not in ("", None)}, ensure_ascii=False)]
     known = broker("react", f"{ev.get('app', '')} {ev.get('title', '')} {ev.get('text', '')}".strip(),
                    ev.get("app") or "", ev.get("title") or "")
@@ -406,7 +424,7 @@ def react(req, started, p):
     nixbook_ai.sent_note("Full AI: a reaction", f"{p.label.lower()}:{p.model(model)}", prompt)
     try:
         decision = nixbook_ai.answer(system, prompt, model=model, effort=effort, schema=REACT_SCHEMA, timeout=60,
-                                     max_tokens=3000, provider=p)
+                                     max_tokens=3000, provider=p, fast=effort == "minimal")
     except Exception as e:  # noqa: BLE001
         emit("error", error=str(e))
         emit("done", ms=int((time.monotonic() - started) * 1000))
@@ -427,7 +445,7 @@ def react(req, started, p):
     return 0
 
 
-def ask(path):
+def ask(path, argv=None):
     started = time.monotonic()
     try:
         with open(path, encoding="utf-8") as f:
@@ -437,9 +455,13 @@ def ask(path):
         return 2
     if req.get("mode") == "do":
         return do_mode(req)
+    nixbook_ai.use_caps_cache()
     try:
         p = nixbook_ai.Provider.from_env()
     except nixbook_ai.AIError as e:
+        if argv:
+            # `env` gave no key: once more through the provider (`run`).
+            nixbook_ai.ensure_provider(argv, __file__, why=str(e))
         emit("error", error=str(e))
         emit("done", ms=int((time.monotonic() - started) * 1000))
         return 1
@@ -669,7 +691,7 @@ def complete(req, p, system, image_block, parts, max_tokens):
     else the Messages API. Returns (text, usage)."""
     content = ([image_block] if image_block else []) + [{"type": "text", "text": t} for t in parts]
     msg = nixbook_ai.call(system, [{"role": "user", "content": content}], model=model_alias(req),
-                          effort=str(req.get("effort") or "low"), max_tokens=max_tokens,
+                          effort=effort_of(req), max_tokens=max_tokens,
                           fast=str(req.get("scanEffort") or "minimal") == "minimal", timeout=120, provider=p)
     return nixbook_ai.text_of(msg), msg.get("usage") or {}
 
@@ -757,8 +779,7 @@ def scan(req, started, p):
 
 def main(argv):
     if len(argv) == 3 and argv[1] == "ask":
-        nixbook_ai.ensure_provider(argv[1:], __file__)
-        return ask(argv[2])
+        return ask(argv[2], argv[1:])
     if len(argv) == 3 and argv[1] == "learn":
         return learn_command(argv[2])
     if len(argv) == 2 and argv[1] == "learned":

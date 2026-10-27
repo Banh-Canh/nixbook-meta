@@ -21,7 +21,7 @@ server_pid=""
 trap '[ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null; rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/run" "$tmp/cfg"
-export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_STATE_HOME="$tmp/state"
+export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_STATE_HOME="$tmp/state" XDG_CACHE_HOME="$tmp/cache"
 export NIXBOOK_AI_RETRY_DELAY=0.05
 
 # The stub desktop-mcp: the privacy mask, and its arguments echoed.
@@ -157,6 +157,88 @@ msg = ai.call("sys", say("stream it"), on_event=events.append)
 check("stream: the deltas", "Hello world", "".join(e["delta"]["text"] for e in events if e.get("type") == "content_block_delta"))
 check("stream: the whole message", "Hello world", ai.text_of(msg))
 
+# Keep-alive: one connection for several calls (the TLS handshake paid once).
+n = mark()
+for i in range(3):
+    ai.call("sys", say(f"keepalive {i}"), on_event=lambda ev: None)
+ai.call("sys", say("keepalive plain"))
+conns = {r["conn"] for r in requests()[n:]}
+check("keep-alive: four calls, streamed or not, one connection", 1, len(conns))
+# A connection the server closed while it was kept: sent again, once, on a new one.
+n = mark()
+ai.call("sys", say("CLOSEAFTER bye"))
+check("stale: the answer after the server closed the kept connection", "Hello world", ai.text_of(ai.call("sys", say("after close"))))
+got = [r for r in requests()[n:] if "after close" in json.dumps(r["body"])]
+check("stale: sent once more, on a new connection", (1, True), (len(got), got[0]["conn"] != requests()[n]["conn"]))
+# Two threads at once: each its own connection, both kept.
+n = mark()
+ts = [threading.Thread(target=ai.call, args=("sys", say(f"parallel {i}"))) for i in range(2)]
+[t.start() for t in ts]
+[t.join() for t in ts]
+check("pool: two calls at once, two connections", 2, len({r["conn"] for r in requests()[n:]}))
+n = mark()
+ai.call("sys", say("after parallel"))
+check("pool: and one of them reused after", True, requests()[n]["conn"] in {r["conn"] for r in requests()[n - 2:n]})
+
+# on_block: each tool call as soon as its block ends, while the rest streams.
+printf_hold = {"content": [{"type": "text", "text": "On it."}, {"type": "tool_use", "id": "b1", "name": "launch_app",
+                                                                  "input": {"app": "firefox"}}], "hold": 1.0}
+with open(os.path.join(tmp, "scripts", "hold.json"), "w") as f:
+    json.dump([printf_hold], f)
+seen = []
+t0 = time.monotonic()
+msg = ai.call("sys", say("AGENTTEST:hold go"), tools=[{"name": "launch_app", "input_schema": {"type": "object"}}],
+              on_block=lambda b: seen.append((round(time.monotonic() - t0, 1), b["name"], b["input"])),
+              on_event=lambda ev: seen.append((round(time.monotonic() - t0, 1), ev["type"])) if ev["type"] == "message_stop" else None)
+check("on_block: the call, whole", ("launch_app", {"app": "firefox"}), seen[0][1:])
+check("on_block: before the message ended (held 1 s)", True, seen[0][0] + 0.5 < seen[-1][0] and seen[-1][1] == "message_stop")
+check("on_block: the message has it too", "b1", [b for b in msg["content"] if b["type"] == "tool_use"][0]["id"])
+
+# Cancel: another thread stops a call in flight.
+c = ai.Cancel()
+threading.Timer(0.3, c.set).start()
+t0 = time.monotonic()
+try:
+    ai.call("sys", say("AGENTTEST:hold stop"), tools=[{"name": "launch_app", "input_schema": {"type": "object"}}],
+            on_event=lambda ev: None, cancel=c)
+    check("cancel: the call stopped", "Cancelled", "an answer")
+except ai.Cancelled:
+    check("cancel: the call stopped, at once", True, time.monotonic() - t0 < 0.9)
+check("cancel: then the next call fine", "Hello world", ai.text_of(ai.call("sys", say("after cancel"))))
+
+# The provider's capabilities remembered across processes (use_caps_cache).
+os.environ["XDG_CACHE_HOME"] = os.path.join(tmp, "cache")
+ai.use_caps_cache()
+fresh()
+ai._CAPS["data"] = None
+n = mark()
+ai.call("sys", say("caps one"), fast=True)
+with open(ai.caps_path()) as f:
+    caps = json.load(f)
+check("caps: the missing fast endpoint written down", False, caps[os.environ["NIXBOOK_AI_BASE_URL"] + "|small-model"]["fast"])
+fresh()
+ai._CAPS["data"] = None
+n = mark()
+ai.call("sys", say("caps two"), fast=True)
+check("caps: a new process doesn't probe it again", ["/v1/messages"], [r["path"] for r in since(n, "caps two")])
+ai.call("sys", say("NOEFFORT caps"), effort="low")
+fresh()
+ai._CAPS["data"] = None
+n = mark()
+ai.call("sys", say("caps three"), effort="low")
+check("caps: the refused thinking settings too", [None], [r["body"].get("output_config") for r in since(n, "caps three")])
+ai.use_caps_cache(False)
+fresh()
+
+# answer(fast=True) with a schema: the chat endpoint's JSON when it has one.
+fresh()
+n = mark()
+check("answer fast: no chat endpoint, the Messages API's tool", {"answer": 42},
+      ai.answer("sys", "AGENTTEST:forced", schema={"type": "object", "properties": {"answer": {"type": "integer"}},
+                                                   "required": ["answer"]}, fast=True))
+check("answer fast: tried first", ["/v1/chat/completions", "/v1/messages"], [r["path"] for r in since(n, "AGENTTEST:forced")])
+fresh()
+
 # answer(): text, and the JSON for a schema.
 schema = {"type": "object", "properties": {"answer": {"type": "integer"}}, "required": ["answer"]}
 check("answer: the text", "Hello world", ai.answer("sys", "plain"))
@@ -281,10 +363,13 @@ check("report: none when it went well", ("Done.", None), (text, report))
 check("strip_report: the block out", ("Opened.", {"summary": "s"}), ai.strip_report('Opened.<report>{"summary": "s"}</report>'))
 cfg_dir = os.path.join(os.environ["XDG_CONFIG_HOME"], "nixbook-shell")
 os.makedirs(cfg_dir)
-check("routing: the defaults", {"decisions": "big", "decisionsEffort": "low", "quick": "small"}, ai.routing())
+check("routing: the defaults", {"decisions": "big", "decisionsEffort": "low", "quick": "small", "resolve": "small",
+                                "verify": "small", "effortMinimal": True}, ai.routing())
 with open(os.path.join(cfg_dir, "config.json"), "w") as f:
-    json.dump({"ai": {"routing": {"decisions": "main", "decisionsEffort": "silly"}}}, f)
-check("routing: the settings, a wrong effort ignored", {"decisions": "main", "decisionsEffort": "low", "quick": "small"},
+    json.dump({"ai": {"routing": {"decisions": "main", "decisionsEffort": "silly", "verify": "main",
+                                  "effortMinimal": False}}}, f)
+check("routing: the settings, a wrong effort ignored", {"decisions": "main", "decisionsEffort": "low", "quick": "small",
+                                                        "resolve": "small", "verify": "main", "effortMinimal": False},
       ai.routing())
 sys.exit(1 if failures else 0)
 PY

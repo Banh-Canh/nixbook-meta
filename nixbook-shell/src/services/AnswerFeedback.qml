@@ -29,7 +29,8 @@ Singleton {
     // An answer worth a verdict: Muse's (not the config assistant's, not an
     // error), finished.
     function rates(message) {
-        return root.enabled && !!message && message.role === "assistant" && message.done === true
+        // Not a plain command the shell did itself (QuickIntent: no model).
+        return root.enabled && !!message && message.role === "assistant" && message.done === true && !(message.quick ?? false)
             && (message.model ?? "") !== Ai.configAssistantId && String(message.content ?? "").trim().length > 0
     }
 

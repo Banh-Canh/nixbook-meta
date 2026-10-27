@@ -25,7 +25,9 @@ import QtQuick
  * once by QuickIntent, else Quick AI answers or acts with the desktop
  * tools, or Muse in its own thread). Escape in the bubble cancels.
  * The answers are read out (ai.voice.speak) in a cute voice: Meta's MMS-TTS
- * on this computer (`nixbook-voice-speak`, English or French).
+ * on this computer (`nixbook-voice-speak`, English or French), as they
+ * stream: one `nixbook-voice-speak --stream` per answer, fed the text as it
+ * comes, so the first sentence plays before the answer is over.
  */
 Singleton {
     id: root
@@ -84,7 +86,7 @@ Singleton {
     }
     Timer {
         id: relisten
-        interval: 700
+        interval: 300
         onTriggered: {
             // Not while it talks (the speaker reopens it), but Full AI mode's
             // stream, which opens held.
@@ -103,7 +105,23 @@ Singleton {
     Connections {
         target: Initiative
         function onThinkingChanged() {
-            if (Initiative.thinking) return;
+            if (Initiative.thinking) {
+                root._streamBegin();
+                return;
+            }
+            // Read out as it streamed: what is left said, then the user's turn
+            // again (the stream speaker's end reopens the microphone).
+            if (root.streamedTurn) {
+                root.voiceTurn = false;
+                root._feed();
+                root._streamClose();
+                if (!streamSpeaker.running && !speaker.running && !FullAi.active) {
+                    if (root.session) relisten.restart();
+                    else if (Initiative.quiet) Initiative.hush("wait");
+                }
+                return;
+            }
+            root.streamTarget = null;
             // The answer is there: read out (Full AI mode reads its own,
             // FullAi.qml), then the user's turn again (a conversation).
             if (!FullAi.active && root.wantsSpeech()) root.speak(root.lastAnswer());
@@ -171,27 +189,191 @@ Singleton {
     // (ai.voice.speak "never", no text).
     function speak(text) {
         if (root.speakMode === "never" || !String(text ?? "").trim()) return false;
-        root.stopSpeaking();
+        root.stopSpeaking(false);
         speaker.text = String(text);
         speaker.wanted = true;
-        root.speaking = true;
-        // The microphone never hears it: the continuous stream held, a
-        // turn's recording closed (opened again once it has spoken).
-        if (stream.running && stream.continuous) stream.write("hold\n");
-        else if (root.listening) {
-            speaker.reopen = true;
-            root.pauseListening();
-        }
+        speaker.reopen = root._holdMic();
         speaker.running = true;
         return true;
     }
-    function stopSpeaking() {
+    // The microphone never hears it: the continuous stream held, a turn's
+    // recording closed (true: to open again once it has spoken).
+    function _holdMic() {
+        root.speaking = true;
+        if (stream.running && stream.continuous) {
+            stream.write("hold\n");
+            return false;
+        }
+        if (root.listening) {
+            root.pauseListening();
+            return true;
+        }
+        return false;
+    }
+    // byUser: Mod+T, Escape (the rest of the answer being streamed isn't
+    // read out either); not when it only makes way for something else to say.
+    function stopSpeaking(byUser = true) {
         if (speaker.running) {
             speaker.wanted = false;
             speaker.signal(15);
         }
+        if (streamSpeaker.running) {
+            streamSpeaker.wanted = false;
+            streamSpeaker.signal(15);
+        }
+        if (byUser) {
+            root.streamTarget = null;
+            root.streamTurn = false;
+        }
         if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
         root.speaking = false;
+    }
+    // Said (either speaker): the microphone back, the user's turn — unless
+    // the other speaker still talks (`otherRunning`: it ends this itself).
+    function _spoken(code, wanted, again, err, otherRunning) {
+        if (code !== 0 && wanted)
+            root.error = Translation.tr("Speaking failed: %1").arg(String(err ?? "").trim().split("\n").pop() || code);
+        if (otherRunning) return;
+        if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
+        root.speaking = false;
+        // Said: the user's turn (a conversation, Full AI mode — also
+        // when Mod+T cut it short: the mic it had closed opens again); a
+        // conversation out of sight and over: put away (relisten waits
+        // for an answer still being written, but a yes or no it asks for).
+        if (FullAi.active || (wanted && (root.session || again))) relisten.restart();
+        else if (Initiative.quiet && !FullAi.active && !Initiative.thinking) Initiative.hush("wait");
+    }
+
+    // ── Read out as it streams ──
+    // A turn to be read out (decided as it starts: Full AI mode, "always",
+    // or "voice" and it was said): its answer's text (`streamTarget`, the
+    // bubble's last message) fed to one `nixbook-voice-speak --stream` as it
+    // comes (`streamFed`: how much of its plain text went), stdin closed once
+    // the answer is complete (meta-agent's `answer`, before its checks).
+    property bool streamTurn: false
+    property bool streamedTurn: false
+    property var streamTarget: null
+    property int streamFed: 0
+    // An older nixbook-voice-speak without --stream: read out at the end.
+    property bool streamUnsupported: false
+    function _lastAssistant() {
+        const chat = Initiative.chat;
+        if (!chat) return null;
+        const ids = chat.messageIDs;
+        const m = ids.length > 0 ? chat.messageByID[ids[ids.length - 1]] : null;
+        return m && m.role === "assistant" ? m : null;
+    }
+    function _streamBegin() {
+        root.streamedTurn = false;
+        root.streamFed = 0;
+        root.streamTurn = !root.streamUnsupported && root.speakMode !== "never"
+            && (FullAi.active || root.speakMode === "always" || (root.speakMode === "voice" && root.voiceTurn));
+        // The turn's own message (not the last one, already done).
+        const m = root.streamTurn ? root._lastAssistant() : null;
+        root.streamTarget = m && !m.done ? m : null;
+        root._feed();
+    }
+    function _plain(m) {
+        return String(m?.content ?? "").replace(/<think>[\s\S]*?(<\/think>|$)/g, "").replace(/<report>[\s\S]*?(<\/report>|$)/g, "");
+    }
+    function _feed() {
+        const m = root.streamTarget;
+        if (!m || !root.streamTurn) return;
+        const plain = root._plain(m);
+        const complete = m.answered || m.done;
+        // Not while something else is said (a question for an OK), nor into
+        // a speaker whose input is closed: on when it is done (onExited).
+        if (speaker.running || streamSpeaker.closing) return;
+        if (plain.length > root.streamFed) {
+            const fresh = plain.slice(root.streamFed);
+            if (!streamSpeaker.running) {
+                if (fresh.trim().length === 0) return;
+                root.streamFed = plain.length;
+                root.streamedTurn = true;
+                streamSpeaker.pending = fresh;
+                streamSpeaker.closeAfter = false;
+                streamSpeaker.wanted = true;
+                streamSpeaker.reopen = root._holdMic();
+                streamSpeaker.stdinEnabled = true;
+                streamSpeaker.running = true;
+            } else {
+                root.streamFed = plain.length;
+                if (streamSpeaker.started) streamSpeaker.write(fresh);
+                else streamSpeaker.pending += fresh;
+            }
+        }
+        if (complete) root._streamClose();
+    }
+    // The answer is complete: the last sentence said, then the speaker ends.
+    function _streamClose() {
+        if (!streamSpeaker.running || streamSpeaker.closing) return;
+        if (!streamSpeaker.started) {
+            streamSpeaker.closeAfter = true;
+            return;
+        }
+        streamSpeaker.closing = true;
+        streamSpeaker.stdinEnabled = false;
+    }
+    Connections {
+        target: root.streamTarget
+        ignoreUnknownSignals: true
+        function onContentChanged() { root._feed(); }
+        function onAnsweredChanged() { root._feed(); }
+        function onDoneChanged() { root._feed(); }
+    }
+    // The bubble's answer message appears after the turn started (a
+    // one-shot answer, a message made once the privacy mask is done).
+    Connections {
+        target: Initiative.chat
+        ignoreUnknownSignals: true
+        function onMessageIDsChanged() {
+            if (!root.streamTurn || !Initiative.thinking) return;
+            const m = root._lastAssistant();
+            if (m && !m.done && !root.streamTarget) {
+                root.streamTarget = m;
+                root.streamFed = 0;
+                root._feed();
+            }
+        }
+    }
+    Process {
+        id: streamSpeaker
+        property string pending: ""
+        property bool started: false
+        property bool closing: false
+        property bool closeAfter: false
+        property bool wanted: true
+        property bool reopen: false
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" --stream', "_", root.voiceStyle]
+        stderr: StdioCollector { id: streamSpeakerErr }
+        onStarted: {
+            streamSpeaker.started = true;
+            if (streamSpeaker.pending.length > 0) streamSpeaker.write(streamSpeaker.pending);
+            streamSpeaker.pending = "";
+            if (streamSpeaker.closeAfter) root._streamClose();
+        }
+        onExited: (code) => {
+            const err = streamSpeakerErr.text;
+            streamSpeaker.started = false;
+            streamSpeaker.closing = false;
+            streamSpeaker.closeAfter = false;
+            streamSpeaker.pending = "";
+            const again = streamSpeaker.reopen;
+            streamSpeaker.reopen = false;
+            // No --stream (an older nixbook-voice-speak): the answer read out
+            // in one go once complete, as before.
+            if (code !== 0 && streamSpeaker.wanted && /unrecognized|usage|invalid choice|no such option/i.test(err)) {
+                root.streamUnsupported = true;
+                root.streamTurn = false;
+                root.streamedTurn = false;
+                root.speaking = false;
+                if (!Initiative.thinking && root.streamTarget) root.speak(root.lastAnswer());
+                return;
+            }
+            root._spoken(code, streamSpeaker.wanted, again, err, speaker.running);
+            // More came while it ended (a fix after the checks): read on.
+            if (streamSpeaker.wanted) root._feed();
+        }
     }
     Process {
         id: speaker
@@ -203,17 +385,11 @@ Singleton {
             root.voiceStyle, speaker.text]
         stderr: StdioCollector { id: speakerErr }
         onExited: (code) => {
-            if (code !== 0 && speaker.wanted)
-                root.error = Translation.tr("Speaking failed: %1").arg(speakerErr.text.trim().split("\n").pop() || code);
-            if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
-            root.speaking = false;
             const again = speaker.reopen;
             speaker.reopen = false;
-            // Said: the user's turn (a conversation, Full AI mode — also
-            // when Mod+T cut it short: the mic it had closed opens again); a
-            // conversation out of sight and over: put away.
-            if (FullAi.active || (speaker.wanted && (root.session || again))) relisten.restart();
-            else if (Initiative.quiet && !FullAi.active && !Initiative.thinking) Initiative.hush("wait");
+            root._spoken(code, speaker.wanted, again, speakerErr.text, streamSpeaker.running);
+            // The answer being streamed waited for it: read on.
+            if (speaker.wanted) root._feed();
         }
     }
 
@@ -372,6 +548,7 @@ Singleton {
         // Full AI mode learns from the answer (its question, what it did alone).
         if (FullAi.active) FullAi.userSaid(text);
         root.voiceTurn = true;
+        Initiative.lastQuickText = "";
         if (Initiative.speaking) Initiative.reply(text);
         else QuickAi.askQuestion(text, "voice");
         // Full AI mode: listening again at once (the next order can come
@@ -379,9 +556,11 @@ Singleton {
         if (FullAi.active) relisten.restart();
         // A plain command done at once (QuickIntent): what it did, said, then
         // the user's turn again.
-        if (Initiative.speaking?.kind === "quick" && !Initiative.thinking) {
+        const quick = Initiative.lastQuickText;
+        Initiative.lastQuickText = "";
+        if (quick.length > 0 && !Initiative.thinking) {
             root.voiceTurn = false;
-            if (!root.speak(Initiative.speaking.text) && root.session && !FullAi.active) relisten.restart();
+            if (!root.speak(quick) && root.session && !FullAi.active) relisten.restart();
         }
     }
 

@@ -8,6 +8,10 @@ character), then the pitch raised again keeping the timbre (clear, not a
 chipmunk), a touch of treble, and a bouncier pace.
 
   nixbook-voice-speak [--lang auto|en|fr] [--style cute|natural] [--file WAV] TEXT…
+  nixbook-voice-speak --stream [--lang …] [--style …]   the text on stdin as
+                       it is written (an answer streaming in): each sentence
+                       spoken as soon as it is complete, out at EOF after
+                       the last
 
 Sentence after sentence: the first is heard while the next ones are made.
 The text is made speakable first (no Markdown, code, links or emoji;
@@ -170,12 +174,176 @@ class Speaker:
                 pass
 
 
+class Streamed:
+    """Sentences out of a text arriving piece by piece (stdin as an answer
+    streams in): each one as soon as it ends (. ! ? … or a line's end, then
+    a space), code blocks and <think> left out whole, a very short one kept
+    for the next."""
+
+    END = re.compile(r"[.!?…](?=\s)|\n")
+
+    def __init__(self):
+        self.buf = ""
+        self.held = ""
+
+    def feed(self, text, last=False):
+        self.buf += text
+        out = []
+        while True:
+            s = self.buf
+            # A code block or a <think> still open: what comes before it only.
+            fence = s.find("```")
+            if fence >= 0:
+                close = s.find("```", fence + 3)
+                if close < 0:
+                    if last:
+                        s = s[:fence]
+                        self.buf = s
+                    else:
+                        out += self._split(s[:fence], keep_tail=True, prefix_only=True)
+                        break
+                else:
+                    self.buf = s[:fence] + " " + s[close + 3:]
+                    continue
+            think = s.find("<think>")
+            if think >= 0:
+                close = s.find("</think>", think)
+                if close < 0:
+                    if not last:
+                        out += self._split(s[:think], keep_tail=True, prefix_only=True)
+                        break
+                    self.buf = s[:think]
+                else:
+                    self.buf = s[:think] + " " + s[close + 8:]
+                    continue
+            out += self._split(self.buf, keep_tail=not last)
+            break
+        if last:
+            tail = (self.held + " " + self.buf).strip() if self.held or self.buf.strip() else ""
+            self.held = self.buf = ""
+            if tail:
+                out.append(tail)
+        return out
+
+    def _split(self, text, keep_tail, prefix_only=False):
+        """The complete sentences of TEXT; the rest stays in the buffer."""
+        out, start = [], 0
+        for m in self.END.finditer(text):
+            piece = text[start:m.end()].strip()
+            start = m.end()
+            if not piece:
+                continue
+            piece = (self.held + " " + piece).strip() if self.held else piece
+            self.held = ""
+            if len(piece) < 12:
+                self.held = piece
+                continue
+            out.append(piece)
+        rest = text[start:]
+        if prefix_only:
+            # The open block stays in the buffer after what is left.
+            self.buf = rest + self.buf[len(text):]
+        else:
+            self.buf = rest if keep_tail else ""
+            if not keep_tail and rest.strip():
+                out.append((self.held + " " + rest.strip()).strip())
+                self.held = ""
+        return out
+
+
+def read_pieces(stream):
+    """stdin as it comes (os.read: whatever is there, not whole lines)."""
+    fd = stream.fileno()
+    while True:
+        try:
+            chunk = os.read(fd, 4096)
+        except InterruptedError:
+            continue
+        if not chunk:
+            return
+        yield chunk
+
+
+def stream_main(lang, style):
+    """--stream: sentences spoken as they arrive on stdin."""
+    for tool in ("sherpa-onnx-offline-tts", "ffmpeg", "rubberband-r3", "pw-play"):
+        if not shutil.which(tool):
+            print(f"{tool} isn't installed", file=sys.stderr)
+            return 2
+    import codecs
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    pending = queue.Queue()
+    failed = []
+    with tempfile.TemporaryDirectory(prefix="nixbook-voice-") as tmp:
+        sp = Speaker(lang if lang in ("en", "fr") else "en", style, tmp)
+        signal.signal(signal.SIGTERM, lambda *_: (sp.stop(), os._exit(0)))
+        signal.signal(signal.SIGINT, lambda *_: (sp.stop(), os._exit(0)))
+        chosen = {"lang": lang if lang in ("en", "fr") else None, "said": 0}
+
+        def reader():
+            split = Streamed()
+            try:
+                for chunk in read_pieces(sys.stdin):
+                    for s in split.feed(decoder.decode(chunk)):
+                        pending.put(s)
+                for s in split.feed(decoder.decode(b"", final=True), last=True):
+                    pending.put(s)
+            finally:
+                pending.put(None)
+
+        ready = queue.Queue()
+
+        def maker():
+            try:
+                while True:
+                    s = pending.get()
+                    if s is None or sp.stopped:
+                        break
+                    if chosen["lang"] is None:
+                        # The voice: from the first sentence (then kept).
+                        chosen["lang"] = language(s)
+                        sp.lang = chosen["lang"]
+                        sp.model = os.path.join(VOICES, sp.lang)
+                        if not os.path.exists(os.path.join(sp.model, "model.onnx")):
+                            failed.append("no voice installed (NIXBOOK_MMS_VOICES)")
+                            break
+                    text = speakable(s, chosen["lang"])
+                    if not text or chosen["said"] >= MAX_CHARS:
+                        continue
+                    chosen["said"] += len(text)
+                    for piece in sentences(text) or [text]:
+                        ready.put(sp.make(piece))
+            except RuntimeError as e:
+                if not sp.stopped:
+                    failed.append(str(e))
+            ready.put(None)
+
+        threading.Thread(target=reader, daemon=True).start()
+        threading.Thread(target=maker, daemon=True).start()
+        while True:
+            wav = ready.get()
+            if wav is None or sp.stopped:
+                break
+            try:
+                sp.run(["pw-play", "--media-role=Assistant", wav])
+            except RuntimeError as e:
+                failed.append(str(e))
+                break
+    if failed and not sp.stopped:
+        print(failed[0], file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv):
     lang, style, out_file, words = "auto", "cute", None, []
+    streamed = False
     args = list(argv[1:])
     while args:
         a = args.pop(0)
-        if a == "--lang" and args:
+        if a == "--stream":
+            streamed = True
+        elif a == "--lang" and args:
             lang = args.pop(0)[:2].lower()
         elif a == "--style" and args:
             style = args.pop(0)
@@ -186,6 +354,8 @@ def main(argv):
             break
         else:
             words.append(a)
+    if streamed and not words and not out_file:
+        return stream_main(lang, style)
     raw_text = " ".join(words) if words else sys.stdin.read()
     if lang not in ("en", "fr"):
         lang = language(raw_text)

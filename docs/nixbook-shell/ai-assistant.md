@@ -44,7 +44,7 @@ On NixOS, add the shell's `nixosModules.default` so "is X enabled?" also covers 
 - whether it may search and read the web;
 - the folders it may read.
 
-Replies stream in, each tool call shows with its result in a collapsible block, and the send button (or `/stop`) stops the answer: the agent is stopped, and your next message resumes its session. The agent keeps running between messages, so replies start immediately; it closes after 15 minutes unused.
+Replies stream in, each tool call shows with its result in a collapsible block, and the send button (or `/stop`) stops the answer: the agent is stopped, and your next message resumes its session. The agent keeps running between messages, so replies start immediately: it starts as soon as you open the panel on Muse, closes after an hour unused (15 minutes while the screen is locked; `ai.agent.keepWarmMinutes`) and starts again ahead when you unlock or the screens come back on.
 
 This fork uses Meta only: Claude Code, the claude.ai connectors, the Claude usage bar widget and signing in with a Claude subscription are gone on purpose.
 
@@ -74,7 +74,7 @@ From a terminal: `nixbook-model-provider status`, `nixbook-model-provider test`,
 - **Command line** (`ai.agent.commandLine`, off by default): Muse may run commands on this computer as you (its Bash tool). It never types into terminal windows: a terminal has your full access. It looks around freely but says exactly what it will run, and waits for your yes in the chat, before anything that changes the system or your files: installing, removing or editing files, `sudo`, `systemctl`, git commits or pushes, NixOS switches, sending data off the machine. **Only in the allowed folders** (`ai.agent.commandLineFolders`, on by default) keeps it to the folders below, enforced by the agent's sandbox (bubblewrap, in a PID namespace of its own): in your home only the allowed folders can be read and the writable ones written; the rest of your home is hidden (your SSH keys, logins…), and so are your runtime directory and removable drives; writes elsewhere fail (but in a `/tmp` of its own, gone afterwards), and what runs on its own later (`.git`, `.envrc` at the top of a writable folder) can't be written; the system's programs and the network work; a command is never retried outside the sandbox (without bubblewrap it isn't run at all). Its Write and Edit tools work in the writable folders only. What its commands start stays inside too: systemd, D-Bus and the compositor are out of reach, so nothing can be launched outside it that way. Apps it opens with the desktop tools (not its commands) run on your desktop as before; [the agents' own desktop](./agent-desktop) confines those to the allowed folders too. Turned off, its commands have your full access.
 - **Speak as this computer** (`ai.agent.asComputer`, on by default): Muse answers as the machine itself — "my CPU is an AMD Ryzen 7 6800U", "my battery is at 80%, though its health is down to 46%" — reading its hardware, OS and kernel live through the desktop tools' `system_info` rather than guessing.
 
-With a model selected, the configuration facts become reference for the model: it answers with its own knowledge too, and says when it isn't sure. `ai.includeSystemContext` (on by default; Settings → Services → AI) controls whether the machine context is sent.
+With a model selected, the configuration facts become reference for the model: it answers with its own knowledge too, and says when it isn't sure. `ai.includeSystemContext` (on by default; Settings → Services → AI) controls whether the machine context is sent. What it sends is a **short summary** of this machine (host, shell, enabled modules, the key bindings, about 6000 characters, `~/.config/nixbook-shell/system-context-summary.md`); for how-tos, packages and Neovim keymaps Muse searches the whole reference with its `machine_help` tool, only when a question needs them.
 
 ### What comes with each message
 
@@ -92,11 +92,29 @@ With the [trust ladder](./desktop-agents#trust-ladder) on (`ai.autonomy.trust`, 
 
 **Settings → Desktop agents → Accuracy and models** (all on by default):
 
-- **Ask back when a request is ambiguous** (`ai.agent.resolve`): before acting on a request that could mean several things, Muse asks which one you meant, and does nothing until you answer. A clear request gets a one-line note of what it understood, for itself.
-- **Check the result after acting** (`ai.agent.verify`): after a message in which it changed something, it looks again with read-only tools and fixes it once if the goal isn't met. The answer then says **Checked: done** or **Couldn't confirm it worked** and why.
+- **Ask back when a request is ambiguous** (`ai.agent.resolve`): before acting on a request that could mean several things, Muse asks which one you meant, and does nothing until you answer. It costs nothing on a clear request: only one that may be ambiguous ("close it" with nothing to point at, "the other one", a verb alone) is read by a second model (_Model that tells whether a request is ambiguous_, `ai.routing.resolve`, the small one), beside the answer, which keeps streaming meanwhile; only its tools wait for the verdict.
+- **Check the result after acting** (`ai.agent.verify`): after a message in which it changed something, the result is checked, and fixed once if the goal isn't met. Most desktop tools confirm their own effect (the window opened, the music paused), and then nothing more is asked; otherwise one quick check by _Model that checks the result_ (`ai.routing.verify`, small). The answer shows at once; **Checked: done** or **Couldn't confirm it worked** and why appears under it a moment later.
 - **👍 / 👎 under the answers** (`ai.agent.feedback`): 👍 tells Muse that was right (the memory notes it used get stronger); 👎 opens **What did you mean?**: Enter saves your correction, which comes back with similar requests from then on, and offers to ask again with it. Escape saves the 👎 alone. Nothing goes to a model when you click.
 
-The same page picks the models: the bubble's (`ai.routing.quick`, small by default), and the one for what is decided on your behalf — which notifications deserve a word, Full AI's reactions, pairing, a routine's judgment, what an ambiguous request meant (`ai.routing.decisions`, the big one by default, with low thinking: `ai.routing.decisionsEffort`).
+The same page picks the models: the bubble's (`ai.routing.quick`, small by default), and the one for what is decided on your behalf — which notifications deserve a word, Full AI's reactions, pairing, a routine's judgment (`ai.routing.decisions`, the big one by default, with low thinking: `ai.routing.decisionsEffort`) — and the two check models above.
+
+### Speed
+
+Muse is made to answer as fast as the model writes and to send as little as it can:
+
+- **Plain commands need no model at all**, in the bubble, also in the middle of a conversation: see [the fast commands](./quick-ai#fast-commands).
+- **The answer shows, and is read out, as it is written**: the first sentence is spoken before the answer is over; the checks come after it.
+- **Its tools start while it is still writing**, each one as soon as the model has finished asking for it; the bubble says **Doing …** the moment one starts.
+- **A small prompt, cached**: only the ~25 core desktop tools are sent up front, the others loaded by group the first time a task needs them; the machine reference is a summary; earlier messages' context is left out of what is sent again; tool results are cut to what the model needs. The provider caches the rest, so a message after the first costs little.
+- **One connection kept open** to the provider, and the agent kept running between messages.
+
+**Settings → Desktop agents → Accuracy and models → Speed**:
+
+| Setting                                                                                                                                 | Default |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| _Minimal thinking for the checks, the reactions and the one-shot answers_ (`ai.routing.effortMinimal`)                                  | on      |
+| _Only the core desktop tools up front (the others loaded when needed)_ (`ai.agent.coreTools`)                                           | on      |
+| _Keep Muse warm (minutes)_ (`ai.agent.keepWarmMinutes`): the agent kept running after the last message while unlocked (15 while locked) | 60      |
 
 ## Tabs
 

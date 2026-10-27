@@ -293,6 +293,16 @@ Singleton {
                     property string decisions: "big"
                     property string decisionsEffort: "low" // low, medium, high
                     property string quick: "small"
+                    // The accuracy checks (meta-agent --resolve / --verify):
+                    // the model that tells whether a request is ambiguous
+                    // (run beside the answer, only when it may be) and the one
+                    // that checks the result after acting (unless the tool
+                    // already confirmed it). small, main or big.
+                    property string resolve: "small"
+                    property string verify: "small"
+                    // Those checks, the reactions and the one-shot modes ask
+                    // for minimal effort (no thinking where the model allows).
+                    property bool effortMinimal: true
                 }
                 property JsonObject voice: JsonObject {
                     property bool enable: true
@@ -360,6 +370,13 @@ Singleton {
                     property bool resolve: true
                     property bool verify: true
                     property bool feedback: true
+                    // Speed: the agent kept running this many minutes after its
+                    // last message while the session is unlocked (15 while
+                    // locked), so the next one doesn't wait for it to start.
+                    property int keepWarmMinutes: 60
+                    // The desktop tools' ~25 core ones up front, the others
+                    // loaded by group when needed (a smaller prompt, faster).
+                    property bool coreTools: true
                 }
                 // The Immich photo library the side panel's Muse can use
                 // (immich-photo-manager, in assistant.mcpServers): its server,

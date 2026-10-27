@@ -37,9 +37,9 @@ expect_eq() {
 
 # The stub desktop-mcp: the privacy mask, the sent log, the context broker
 # (its arguments in its text), prefs; calls logged.
-mkdir -p "$tmp/bin" "$tmp/run" "$tmp/cfg"
+mkdir -p "$tmp/bin" "$tmp/run" "$tmp/cfg/nixbook-shell"
 # Never the user's own desktop-mcp helper (its socket) nor settings.
-export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" NIXBOOK_AI_RETRY_DELAY=0.05
+export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_CACHE_HOME="$tmp/cache" NIXBOOK_AI_RETRY_DELAY=0.05
 cat >"$tmp/bin/nixbook-desktop-mcp" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
@@ -87,10 +87,23 @@ expect_eq "stream: deltas" '"Hello "
 "world"' "$(event explain delta .text)"
 expect_eq "stream: the whole answer" '"Hello world"' "$(event explain answer .text)"
 expect_eq "stream: the small model" '"small-model"' "$(event explain start .model)"
-expect_eq "stream: the effort settings sent" '"low"' "$(jq -c 'select(.body.stream == true) | .body.output_config.effort' "$tmp/requests.log" | head -n1)"
+expect_eq "stream: the effort settings sent, minimal (ai.routing.effortMinimal)" '"minimal"' "$(jq -c 'select(.body.stream == true) | .body.output_config.effort' "$tmp/requests.log" | head -n1)"
+caps="$tmp/cache/nixbook-shell/provider-caps.json"
+expect_eq "caps: the missing fast endpoint remembered (base URL + model)" "false" \
+  "$(jq -c --arg k "$NIXBOOK_AI_BASE_URL|small-model" '.[$k].fast' "$caps")"
+ask explain2 '{"mode": "explain", "text": "error: bar", "lang": "en"}'
+expect_eq "caps: the next one-shot doesn't probe it again" '"/v1/messages"' \
+  "$(jq -c 'select(.body | tostring | contains("error: bar")) | .path' "$tmp/requests.log" | sort -u | paste -sd' ')"
+echo '{"ai": {"routing": {"effortMinimal": false}}}' >"$tmp/cfg/nixbook-shell/config.json"
+ask explain3 '{"mode": "explain", "text": "error: baz", "lang": "en"}'
+expect_eq "effortMinimal off: the request's own effort" '"low"' \
+  "$(jq -c 'select(.body.stream == true and (.body | tostring | contains("error: baz"))) | .body.output_config.effort' "$tmp/requests.log" | head -n1)"
+rm "$tmp/cfg/nixbook-shell/config.json"
 expect_eq "stream: recorded as sent" "Quick AI: explain|custom:small-model" "$(head -n1 "$tmp/sent.log")"
 
-# The OpenAI-style chat endpoint, when the server has it: tried first.
+# The OpenAI-style chat endpoint, when the server has it: tried first (a
+# server the cache doesn't know).
+rm -f "$caps"
 ask chat '{"mode": "explain", "text": "CHATOK this", "lang": "en"}'
 expect_eq "chat: answered through /v1/chat/completions" '"Fast answer"' "$(event chat answer .text)"
 expect_eq "chat: minimal reasoning" '"minimal"' "$(jq -c 'select(.body.reasoning_effort) | .body.reasoning_effort' "$tmp/requests.log" | tail -n1)"
@@ -145,6 +158,7 @@ expect_contains_ "do: the desktop's tools" "$args" '--mcp-config {"mcpServers": 
 expect_contains_ "do: the request read first and checked after (ai.agent defaults)" "$args" "--resolve --verify"
 expect_contains_ "do: the quick model (ai.routing.quick)" "$args" "--model small"
 expect_contains_ "do: the side panel's knowledge" "$args" "--append-system-prompt PANELBRAIN"
+expect_contains_ "do: the bubble's budget, the core tools up front" "$args" "--max-tokens 1200 --tool-result-max 6000 --core-tools"
 expect_eq "do: the request last, after --" "-- open firefox" "$(tail -n2 "$tmp/ma-args" | paste -sd' ')"
 mkdir -p "$tmp/cfg/nixbook-shell"
 echo '{"ai": {"agent": {"verify": false}, "routing": {"quick": "main"}}}' >"$tmp/cfg/nixbook-shell/config.json"
@@ -195,8 +209,8 @@ export XDG_STATE_HOME="$tmp/state" NIXBOOK_AI_BIG_MODEL=big-model
 : >"$tmp/broker.log"
 ask react1 '{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Ana", "text": "dinner?"}}'
 expect_eq "react: asks by default" '"ask"' "$(event react1 react .action)"
-expect_eq "react: the decisions model (ai.routing: big) with its effort" '"big-model" "low"' \
-  "$(jq -c 'select(.body.messages | tostring | contains("dinner?")) | .body | "\(.model | tojson) \(.output_config.effort | tojson)"' -r "$tmp/requests.log" | head -n1)"
+expect_eq "react: the decisions model (ai.routing: big), minimal reasoning on the fast endpoint" '"big-model" "minimal" "/v1/chat/completions"' \
+  "$(jq -c 'select(.body.messages | tostring | contains("dinner?")) | "\(.body.model | tojson) \(.body.reasoning_effort | tojson) \(.path | tojson)"' -r "$tmp/requests.log" | head -n1)"
 expect_eq "react: the broker for the event" "react|Chat Ana dinner?|Chat|no" "$(head -n1 "$tmp/broker.log")"
 expect_contains_ "react: its context sent" "$(grep -F 'dinner?' "$tmp/requests.log" | head -n1)" "BROKER for=react"
 ask react2 '{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Bo", "text": "TOLDIT ping"}}'
@@ -289,6 +303,26 @@ expect_eq "speak: no voice installed" 2 "$(
   PATH="$tmp/sbin:$PATH" NIXBOOK_MMS_VOICES="$tmp/none" python3 -I "$speak" "Hello there" 2>/dev/null
   echo $?
 )"
+
+# --stream: the text as an answer streams in, each sentence spoken once complete.
+: >"$tmp/speak.log"
+(
+  printf 'Firefox is open on workspace three. And'
+  sleep 1.5
+  printf ' anything else for you?'
+) | sp --stream --style natural &
+speaker=$!
+sleep 1
+expect_eq "speak --stream: the first sentence spoken before the text ended" "tts en Firefox is open on workspace three.|play raw1.wav" \
+  "$(grep -E '^(tts|play)' "$tmp/speak.log" | paste -sd'|')"
+wait "$speaker"
+expect_eq "speak --stream: then the rest, at the end" "tts en Firefox is open on workspace three.|play raw1.wav|tts en And anything else for you?|play raw2.wav" \
+  "$(grep -E '^(tts|play)' "$tmp/speak.log" | paste -sd'|')"
+: >"$tmp/speak.log"
+# shellcheck disable=SC2016 # Markdown backticks, not an expansion
+printf 'Bonjour, voici la commande. ```\nrm -rf /\n``` Elle est prête.' | sp --stream --style natural
+expect_eq "speak --stream: the voice from the first sentence, code left out" "tts fr Bonjour, voici la commande.|tts fr Elle est prête." \
+  "$(grep '^tts' "$tmp/speak.log" | paste -sd'|')"
 
 # Failures.
 python3 -I "$script" ask "$tmp/none.json" >"$tmp/none.out" 2>/dev/null || true

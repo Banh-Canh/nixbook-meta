@@ -43,7 +43,7 @@ expect_contains() {
 }
 
 mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/state" "$tmp/run" "$tmp/cfg/nixbook-shell" "$tmp/data" "$tmp/home"
-export XDG_STATE_HOME="$tmp/state" XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_DATA_HOME="$tmp/data"
+export XDG_STATE_HOME="$tmp/state" XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_DATA_HOME="$tmp/data" XDG_CACHE_HOME="$tmp/cache"
 export HOME="$tmp/home" NIXBOOK_AI_RETRY_DELAY=0.05 NIXBOOK_MUSE_TASK_SPAWN=plain
 unset NIXBOOK_META_AGENT NIXBOOK_SHELL_CONFIG
 
@@ -150,9 +150,9 @@ requests() { jq -c --arg t "AGENTTEST:$1" 'select(.path == "/v1/messages" and (.
 : >"$tmp/requests.log"
 
 # -- A task to its end -----------------------------------------------------------------
-script taskdone '[[{"type": "tool_use", "id": "l1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
-  [{"type": "text", "text": "Found it: the cheapest is 12 €."}],
-  [{"type": "tool_use", "id": "v1", "name": "verification", "input": {"met": true, "note": "seen"}}]]'
+script taskdone '{"steps": [[{"type": "tool_use", "id": "l1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "Found it: the cheapest is 12 €."}]],
+  "system": {"You check whether": [{"type": "tool_use", "id": "v1", "name": "verification", "input": {"met": true, "note": "seen"}}]}}'
 # systemd-run first; it fails here, so the plain process.
 cat >"$tmp/bin/systemd-run" <<EOF
 #!/usr/bin/env bash
@@ -184,14 +184,14 @@ expect_eq "done: the runner gone, its socket too" "false no" \
 first=$(requests taskdone | sed -n 1p)
 expect_contains "agent: the task as the first message, the context first" "$(jq -c '.messages[0].content' <<<"$first")" "CTXBLOCK"
 expect_contains "agent: told it works in the background" "$(jq -r '.system[0].text' <<<"$first")" "in the background"
-expect_eq "agent: the side panel's servers, no commands" '["mcp__desktop__launch_app","mcp__desktop__list_windows","mcp__desktop__tasks"]' \
+expect_eq "agent: the side panel's servers, no commands" '["mcp__desktop__launch_app","mcp__desktop__list_windows","mcp__desktop__tasks","verification"]' \
   "$(jq -c '[.tools[].name]' <<<"$first")"
 expect_contains "agent: with the trust ladder and its floor" "$(grep -c 'trust check' "$tmp/dm.log")" "1"
 
 # -- Waiting on an approval, allowed over the socket ----------------------------------------------
-script taskapprove '[[{"type": "tool_use", "id": "d1", "name": "mcp__desktop__tasks", "input": {"action": "delete", "id": "t1"}}],
-  [{"type": "text", "text": "Deleted the old task."}],
-  [{"type": "tool_use", "id": "v1", "name": "verification", "input": {"met": true, "note": "gone"}}]]'
+script taskapprove '{"steps": [[{"type": "tool_use", "id": "d1", "name": "mcp__desktop__tasks", "input": {"action": "delete", "id": "t1"}}],
+  [{"type": "text", "text": "Deleted the old task."}]],
+  "system": {"You check whether": [{"type": "tool_use", "id": "v1", "name": "verification", "input": {"met": true, "note": "gone"}}]}}'
 : >"$tmp/desk-calls.log"
 id=$(mt start "AGENTTEST:taskapprove clean my list" | jq -r .id)
 until_status "$id" waiting || fail "approval: waiting" "$(mt show "$id")"
@@ -304,6 +304,35 @@ echo '{"ai": {"autonomy": {"tasks": false}}}' >"$tmp/cfg/nixbook-shell/config.js
 expect_contains "ai.autonomy.tasks off: no task" "$(mt start "AGENTTEST:taskdone x" | jq -r .error || true)" "turned off"
 rm "$tmp/cfg/nixbook-shell/config.json"
 for t in $(mt list | jq -r '.[] | select(.alive) | .id'); do until_dead "$t" || true; done
+
+# -- Started where the provider's settings are already there (an isolated
+# environment whose nixbook-model-provider can't answer): the agent gets them.
+mv "$tmp/bin/nixbook-model-provider" "$tmp/provider.ok"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$tmp/bin/nixbook-model-provider"
+chmod +x "$tmp/bin/nixbook-model-provider"
+id=$(NIXBOOK_AI_KEY=test-key NIXBOOK_AI_PROVIDED=1 NIXBOOK_AI_BASE_URL="$(cat "$tmp/base")" NIXBOOK_AI_MODEL=main-model \
+NIXBOOK_AI_SMALL_MODEL=small-model mt start "AGENTTEST:taskdone with the provider's settings" | jq -r .id)
+if until_status "$id" "done"; then pass "plain spawn: the agent has the runner's provider settings"; else
+  fail "plain spawn: the agent has the runner's provider settings" "$(
+    mt show "$id"
+    cat "$tmp/run/nixbook-shell/tasks/$id.log" 2>/dev/null
+  )"
+fi
+until_dead "$id" || true
+# An agent that fails: what it said on stderr in the task's log and error.
+cat >"$tmp/bin/broken-agent" <<'EOF'
+#!/usr/bin/env bash
+echo "nixbook-meta-agent: no model provider with an API key" >&2
+exit 1
+EOF
+chmod +x "$tmp/bin/broken-agent"
+id=$(NIXBOOK_META_AGENT="$tmp/bin/broken-agent" mt start "AGENTTEST:taskdone doomed" | jq -r .id)
+until_status "$id" failed || fail "a failing agent: failed" "$(mt show "$id")"
+expect_eq "a failing agent: its stderr in the task's error" "the agent stopped (exit 1): nixbook-meta-agent: no model provider with an API key" \
+  "$(field "$id" .error)"
+expect_contains "a failing agent: and in the task's log" "$(cat "$tmp/run/nixbook-shell/tasks/$id.log")" "no model provider with an API key"
+until_dead "$id" || true
+mv "$tmp/provider.ok" "$tmp/bin/nixbook-model-provider"
 
 # -- list, show, clear -------------------------------------------------------------------
 expect_eq "list: every task, newest first" "$(find "$tmp/state/nixbook-shell/tasks" -name '*.json' | wc -l | tr -d ' ')" \

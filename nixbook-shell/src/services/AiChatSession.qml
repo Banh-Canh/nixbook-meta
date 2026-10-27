@@ -303,6 +303,8 @@ Scope {
         chat.runMemoryPass();
         requester.pendingLine = "";
         requester.restartPending = false;
+        requester.launchGen++; // a start being prepared: dropped
+        requester.masking = false;
         if (requester.running) requester.signal(15);
         if (chat.desktopInstance.length > 0)
             Quickshell.execDetached(["systemctl", "--user", "stop", `nixbook-agent-desktop@${chat.desktopInstance}.service`]);
@@ -555,18 +557,35 @@ Scope {
         }
 
         // Starts the agent (after stopping the one running): resume, the
-        // session to go on with.
+        // session to go on with. With the privacy mask, its system prompt is
+        // masked by the shell's helper first (DesktopHelper: a millisecond,
+        // not a process in the script); the one running is stopped meanwhile.
+        property int launchGen: 0
+        property bool masking: false
         function launch(attached, resume) {
             requester.script = Ai.agentScript(chat, attached, "");
             requester.session = resume;
-            requesterScriptFile.path = Qt.resolvedUrl(CF.FileUtils.trimFileProtocol(chat.requestScriptFilePath));
-            requesterScriptFile.setText("#!/usr/bin/env bash\n" + Ai.agentScript(chat, attached, resume));
+            const gen = ++requester.launchGen;
             if (requester.running) {
                 requester.restartPending = true;
                 requester.signal(15);
-            } else {
-                requester.spawn();
             }
+            const write = masked => {
+                if (gen !== requester.launchGen) return;
+                requester.masking = false;
+                requesterScriptFile.path = Qt.resolvedUrl(CF.FileUtils.trimFileProtocol(chat.requestScriptFilePath));
+                requesterScriptFile.setText("#!/usr/bin/env bash\n" + Ai.agentScript(chat, attached, resume, masked));
+                // Else started once the one before has exited (onExited).
+                if (!requester.running) requester.spawn();
+            };
+            if (!Config.options.ai.privacy.mask) {
+                write("");
+                return;
+            }
+            requester.masking = true;
+            // Failed: the script masks it itself (and stops if that fails too).
+            DesktopHelper.run(["privacy", "mask"], Ai.agentBuild(chat, attached).system,
+                (code, out) => write(code === 0 ? String(out ?? "").replace(/\n+$/, "") : ""));
         }
 
         function spawn() {
@@ -619,6 +638,11 @@ Scope {
                         chat.tokenCount.total = result.tokenUsage.total;
                     }
                     if (result.approval) chat.approval = result.approval;
+                    // The final answer, before its checks (meta-agent's
+                    // `answer`): the bubble shows it as the answer and reads
+                    // it out now; `verify` and the turn's end come after.
+                    if (result.answer !== undefined)
+                        chat.lastAnswer = String(requester.activeMessage.content ?? "").replace(/<think>[\s\S]*?(<\/think>|$)/g, "").trim();
                     if (result.finished) {
                         requester.markDone();
                     }
@@ -638,7 +662,8 @@ Scope {
             idleClose.stop();
             if (requester.restartPending) {
                 requester.restartPending = false;
-                requester.spawn();
+                // Its script is still being written (masking): started then.
+                if (!requester.masking) requester.spawn();
             }
         }
     }
@@ -651,10 +676,12 @@ Scope {
     }
 
     // Unused for a while: closed (a few hundred MB); the next message
-    // resumes the session.
+    // resumes the session. Kept warm ai.agent.keepWarmMinutes (60) while the
+    // session is unlocked, 15 minutes while locked; started again on unlock
+    // (Ai.qml).
     Timer {
         id: idleClose
-        interval: 15 * 60 * 1000
+        interval: (GlobalStates.screenLocked ? 15 : Math.max(1, Config.options?.ai?.agent?.keepWarmMinutes ?? 60)) * 60 * 1000
         onTriggered: if (requester.running && !requester.turnActive) { requester.restartPending = false; requester.signal(15); }
     }
 

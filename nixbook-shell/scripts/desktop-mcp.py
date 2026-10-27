@@ -770,6 +770,36 @@ def focused_window():
     return None
 
 
+# How long an action's effect is looked for: never the reply held for it
+# (not confirmed by then: the reply says how to look instead, _meta.observe).
+READ_BACK_S = 0.15
+
+
+def read_back(check, timeout=READ_BACK_S, step=0.025):
+    """Whether check() comes true within timeout s (looked at every
+    `step`): an action read back, its tool's reply then says verified. A
+    ToolError while looking counts as not yet."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if check():
+                return True
+        except ToolError:
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(step)
+
+
+def workspace_is(ws_id, ref):
+    """Whether the workspace with id ws_id is the one `ref` (an index or a
+    name, as workspace_ref gives) names."""
+    for ws in niri_json("workspaces"):
+        if ws.get("id") == ws_id:
+            return str(ws.get("idx")) == ref or (ws.get("name") or "") == ref
+    return False
+
+
 def as_int(args, key, *, required=True):
     v = args.get(key)
     if v is None and not required:
@@ -925,23 +955,89 @@ AFTER_PROPS = {
     "wait_ms": {"type": "integer", "description": "Wait this long before that screenshot (at most 5000 ms) instead "
                 "of until the screen stops changing (the default, at most 2.5 s)"},
 }
+# What the model is sent: the same, shorter (the full text in the guide).
+AFTER_PROPS_BRIEF = {
+    "screenshot_after": {"type": "boolean", "description": "Return a screenshot after"},
+    "wait_ms": {"type": "integer", "description": "ms before it (default: once settled)"},
+}
+HELP_PROP = {"type": "boolean"}
+REGION_BRIEF = {"type": "object", "description": "{x, y, width, height}, desktop logical pixels"}
+
+# The tools offered up front (`_meta["nixbook/core"]`: nixbook-meta-agent's
+# --core-tools): what most requests need. The others are loaded by group
+# when a task needs them; tool_help reads any tool's guide meanwhile.
+CORE_TOOLS = {
+    "get_status", "list_windows", "list_workspaces", "list_apps", "launch_app", "focus_window", "close_window",
+    "focus_workspace", "move_window_to_workspace", "window_action", "press_keys", "type_text", "click", "scroll",
+    "run_steps", "screenshot", "ui_read", "ui_act", "notifications", "recall", "remember", "remember_about_user",
+    "standing_order", "background_task", "browser_tabs", "browser_read", "browser_act", "machine_help", "tool_help",
+}
+# A finer grouping than nixbook/group, for clients loading tools in bundles
+# (`_meta["nixbook/bundle"]`; a tool not listed: its group).
+TOOL_BUNDLES = {
+    "calendar": "pim", "tasks": "pim", "contacts": "pim", "remind": "pim",
+    "notifications": "notifications", "dismiss_notifications": "notifications",
+    "notification_action": "notifications", "snooze_notification": "notifications",
+    "do_not_disturb": "notifications", "clear_notification_history": "notifications",
+    "widget": "widgets", "set_theme": "look", "list_themes": "look", "set_wallpaper": "look",
+    "equalizer": "media", "conversation": "conversations", "delete_conversations": "conversations",
+    "report_problem": "improve", "request_feature": "improve", "list_improvements": "improve",
+    "start_improvement": "improve", "list_requests": "improve",
+}
 
 
-def tool(name, group, description, schema=None, *, read_only=False, destructive=False, title=None):
+def brief_schema(schema, props):
+    """The schema the model is sent: `props` {name: a shorter description,
+    or None for none} over a copy (the full one stays for the guide)."""
+    out = json.loads(json.dumps(schema))
+    for k, desc in (props or {}).items():
+        p = out.get("properties", {}).get(k)
+        if p is None:
+            continue
+        if isinstance(desc, dict):  # the whole property, simpler
+            out["properties"][k] = desc
+        elif desc is None:
+            p.pop("description", None)
+        else:
+            p["description"] = desc
+    return out
+
+
+def tool(name, group, description, schema=None, *, read_only=False, destructive=False, title=None, brief=None,
+         props=None):
+    """brief: the description the model is sent, when `description` is
+    long: `description` (and the schema's full argument descriptions)
+    become the tool's guide, returned by `help: true` and tool_help, so
+    trimming loses nothing. props: shorter argument descriptions (see
+    brief_schema)."""
+    schema = schema or {"type": "object", "properties": {}}
+    full = schema
     if group in ACTION_GROUPS:
-        schema = dict(schema or {"type": "object", "properties": {}})
-        schema["properties"] = {**schema.get("properties", {}), **AFTER_PROPS}
+        full = dict(schema)
+        full["properties"] = {**schema.get("properties", {}), **AFTER_PROPS}
+        schema = dict(schema)
+        schema["properties"] = {**schema.get("properties", {}), **AFTER_PROPS_BRIEF}
+    shown = brief_schema(schema, props) if props else schema
+    if brief:
+        shown = dict(shown)
+        shown["properties"] = {**shown.get("properties", {}), "help": HELP_PROP}
+        brief = brief.rstrip() + " help: true → full guide."
 
     def register(fn):
+        meta = {"nixbook/group": group, "nixbook/bundle": TOOL_BUNDLES.get(name, group)}
+        if name in CORE_TOOLS:
+            meta["nixbook/core"] = True
         TOOLS[name] = {
             "fn": fn,
             "group": group,
             "read_only": read_only,
+            # The whole guide (help: true, tool_help): what the description was.
+            "guide": (description, full) if brief or props or full is not schema else None,
             "spec": {
                 "name": name,
                 "title": title or name.replace("_", " ").capitalize(),
-                "description": description,
-                "inputSchema": schema or {"type": "object", "properties": {}},
+                "description": brief or description,
+                "inputSchema": shown,
                 "annotations": {
                     "readOnlyHint": read_only,
                     "destructiveHint": destructive,
@@ -950,7 +1046,8 @@ def tool(name, group, description, schema=None, *, read_only=False, destructive=
                 # observe: looks at windows and apps; screen: sees the screen
                 # or clipboard (private data leaves for the model); windows,
                 # input, shell: act. Clients can base their approvals on it.
-                "_meta": {"nixbook/group": group},
+                # core: offered up front; bundle: loaded together.
+                "_meta": meta,
             },
         }
         return fn
@@ -958,14 +1055,42 @@ def tool(name, group, description, schema=None, *, read_only=False, destructive=
     return register
 
 
+def guide_text(name):
+    """A tool's full guide: its whole description and every argument's."""
+    t = TOOLS[name]
+    description, schema = t["guide"] or (t["spec"]["description"], t["spec"]["inputSchema"])
+    lines = [f"{name}: {description}"]
+    props = (schema or {}).get("properties") or {}
+    required = set((schema or {}).get("required") or [])
+    if props:
+        lines.append("")
+        lines.append("Arguments:")
+        for k, p in props.items():
+            kind = p.get("enum") and "one of " + ", ".join(map(str, p["enum"])) or p.get("type") or "any"
+            if isinstance(kind, list):
+                kind = " or ".join(kind)
+            line = f"- {k} ({kind}{', required' if k in required else ''})"
+            if p.get("description"):
+                line += f": {p['description']}"
+            sub = p.get("properties")
+            if sub:
+                line += " {" + ", ".join(sub) + "}"
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def text(value):
+    # Compact: a reply goes to a model, and indentation is tokens for nothing.
     if not isinstance(value, str):
-        value = json.dumps(value, ensure_ascii=False, indent=1)
+        value = json.dumps(value, ensure_ascii=False)
     return {"type": "text", "text": value}
 
 
 def obj(props, required=()):
-    return {"type": "object", "properties": props, "required": list(required), "additionalProperties": False}
+    out = {"type": "object", "properties": props, "additionalProperties": False}
+    if required:
+        out["required"] = list(required)
+    return out
 
 
 INT = {"type": "integer"}
@@ -1086,6 +1211,190 @@ def t_list_workspaces(ctx, args):
         lg = o.get("logical") or {}
         outputs[name] = {k: lg.get(k) for k in ["x", "y", "width", "height", "scale"]}
     return [text({"workspaces": sorted(wss, key=lambda w: (w["monitor"] or "", w["index"] or 0)), "monitors": outputs})]
+
+
+@tool(
+    "tool_help",
+    "observe",
+    "A tool's full guide (every action and argument), also for tools not loaded yet; without `name`, "
+    "every tool on offer in one line each.",
+    obj({"name": {"type": "string", "description": "The tool's name"}}),
+    read_only=True,
+)
+def t_tool_help(ctx, args):
+    on = enabled_tools(ctx.cfg)
+    name = args.get("name")
+    if name is None or name == "":
+        return [text("\n".join(f"{n}: {first_sentence(t['spec']['description'])}" for n, t in on.items()))]
+    if not isinstance(name, str) or name not in on:
+        raise ToolError(f"no tool {short(str(name), 60)!r} on offer (tool_help without a name lists them)")
+    return [text(guide_text(name))]
+
+
+def first_sentence(value, limit=140):
+    value = re.split(r"(?<=\.)\s", value.strip(), maxsplit=1)[0]
+    return short(value, limit)
+
+
+# -- the machine's reference (system-context.md) ------------------------------
+# The Home Manager module writes what this machine is (its modules, packages,
+# key bindings, how-tos, Neovim keymaps) into system-context.md. The prompt
+# carries only a summary: machine_help finds the parts a question needs.
+
+MACHINE_HELP_MAX = 3000
+MACHINE_HELP_LONG = 700  # a longer line (a list of packages…): only what matches
+MACHINE_HELP_ALIASES = (
+    (("shortcut", "keybind", "key binding"), {"shortcut", "shortcuts", "keybind", "keybinds", "keybinding", "keybindings",
+                                              "bind", "binding", "bindings", "key", "keys", "hotkey", "hotkeys",
+                                              "raccourci", "raccourcis", "tastenkurzel", "tastenkombination", "phim", "tat"}),
+    (("neovim", "nvim"), {"neovim", "nvim", "vim", "keymap", "keymaps", "leader"}),
+    (("package",), {"installed", "install", "package", "packages", "program", "programs", "paquet", "paket"}),
+    (("module",), {"module", "modules", "enabled", "option", "options"}),
+)
+# Verbs any how-to has: they count little ("how do I add a routine": routine).
+MACHINE_HELP_WEAK = {"add", "make", "set", "change", "get", "turn", "show", "see", "find", "work", "works", "put",
+                     "start", "stop", "run", "ajouter", "mettre", "changer", "hinzufugen", "andern", "them", "doi"}
+_MACHINE_DOC = {"key": None, "units": []}
+
+
+def machine_context_path():
+    return os.path.join(xdg("XDG_CONFIG_HOME", "~/.config"), "nixbook-shell", "system-context.md")
+
+
+def machine_units():
+    """system-context.md as [(section heading, text)], one per line, bullet
+    (with its wrapped lines) or paragraph; read again when it changes."""
+    path = machine_context_path()
+    try:
+        st = os.stat(path)
+        key = (path, st.st_mtime_ns, st.st_size)
+        if _MACHINE_DOC["key"] == key:
+            return _MACHINE_DOC["units"]
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    units, heading, cur = [], "", None
+    for raw in lines:
+        line = raw.rstrip()
+        if line.startswith("#"):
+            heading, cur = line.lstrip("#").strip(), None
+            continue
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```") or stripped in ("binds {", "}"):
+            cur = None
+            continue
+        if stripped.startswith(("- ", "* ")) or re.match(r"[\w+<>-]+\s*\{", stripped) or cur is None:
+            units.append([heading, stripped])
+            cur = units[-1] if not re.match(r"[\w+<>-]+\s*\{", stripped) else None
+        else:
+            cur[1] += " " + stripped
+    _MACHINE_DOC["key"], _MACHINE_DOC["units"] = key, [tuple(u) for u in units]
+    return _MACHINE_DOC["units"]
+
+
+def machine_help(query, limit=MACHINE_HELP_MAX):
+    units = machine_units()
+    if not units:
+        return "The machine's reference (system-context.md) isn't there: answer from what you know."
+    sections = list(dict.fromkeys(h for h, _ in units))
+    q = set(words(query))
+    combos = [c.lower() for c in re.findall(r"(?i)\b((?:mod|super|ctrl|control|alt|shift)(?:\+[\w-]+)+)", query or "")]
+    if not q and not combos:
+        return "Sections of the machine's reference (ask about one): " + "; ".join(h for h in sections if h)
+    toks = [set(words(t)) for _, t in units]
+    n = len(units)
+    idf = {w: math.log(1 + n / (1 + sum(1 for u in toks if _match(w, u)))) * (0.3 if w in MACHINE_HELP_WEAK else 1)
+           for w in q}
+    wanted = {h for h in sections for keys, alias in MACHINE_HELP_ALIASES
+              if any(k in h.lower() for k in keys) and q & alias}
+    scored = []
+    for i, ((heading, body), uw) in enumerate(zip(units, toks)):
+        score = sum(idf[w] for w in q if _match(w, uw))
+        if score and len(body) > 160:
+            # What a long line is about is in its start.
+            lead = set(words(body[:120]))
+            score += sum(0.5 * idf[w] for w in q if _match(w, lead))
+        if heading in wanted and score:
+            score += 1
+        if any(body.lower().startswith(c + " ") or body.lower().startswith(c + "{") for c in combos):
+            score += 10
+        if score > 0:
+            scored.append((score, i))
+    if not scored:
+        return (f"Nothing about {short(query, 80)!r} in the machine's reference; its sections: "
+                + "; ".join(h for h in sections if h))
+    best = max(sc for sc, _ in scored)
+    # Only what is about the question: a floor under the best match; and
+    # when it names a section (the key bindings, the packages…), that one.
+    kept = [x for x in scored if x[0] >= 0.5 * best]
+    if wanted and any(units[i][0] in wanted for _, i in kept):
+        kept = [x for x in kept if units[x[1]][0] in wanted or x[0] >= best]
+    # Ties: the shorter line, more to the point.
+    kept.sort(key=lambda x: (-x[0], len(units[x[1]][1])))
+    item_words = q - {w for _, alias in MACHINE_HELP_ALIASES for w in alias}
+    by_section, used = {}, 0
+    for _, i in kept:
+        heading, body = units[i]
+        body = machine_excerpt(body, item_words, q)
+        if not body:
+            continue
+        cost = len(body) + 1 + (0 if heading in by_section else len(heading) + 5)
+        if used + cost > limit:
+            continue
+        by_section.setdefault(heading, []).append(body)
+        used += cost
+    missing = [h for h in wanted if "package" in h.lower() and h not in by_section]
+    if missing and item_words and not any("package" in h.lower() for h in by_section):
+        # "Is X installed?": not among the packages is the answer.
+        by_section = {"Packages": [f"{', '.join(sorted(item_words))}: not among the installed packages "
+                                   f"({'; '.join(missing)})"], **by_section}
+    if not by_section:
+        return (f"Nothing about {short(query, 80)!r} in the machine's reference (not among its packages, modules, "
+                "key bindings or how-tos)")
+    return "\n".join(f"## {h}\n" + "\n".join(b) for h, b in by_section.items())
+
+
+def machine_excerpt(body, items_asked, q):
+    """A line as machine_help gives it: a list (packages, modules) cut to
+    the items asked for ("" when none is), a long paragraph to its first
+    sentence and those that match."""
+    lead, sep, rest = body.partition(": ")
+    items = [x.strip() for x in (rest if sep else body).split(",")]
+    # A list: items of a word or two, not prose.
+    if len(items) >= 8 and sum(1 for x in items if len(x.split()) <= 2) >= 0.8 * len(items):
+        if not items_asked:
+            return short(body, MACHINE_HELP_LONG)
+        hits = [x for x in items if any(_match(w, set(words(x))) for w in items_asked)]
+        if not hits:
+            return ""
+        return (lead + ": " if sep else "") + ", ".join(hits[:40]) + f" (of {len(items)})"
+    if len(body) <= MACHINE_HELP_LONG:
+        return body
+    want = items_asked or q
+    sentences = [x if len(x) <= 350 else x[:350].rsplit(" ", 1)[0] + "…" for x in re.split(r"(?<=[.;!?])\s+", body)]
+    text_ = sentences[0]
+    for x in sentences[1:]:
+        if any(_match(w, set(words(x))) for w in want) and len(text_) + len(x) + 1 <= MACHINE_HELP_LONG:
+            text_ += " " + x
+    return text_
+
+
+@tool(
+    "machine_help",
+    "observe",
+    "Look up this machine's own reference (its NixOS/Home Manager config: how-tos, niri key bindings, Neovim "
+    "keymaps, enabled modules, installed packages): the parts about `query`, at most 3000 characters. For "
+    "\"how do I…\", \"which key…\", \"is X installed\" on this computer.",
+    obj({"query": {"type": "string", "description": "What to look up, e.g. \"screenshot shortcut\", \"is firefox installed\""}},
+        ["query"]),
+    read_only=True,
+)
+def t_machine_help(ctx, args):
+    query = args.get("query")
+    if not isinstance(query, str):
+        raise ToolError("`query` must be a string")
+    return [text(machine_help(clean_text(query, 300)))]
 
 
 # -- the machine itself --------------------------------------------------------
@@ -1511,6 +1820,9 @@ SYSTEM_SECTIONS = {
     obj({"sections": {"type": "array", "items": {"enum": list(SYSTEM_SECTIONS)},
                       "description": "Only these sections (default: all)"}}),
     read_only=True,
+    brief=("This computer, read live: OS, kernel, machine, CPU, memory, GPUs, displays, disks, temperatures,"
+           " battery, network. For hardware, OS or kernel questions. Works while paused."),
+    props={"sections": "Only these (default: all)"},
 )
 def t_system_info(ctx, args):
     wanted = args.get("sections")
@@ -1631,6 +1943,9 @@ def t_list_apps(ctx, args):
     "your own it shows one app at a time, fullscreen: the apps you had open "
     "stay in the background (focus_window brings one back).",
     obj({"app": {"type": "string", "description": "Application id (e.g. firefox) or name"}}, ["app"]),
+    brief=("Start an installed app by id or name (list_apps) and wait for its window (≤10 s): the reply "
+           "names it. Only .desktop entries, no commands. On your own desktop one app shows at a time "
+           "(focus_window brings another back)."),
 )
 def t_launch_app(ctx, args):
     want = as_str(args, "app", max_len=128)
@@ -1662,15 +1977,23 @@ def t_launch_app(ctx, args):
     learn_launch(args["app"], next((i for i, e in apps.items() if e is entry), want))
     name = entry.get("Name") or want
     deadline = time.monotonic() + 10
-    small = None
+    small = splash_since = None
     while time.monotonic() < deadline:
-        time.sleep(0.2)
+        # Looked at every 50 ms: the window is named as soon as it maps.
+        time.sleep(LAUNCH_POLL)
         new = [w for w in windows() if w.get("id") not in before]
         if new:
-            # A splash window may come first: give the app a moment to settle.
-            time.sleep(0.3)
-            new = [w for w in windows() if w.get("id") not in before] or new
-            main = next((w for w in new if w.get("is_focused")), new[-1])
+            # A splash window may come first (no title yet, "Loading…"):
+            # the app's own window replaces it in a moment, waited for a
+            # while; any other window is the app's at once.
+            real = [w for w in new if not launch_splash(w, want)]
+            if not real:
+                now = time.monotonic()
+                splash_since = splash_since or now
+                if now - splash_since < launch_splash_wait(new[-1]):
+                    continue
+            pool = real or new
+            main = next((w for w in pool if w.get("is_focused")), pool[-1])
             if ctx.desktop == "agent" and not fills_screen(main):
                 # Every window is fullscreen there: one that stays smaller
                 # can't be resized, a splash (Vesktop's "Loading", gone once
@@ -1703,7 +2026,33 @@ def t_launch_app(ctx, args):
                  "app may have raised its existing window instead; see the focused window below)")]
 
 
+LAUNCH_POLL = 0.05
+# Titles of the first windows some apps show before their own (lower case):
+# launch_app waits for the window after them.
+LAUNCH_SPLASH_TITLES = {"discord": ("discord updater",), "vesktop": ("vesktop updater",)}
+LAUNCH_SPLASH_RE = re.compile(r"(?i)splash|^loading\b|^starting\b")
+
+
+def launch_splash(w, app):
+    """Whether a new window looks like a splash before the app's own: no
+    title yet, a "splash"/"Loading…" one, or one of the app's known
+    splash titles."""
+    title = (w.get("title") or "").strip()
+    if not title or LAUNCH_SPLASH_RE.search(title):
+        return True
+    key = re.sub(r"\.desktop$", "", str(app or w.get("app_id") or "")).lower().rsplit(".", 1)[-1]
+    return title.lower() in LAUNCH_SPLASH_TITLES.get(key, ())
+
+
+def launch_splash_wait(w):
+    """How long a splash is waited for its app's window (s): a window
+    without a title gets one in a moment, a named splash takes longer."""
+    return 1.0 if not (w.get("title") or "").strip() else 5.0
+
+
 def launched(ctx, name, main, new, note=None):
+    # The window it opened is there: the launch is checked.
+    ctx.verified = True
     out = {"started": name, "window": slim_window(main)}
     if ctx.desktop == "agent":
         # One app shown at a time on the agent desktop, fullscreen: the
@@ -1756,6 +2105,7 @@ def t_focus_window(ctx, args):
     window_by_id(wid)
     ctx.guard.check_rate()
     niri_action("focus-window", "--id", str(wid))
+    ctx.verified = read_back(lambda: (focused_window() or {}).get("id") == wid)
     return [text(f"focused window {wid}")]
 
 
@@ -1771,7 +2121,10 @@ def t_close_window(ctx, args):
     window_by_id(wid)
     ctx.guard.check_rate()
     niri_action("close-window", "--id", str(wid))
-    return [text(f"asked window {wid} to close")]
+    # Gone, or still there: the app may be asking to save.
+    ctx.verified = read_back(lambda: all(w.get("id") != wid for w in windows()))
+    return [text(f"closed window {wid}" if ctx.verified else
+                 f"asked window {wid} to close (not gone yet: the app may be asking something, e.g. to save)")]
 
 
 @tool(
@@ -1784,6 +2137,8 @@ def t_focus_workspace(ctx, args):
     ref = workspace_ref(args)
     ctx.guard.check_rate()
     niri_action("focus-workspace", ref)
+    ctx.verified = read_back(lambda: any(ws.get("is_focused") and workspace_is(ws.get("id"), ref)
+                                         for ws in niri_json("workspaces")))
     return [text(f"switched to workspace {ref}")]
 
 
@@ -1800,6 +2155,7 @@ def t_move_window(ctx, args):
     ctx.guard.check_rate()
     follow = "true" if args.get("follow") is True else "false"
     niri_action("move-window-to-workspace", "--window-id", str(wid), "--focus", follow, ref)
+    ctx.verified = read_back(lambda: workspace_is(window_by_id(wid).get("workspace_id"), ref))
     return [text(f"moved window {wid} to workspace {ref}")]
 
 
@@ -1826,7 +2182,7 @@ def t_window_action(ctx, args):
     action = as_str(args, "action", max_len=32)
     if action not in WINDOW_ACTIONS:
         raise ToolError(f"`action` must be one of {', '.join(WINDOW_ACTIONS)}")
-    window_by_id(wid)
+    before = window_by_id(wid)
     ctx.guard.check_rate()
     niri_cmd, takes_id = WINDOW_ACTIONS[action]
     if takes_id:
@@ -1835,6 +2191,17 @@ def t_window_action(ctx, args):
         niri_action("focus-window", "--id", str(wid))
         extra = {"wider": ["+10%"], "narrower": ["-10%"]}.get(action, [])
         niri_action(niri_cmd, *extra)
+    # Read back what shows: floating flips; the others change its size
+    # (center doesn't show in what niri tells).
+    if action != "center":
+        size = (before.get("layout") or {}).get("window_size")
+
+        def changed():
+            w = window_by_id(wid)
+            if action == "toggle_floating":
+                return w.get("is_floating") != before.get("is_floating")
+            return bool(size) and (w.get("layout") or {}).get("window_size") not in (None, size)
+        ctx.verified = read_back(changed)
     return [text(f"{action}: window {wid}")]
 
 
@@ -2264,18 +2631,21 @@ def note_line(n, limit=400):
     return f"- [{n['id']}] {n['topic']}" + (f" ({'; '.join(flags)})" if flags else "") + f": {body}"
 
 
-def digest_notes(notes, query):
-    """The notes the digest gives in full: (heading, notes)."""
+def digest_notes(notes, query, unasked=True):
+    """The notes the digest gives in full: (heading, notes). unasked:
+    False gives none when none is about the query (the broker's floor)."""
     relevant = rank_desktop([n for n in notes if not n.get("tentative")], query)[:4]
     if relevant:
         return "Notes about this task:", relevant
+    if not unasked:
+        return "", []
     # Unasked, only what is likely needed: strong, and not tentative.
     now = time.time()
     return "Notes used most lately:", [n for n in by_strength(notes, now)
                                        if not n.get("tentative") and activation(n, now) >= NOTE_THRESHOLD][:3]
 
 
-def memory_digest(cfg, query="", limit=None, extras=True):
+def memory_digest(cfg, query="", limit=None, extras=True, unasked=True):
     """The memory as a short text for a model's context: aliases and usage
     (tiny), the full text of the notes about the task (the query) or else
     the most used ones, and the other notes by topic only (recall has
@@ -2284,7 +2654,7 @@ def memory_digest(cfg, query="", limit=None, extras=True):
     limit = limit or int(cfg.get("memoryPromptChars", 1500))
     mem = read_memory()
     notes = mem["notes"]
-    heading, relevant = digest_notes(notes, query)
+    heading, relevant = digest_notes(notes, query, unasked)
     rest = [n for n in by_strength(notes) if n not in relevant]
 
     lines = []
@@ -2484,6 +2854,15 @@ def t_recall(ctx, args):
         },
         ["topic", "text"],
     ),
+    brief=("Save what made a task work, for next time: a shortcut, where a setting is, which app does what "
+           "(topic \"discord\", text \"Vesktop is the Discord client; open a DM: ctrl+k, the name, Return\"). "
+           "Short, reusable, no secrets. One note per app or task: give its `id` to update it."),
+    props={
+        "topic": "An app or task",
+        "text": "At most 600 characters",
+        "id": "A note to replace",
+        "source": "seen (default), user, read (kept tentative until it works)",
+    },
 )
 def t_remember(ctx, args):
     topic = clean_text(as_str(args, "topic", max_len=NOTE_TOPIC_MAX), NOTE_TOPIC_MAX)
@@ -2673,6 +3052,10 @@ def trigger_match(app, aliases, usage):
         },
         ["text"],
     ),
+    brief=("Remind the user when a cue comes: an app opened or focused (`app`), words in a window title "
+           "(`title`), or a time (`at`: HH:MM or YYYY-MM-DDTHH:MM); once, or each day with `repeat`. recall "
+           "lists, forget removes."),
+    props={"text": "At most 200 characters", "app": None, "title": None, "at": None, "repeat": None},
 )
 def t_remind(ctx, args):
     body = clean_text(as_str(args, "text", max_len=200), 200)
@@ -4615,6 +4998,11 @@ def watch_add(args, now=None):
         "label": {"type": "string", "description": "What to call it, at most 80 characters"},
         "cancel": {"type": "string", "description": "The id of a watch to stop"},
     }),
+    brief=("Tell the user when something is done, watched at no token: a process ends (`pid` or `process`), "
+           "a systemd unit stops (`unit`, `system`), a file is done growing (`path`), a GitHub run or PR "
+           "checks finish (`repo` with `run` or `pr`), a web page answers (`url`). `label`: what to call it."
+           " `cancel` {id} stops one; nothing given lists them."),
+    props={"label": None, "cancel": None},
 )
 def t_watch(ctx, args):
     if args.get("cancel"):
@@ -5305,6 +5693,19 @@ def routine_line(r):
         },
         ["action"],
     ),
+    brief=("Routines: what you do on your own whenever something happens (\"whenever the music ends, play "
+           "something I like\"), only when the user asks. add {text: their words, when, do}; do: a fixed call "
+           "{tool, args, server: \"desktop\" or an MCP server} (best: instant; desktop tools: "
+           + ", ".join(sorted(ROUTINE_DESKTOP_TOOLS)) +
+           "), {steps: […]}, or {agent: \"what to do\", servers} for judgment. Args can use {liked} (a song they "
+           "like), {file}, "
+           "{app}, {name}, {time}, {date}. Events: "
+           + ", ".join(ROUTINE_EVENTS) +
+           ". It stays off until the user says yes. list; remove/on/off {id}."),
+    props={
+        "when": "{event, app, words, at, days, percent, name, ext, minutes, times, every, cooldown (minutes)}",
+        "do": "{tool, args, server}, {steps: […]} or {agent, servers}",
+    },
 )
 def t_routine(ctx, args):
     action = args.get("action")
@@ -6622,6 +7023,10 @@ def habits_digest(cfg, now=None):
         "date": {"type": "string", "description": "For day: YYYY-MM-DD (default: yesterday)"},
     }),
     read_only=True,
+    brief=("What the user usually does here (apps and times): now (default: what they use at this hour, how "
+           "sessions start), week (time per app), day {date} (hour by hour), music (their taste: artists, "
+           "tracks, skips)."),
+    props={"date": None},
 )
 def t_habits(ctx, args):
     cfg = ctx.cfg
@@ -7888,13 +8293,14 @@ def keys_pass(cfg, ids=None):
     return done
 
 
-def pref_lines(cfg, query, app, limit=8):
+def pref_lines(cfg, query, app, limit=8, fill=True):
     """The preferences for a request (one ranker: note_score), then the
     speaking-first gates: what they don't want to hear about (Initiative's
-    muted kinds, the notifications it found not worth a word)."""
+    muted kinds, the notifications it found not worth a word). fill: the
+    strongest others too when few are about it."""
     entries = [e for e in read_personal() if e.get("kind") == "preference"]
     found = entries_about(entries, query, app, limit)
-    if len(found) < limit:
+    if fill and len(found) < limit:
         # Preferences hold whatever is asked: the strongest ones too.
         found += sorted((e for e in entries if e not in found),
                         key=lambda e: (-e.get("count", 1), -e.get("updated", 0)))[:limit - len(found)]
@@ -7958,11 +8364,19 @@ def entries_about(entries, query, app="", limit=5):
 # request, the desktop memory's notes (memory_digest), what the user did
 # lately (the shell's recent.txt, newest first), habits. Not masked: the
 # caller masks what it sends.
-CONTEXT_BUDGETS = {"chat": 6000, "bubble": 6000, "react": 2500, "triage": 2500, "scan": 1500, "text": 1500,
+CONTEXT_BUDGETS = {"chat": 5000, "bubble": 3000, "react": 2500, "triage": 2500, "scan": 1500, "text": 1500,
                    "routine": 2000, "pair": 2000}
 CONTEXT_SECTIONS = (("facts", 0.10), ("corrections", 0.10), ("preferences", 0.12), ("personal", 0.22),
                     ("desktop", 0.26), ("activity", 0.12), ("habits", 0.08))
 CONTEXT_FACTS_STALE = 3 * 3600  # s: facts.json older than this is the shell's past
+# A request names what it is about: then what isn't about it (the strongest
+# entries and notes, habits on other things) is left out instead of
+# filling the budget (the relevance floor), but for what matters whatever
+# is asked (importance this or more).
+CONTEXT_FLOOR_IMPORTANCE = 4
+CONTEXT_FLOOR_SURFACES = ("bubble", "chat")
+CONTEXT_MUSIC_WORDS = {"music", "song", "songs", "play", "playing", "listen", "track", "album", "artist", "playlist",
+                       "musique", "chanson", "ecouter", "jouer", "musik", "lied", "spielen", "horen", "nhac", "bai"}
 CONTEXT_ACTIVITY_LINES = 20
 
 
@@ -8017,10 +8431,13 @@ def context_activity():
             for ln in reversed(lines[-CONTEXT_ACTIVITY_LINES:])]
 
 
-def context_habits(cfg, app):
+def context_habits(cfg, app, query=""):
+    """The habits for a request: with one, only the lines about it (the
+    music taste when it is about music), and the app's own use."""
     lines = []
-    for extra in (habits_digest(cfg), music_digest(cfg, tool=False)):
-        if extra:
+    asked = set(words(query))
+    for extra, about in ((habits_digest(cfg), set()), (music_digest(cfg, tool=False), CONTEXT_MUSIC_WORDS)):
+        if extra and (not asked or asked & about or any(_match(w, set(words(extra))) for w in asked)):
             lines.append(f"- {extra}")
     did = app_desktop_id(app)
     used = read_memory()["usage"]["apps"].get(did) if did else None
@@ -8048,6 +8465,10 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
     app, title = clean_text(str(app or ""), 120), clean_text(str(title or ""), 200)
     q = " ".join(x for x in (query, title) if x)
     personal_on, memory_on = "personal" in cfg["tools"], "memory" in cfg["tools"]
+    # With a request (the user's, where they wait for the answer), only what
+    # is about it (or matters anyway); the background passes keep all they
+    # know (curiosity asks nothing it knows already).
+    floor = surface in CONTEXT_FLOOR_SURFACES and bool(words(q))
     given = []  # (id, its line): the ids of the lines kept are the answer's
 
     def line_of(e, line):
@@ -8064,7 +8485,7 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
     def preferences(allowed):
         if not personal_on:
             return None
-        lines, found = pref_lines(cfg, q, app)
+        lines, found = pref_lines(cfg, q, app, fill=not floor)
         given.extend(zip(found, lines))
         return ("What the user prefers (learned from them):", lines)
 
@@ -8084,7 +8505,8 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
         found = entries_about(rest, q, app, 6)
         soon = [e for e, _ in personal_events_near(time.time(), before=14, after=3) if e not in found][:3]
         if len(found) < 6:
-            found += sorted((e for e in rest if e not in found and e not in soon),
+            found += sorted((e for e in rest if e not in found and e not in soon
+                             and (not floor or importance(e) >= CONTEXT_FLOOR_IMPORTANCE)),
                             key=lambda e: (-importance(e), -e.get("uses", 0), -e.get("updated", 0)))[:6 - len(found)]
         lines += [line_of(e, entry_line(e, 240)) for e in found]
         if soon:
@@ -8100,7 +8522,8 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
     def desktop(allowed):
         if not memory_on:
             return None
-        digest = memory_digest(cfg, " ".join(x for x in (q, app) if x), limit=max(allowed, 200), extras=False)
+        digest = memory_digest(cfg, " ".join(x for x in (q, app) if x), limit=max(allowed, 200), extras=False,
+                               unasked=not floor)
         lines = digest.splitlines()
         if not lines:
             return None
@@ -8112,7 +8535,7 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
         return ("What the user did lately (newest first):", context_activity()) if activity else None
 
     def habits(allowed):
-        return ("Habits:", context_habits(cfg, app)) if memory_on else None
+        return ("Habits:", context_habits(cfg, app, q if floor else "")) if memory_on else None
 
     builders = {"facts": lambda allowed: ("Facts:", context_facts()), "corrections": corrections,
                 "preferences": preferences, "personal": personal, "desktop": desktop, "activity": recent,
@@ -8517,11 +8940,24 @@ def people_on(cfg):
     return "shell" in cfg["tools"] and cfg.get("personalContacts", True)
 
 
+# The contacts, kept a moment in a long-lived process (the helper builds a
+# context per request): nixbook-accounts isn't started for each one.
+CONTACTS_CACHE_S = 30
+_CONTACTS = {"time": 0.0, "list": None}
+
+
 def all_contacts():
+    now = time.monotonic()
+    if _CONTACTS["list"] is not None and now - _CONTACTS["time"] < CONTACTS_CACHE_S:
+        return _CONTACTS["list"]
     try:
-        return accounts_call("contacts", "list", "--limit", "0").get("contacts") or []
+        out = accounts_call("contacts", "list", "--limit", "0")
     except ToolError:
-        return []
+        out = None
+    # No account yet (a fresh state), or an answer without contacts: none.
+    found = out.get("contacts") if isinstance(out, dict) else None
+    _CONTACTS["list"], _CONTACTS["time"] = (found if isinstance(found, list) else []), now
+    return _CONTACTS["list"]
 
 
 def people_named(query, contacts):
@@ -8609,6 +9045,9 @@ def people_context(cfg, query, exclude=()):
     "no query, every subject.",
     obj({"query": {"type": "string"}}),
     read_only=True,
+    brief=("What the user told you in earlier conversations about their life, by subject: when a "
+           "conversation touches a subject you know of but haven't seen, or they ask what you remember; no "
+           "query: every subject."),
 )
 def t_recall_about_user(ctx, args):
     q = (args.get("query") or "").strip()
@@ -8655,6 +9094,19 @@ def t_recall_about_user(ctx, args):
         },
         ["topic", "text"],
     ),
+    brief=("Save what the user told you about their life, for later conversations: condensed facts, one "
+           "entry per subject (topic \"japan\", text \"Trip 2027-04 with Mai (partner): Kyoto, Hakone; budget "
+           "~3000 EUR\"). An existing entry's id replaces it with the merged text. A person (topic \"Name "
+           "(relation)\") also goes in their contact's notes."),
+    props={
+        "topic": "A few words; a person: \"Lan (sister)\"",
+        "text": "≤400 characters",
+        "kind": "profile: who they are (short); event: give date; topic: default",
+        "date": "YYYY[-MM[-DD]]",
+        "id": "The entry to replace",
+        "contact": "person: their contact id, or \"none\"",
+        "keys": "Other words for it (en/fr/de/vi)",
+    },
 )
 def t_remember_about_user(ctx, args, weight=None, mention=True):
     """weight: the importance the memory pass gave (agents' saves: kept,
@@ -10326,6 +10778,9 @@ def layout_entry(w, ws, apps, widths=None):
     "opens it, for the monitors connected now (the layout keeps the one "
     "saved with other monitors). restore_layout puts it back.",
     obj({"name": {"type": "string", "description": "e.g. work, gaming, default"}}, ["name"]),
+    brief=("Save the window layout under a name (monitors, workspaces, columns, floating positions, sizes, "
+           "apps); restore_layout puts it back."),
+    props={"name": "e.g. work, gaming"},
 )
 def t_save_layout(ctx, args):
     name = as_str(args, "name", max_len=64, pattern=LAYOUT_NAME)
@@ -10632,6 +11087,10 @@ def pin_workspaces(pairs, outputs):
         },
         ["name"],
     ),
+    brief=("Put the windows back as a saved layout had them (list_layouts): monitors, workspaces, columns, "
+           "floating positions; apps not open are started first (launch_missing, default true). One call "
+           "does it all."),
+    props={"launch_missing": None},
 )
 def t_restore_layout(ctx, args, close_others=False):
     # On the user's desktop, the shell covers the screens and takes the input
@@ -10831,9 +11290,11 @@ def restore_layout_now(ctx, args, close_others=False):
 
     # An app's first window may be a splash with the app's id (Vesktop's
     # "Loading"), gone a few seconds later for the app's own: watch the
-    # started apps' windows for 5 s after they appeared, and arrange again
-    # with the one that replaced a window gone.
-    settle = max((s[2] for s in started), default=0) + 5
+    # started apps' windows for 5 s after they appeared (1.5 s when none
+    # looks like a splash: no title, "Loading…"), and arrange again with the
+    # one that replaced a window gone.
+    splashy = any(launch_splash(s[1], s[0].get("app_id")) for s in started)
+    settle = max((s[2] for s in started), default=0) + (5 if splashy else 1.5)
     while time.monotonic() < settle:
         time.sleep(0.3)
         now = windows()
@@ -10922,6 +11383,18 @@ COORD = {"type": "number"}
         }
     ),
     read_only=True,
+    brief=("Screenshot a monitor (default: the focused one), a `region` (full resolution, to zoom in) or a "
+           "window (`window_id`, on any workspace, silently: don't focus it just to look). It comes with a "
+           "`mapping`: pass it as `screenshot` to click/drag/scroll/move_pointer to use the image's pixels. "
+           "A monitor shot sends only what changed since your last one (`full`: all). ui_read, ui_wait and "
+           "read_screen cost far less when they can tell."),
+    props={
+        "monitor": None,
+        "region": REGION_BRIEF,
+        "window_id": None,
+        "offscreen": "Only with an older niri",
+        "full": None,
+    },
 )
 def t_screenshot(ctx, args):
     with overlays_hidden(ctx) as shown:
@@ -11357,6 +11830,10 @@ OCR_MAX_CHARS = 6000
         }
     ),
     read_only=True,
+    brief=("Read the text on a monitor or `region` by OCR, with each line's position in desktop pixels "
+           "(click as x, y): far cheaper than a screenshot. `find`: only lines with that text. Icons and "
+           "images aren't read."),
+    props={"monitor": None, "region": REGION_BRIEF, "find": None},
 )
 def t_read_screen(ctx, args):
     with overlays_hidden(ctx):
@@ -11474,6 +11951,7 @@ def clipboard_secret():
     read_only=True,
 )
 def t_clipboard_get(ctx, args):
+    paste_restore_now()
     if clipboard_secret():
         raise ToolError("refused: the clipboard holds a secret a password manager copied")
     proc = run(["wl-paste", "--no-newline", "--type", "text"], timeout=3, check=False)
@@ -11511,6 +11989,16 @@ BIDI_MARKS = dict.fromkeys(map(ord, "⁦⁧⁨⁩‎‏"))
         }
     ),
     read_only=True,
+    brief=("Recent notifications, oldest first, as text (chat messages, mail, reminders): cheaper than a "
+           "screenshot. Filters: `app`, `contains`, `since_minutes`, `count`. `on_screen`: only those in the"
+           " centre, with ids (dismiss_notifications, notification_action)."),
+    props={
+        "on_screen": None,
+        "app": None,
+        "contains": None,
+        "since_minutes": None,
+        "count": "At most this many, newest (default 10)",
+    },
 )
 def t_notifications(ctx, args):
     app = (as_str(args, "app", max_len=128, required=False) or "").lower()
@@ -11607,6 +12095,10 @@ def live_notifications(app, contains, since, count):
             "all": {"type": "boolean", "description": "Every one in the centre"},
         }
     ),
+    brief=("Dismiss notifications from the centre, as the user's × would (they stay in the history): by "
+           "`ids` (notifications on_screen), `app` and/or `contains`, or `all`. Noise or what the user "
+           "asked; not messages they'd want to see."),
+    props={"ids": None, "app": None, "contains": None, "all": None},
 )
 def t_dismiss_notifications(ctx, args):
     ids = args.get("ids")
@@ -11656,6 +12148,10 @@ def notification_id(args):
         ["id"],
     ),
     destructive=True,
+    brief=("Click a button of a notification in the centre (`action`: its label or id, from notifications "
+           "on_screen) or send a typed `reply` (\"can reply\" ones: sent as the user's message). Say what "
+           "you'll do."),
+    props={"id": None, "action": None, "reply": None},
 )
 def t_notification_action(ctx, args):
     nid = notification_id(args)
@@ -11723,6 +12219,9 @@ def t_do_not_disturb(ctx, args):
     if arg != "status":
         ctx.guard.check_rate()
     out = shell_notifications("dnd", arg)
+    if arg != "status":
+        # The shell answers with the state it is in now: read back.
+        ctx.verified = bool(out.get("silent")) == (arg != "off")
     if not out.get("silent"):
         return [text("Do Not Disturb is off")]
     until = out.get("until") or 0
@@ -11769,6 +12268,9 @@ def shell_conversation(fn, *args):
     obj({"action": {"type": "string", "enum": ["clear", "hide", "show", "history"]},
          "count": {"type": "integer", "description": "history: at most this many, newest first (default 20)"}},
         ["action"]),
+    brief=("The user's speech-bubble conversation with you: clear (a fresh one, after your answer), hide, "
+           "show, history (saved ones). Deleting: delete_conversations."),
+    props={"count": None},
 )
 def t_conversation(ctx, args):
     action = as_str(args, "action", max_len=16)
@@ -11839,6 +12341,7 @@ def t_clipboard_set(ctx, args):
         raise ToolError("`text` must be a string")
     ctx.guard.check_text(value)
     ctx.guard.check_rate()
+    paste_restore_now()
     wl_copy(value.encode())
     return [text(f"copied {len(value)} characters")]
 
@@ -11860,6 +12363,8 @@ def focus_note(ctx):
 
 
 def saved_clipboard():
+    # A paste's restore still to come: the user's clipboard back first.
+    paste_restore_now()
     offered = clipboard_types()
     if CLIPBOARD_SECRET_TYPES & set(offered):
         return None  # a password: not copied back (it would lose its mark, and be kept)
@@ -11870,21 +12375,65 @@ def saved_clipboard():
     return None
 
 
+# A paste puts the user's clipboard back a moment after the key (the app
+# reads the selection then), without holding the reply: one restore pending
+# at a time, run at once by the next paste or clipboard tool, and before
+# the process exits (a non-daemon timer).
+PASTE_READ_S = 0.4
+PASTE_OURS_S = 0.3
+_PASTE = {"lock": threading.RLock(), "timer": None, "saved": None}
+
+
+def restore_clipboard(saved):
+    if saved:
+        wl_copy(saved[1], saved[0])
+    else:
+        run(["wl-copy", "--clear"], check=False)
+
+
+def paste_restore_now(timer=None):
+    """Put the clipboard back now if a paste's restore is pending (timer:
+    only if it is that one's)."""
+    with _PASTE["lock"]:
+        pending = _PASTE["timer"]
+        if not pending or (timer is not None and pending is not timer):
+            return
+        pending.cancel()
+        saved = _PASTE["saved"]
+        _PASTE["timer"] = _PASTE["saved"] = None
+        try:
+            restore_clipboard(saved)
+        except ToolError as e:
+            log(f"paste: the clipboard wasn't put back: {e}")
+
+
 def paste_text(value):
     """Paste through the clipboard, then put back what it held."""
-    saved = saved_clipboard()
-    wl_copy(value.encode())
-    try:
-        # wl-copy serves the selection from its fork: give it a moment.
-        time.sleep(0.1)
-        run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"])
-        # The app reads the selection after the key: wait before replacing it.
-        time.sleep(0.4)
-    finally:
-        if saved:
-            wl_copy(saved[1], saved[0])
+    data = value.encode()
+    with _PASTE["lock"]:
+        pending = _PASTE["timer"]
+        if pending:
+            # The clipboard still holds the previous paste: the user's is
+            # the one saved before it.
+            pending.cancel()
+            saved = _PASTE["saved"]
+            _PASTE["timer"] = _PASTE["saved"] = None
         else:
-            run(["wl-copy", "--clear"], check=False)
+            saved = saved_clipboard()
+        wl_copy(data)
+        try:
+            # wl-copy serves the selection from its fork: the key once it
+            # is ours (at once, mostly; at most PASTE_OURS_S).
+            read_back(lambda: run(["wl-paste", "--no-newline"], timeout=1, check=False, binary=True).stdout == data,
+                      timeout=PASTE_OURS_S, step=0.02)
+            run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"])
+        except BaseException:
+            restore_clipboard(saved)
+            raise
+        timer = threading.Timer(PASTE_READ_S, lambda: paste_restore_now(timer))
+        _PASTE["timer"], _PASTE["saved"] = timer, saved
+        timer.start()
+
 
 MODIFIERS = {"ctrl": "ctrl", "control": "ctrl", "shift": "shift", "alt": "alt", "altgr": "altgr",
              "super": "logo", "logo": "logo", "meta": "logo", "win": "logo"}
@@ -11973,8 +12522,37 @@ def t_press_keys(ctx, args):
         argv += ["-k", key]
         for m in reversed(mods):
             argv += ["-m", m]
+    media = media_keys_state([key for _, key in combos])
     run(argv)
+    if media is not None:
+        # Media and volume keys: the player's or the output's state read
+        # back (it changes once the compositor ran the key's command).
+        ctx.verified = read_back(lambda: media_keys_state([key for _, key in combos]) != media)
     return [text(f"pressed {', '.join(keys)}" + focus_note(ctx))]
+
+
+MEDIA_PLAYER_KEYS = {"XF86AudioPlay", "XF86AudioPause", "XF86AudioNext", "XF86AudioPrev", "XF86AudioStop"}
+MEDIA_VOLUME_KEYS = {"XF86AudioRaiseVolume", "XF86AudioLowerVolume", "XF86AudioMute", "XF86AudioMicMute"}
+
+
+def media_keys_state(keys):
+    """What media/volume keys change, as one comparable value (the player's
+    status and track, the default output's volume), or None when a key
+    isn't one of those or nothing tells it."""
+    if not keys or not set(keys) <= MEDIA_PLAYER_KEYS | MEDIA_VOLUME_KEYS:
+        return None
+    state = []
+    try:
+        if set(keys) & MEDIA_PLAYER_KEYS:
+            proc = run(["playerctl", "metadata", "--format", "{{status}}|{{title}}|{{artist}}"], check=False, timeout=2)
+            state.append(proc.stdout.strip() if proc.returncode == 0 else "")
+        if set(keys) & MEDIA_VOLUME_KEYS:
+            source = "@DEFAULT_AUDIO_SOURCE@" if "XF86AudioMicMute" in keys else "@DEFAULT_AUDIO_SINK@"
+            proc = run(["wpctl", "get-volume", source], check=False, timeout=2)
+            state.append(proc.stdout.strip() if proc.returncode == 0 else "")
+    except ToolError:
+        return None
+    return tuple(state) if any(state) else None
 
 
 # The pointer goes through the compositor's virtual pointer
@@ -12233,6 +12811,9 @@ SCREENSHOT_MAPPING = {
 }
 
 
+MAPPING_BRIEF = {"type": "object", "description": "A screenshot's `mapping` {x, y, scale}: x, y are its pixels"}
+
+
 def point(args, kx="x", ky="y"):
     """Desktop coordinates (logical pixels, fractional allowed) from x/y,
     converted from screenshot pixels when a `screenshot` mapping is given."""
@@ -12265,6 +12846,8 @@ def precision_note(p):
     "Move the mouse pointer to a point: desktop coordinates (logical pixels), "
     "or a screenshot's pixels with its `mapping` as `screenshot`.",
     obj({"x": COORD, "y": COORD, "screenshot": SCREENSHOT_MAPPING}, ["x", "y"]),
+    brief=("Move the pointer to a point: desktop coordinates, or a screenshot's pixels with its `mapping`."),
+    props={"screenshot": MAPPING_BRIEF},
 )
 def t_move_pointer(ctx, args):
     x, y = point(args)
@@ -12290,6 +12873,9 @@ def t_move_pointer(ctx, args):
             "double": {"type": "boolean"},
         }
     ),
+    brief=("Click at a point (desktop coordinates, or a screenshot's pixels with its `mapping` as "
+           "`screenshot`), or where the pointer is. Prefer keys and window tools when they can."),
+    props={"screenshot": MAPPING_BRIEF},
 )
 def t_click(ctx, args):
     button = args.get("button") or "left"
@@ -12324,6 +12910,9 @@ def t_click(ctx, args):
         },
         ["x", "y", "to_x", "to_y"],
     ),
+    brief=("Drag from (x, y) to (to_x, to_y) with a button held: drag and drop, select text, move a slider. "
+           "Points as for click."),
+    props={"screenshot": MAPPING_BRIEF},
 )
 def t_drag(ctx, args):
     button = args.get("button") or "left"
@@ -12354,6 +12943,9 @@ def t_drag(ctx, args):
     "Scroll the window under the pointer (or at a point, as for click): "
     "positive dy scrolls down, dx right, in wheel notches.",
     obj({"dy": {"type": "integer"}, "dx": {"type": "integer"}, "x": COORD, "y": COORD, "screenshot": SCREENSHOT_MAPPING}),
+    brief=("Scroll under the pointer, or at a point (as for click): dy > 0 down, dx > 0 right, in wheel "
+           "notches."),
+    props={"screenshot": MAPPING_BRIEF},
 )
 def t_scroll(ctx, args):
     dy = as_int(args, "dy", required=False) or 0
@@ -12412,6 +13004,14 @@ def t_scroll(ctx, args):
         },
         ["steps"],
     ),
+    brief=("Several window/input actions in one call, in order: steps [{tool, args, wait_ms? (default 200), "
+           "settle? (wait until the screen stops changing)}], e.g. [{tool: press_keys, args: {keys: "
+           "[ctrl+k]}}, {tool: type_text, args: {text: Alesio}}]. Stops at the first step that fails; each "
+           "passes the usual guardrails; a pause stops it."),
+    props={
+        "remember_as": "When it worked, save it as a recipe (run_recipe) under this topic",
+        "vars": "Values for {name} placeholders in the steps",
+    },
 )
 def t_run_steps(ctx, args):
     steps = args.get("steps")
@@ -12437,15 +13037,17 @@ def t_run_steps(ctx, args):
         wait = step.get("wait_ms", 200)
         if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 5000:
             raise ToolError(f"step {i}: `wait_ms` must be 0 to 5000")
-        plan.append((name, t, step_args, "settle" if step.get("settle") is True else wait))
+        plan.append((name, t, step_args, "settle" if step.get("settle") is True else wait, "wait_ms" in step))
     done = []
-    for i, (name, t, step_args, wait) in enumerate(plan, 1):
+    checked = True
+    for i, (name, t, step_args, wait, explicit) in enumerate(plan, 1):
         if is_paused():
             audit(ctx.client, name, step_args, "paused (run_steps)")
             raise ToolError("\n".join(done + [f"stopped before step {i}: desktop control was paused by the user"]))
         if refused_by_takeover(ctx, name, t["group"]):
             audit(ctx.client, name, step_args, "user took over (run_steps)")
             raise ToolError("\n".join(done + [f"stopped before step {i}: {TAKEOVER_MESSAGE}"]))
+        ctx.verified = None
         try:
             out = t["fn"](ctx, step_args)
         except ToolError as e:
@@ -12455,8 +13057,12 @@ def t_run_steps(ctx, args):
         summary = next((c["text"] for c in out if c.get("type") == "text"), "done")
         done.append(f"{i}. {name}: {summary.splitlines()[0] if summary else 'done'}")
         write_state(last={"time": int(time.time() * 1000), "client": ctx.client, "tool": name, "outcome": "ok"})
+        step_checked, checked = ctx.verified is True, checked and ctx.verified is True
         if wait != "settle":
-            time.sleep(wait / 1000)
+            # The default pause lets the app catch up with the step: not
+            # after the last one, nor after one that read its effect back.
+            if explicit or (i < len(plan) and not step_checked):
+                time.sleep(wait / 1000)
         elif not wait_settled(ctx):
             done.append(f"(the screen was still changing after {SETTLE_MAX_MS / 1000:g} s)")
     if isinstance(args.get("remember_as"), str) and args["remember_as"].strip() and "memory" in ctx.cfg["tools"]:
@@ -12467,6 +13073,8 @@ def t_run_steps(ctx, args):
             reply = add_note(ctx, topic, recipe_gist(template), kind="recipe", steps=template)
             record_recipe(ctx.last_note, True)
             done.append(reply + " (run it with run_recipe)")
+    # Verified when every step read its own effect back.
+    ctx.verified = checked
     return [text("\n".join(done))]
 
 
@@ -12762,6 +13370,7 @@ def t_set_theme(ctx, args):
     out = qs_ipc("call", "--", "theme", "set", theme["id"], variant).stdout.strip()
     if not out.startswith("ok"):
         raise ToolError(out or "the shell didn't answer")
+    ctx.verified = read_back(lambda: theme_registry().get("current") == theme["id"])
     return [text(f"theme set: {out[3:].strip()}")]
 
 
@@ -12788,6 +13397,11 @@ def t_set_theme(ctx, args):
         "where": {"type": "string", "description": "The widget, setting, tool or file, when known"},
         "fix_now": {"type": "boolean", "description": "Start fixing it at once (the user asked; default false)"},
     }, ["what"]),
+    brief=("File a bug or rough edge in nixbook itself (this shell, its widgets and settings, these tools, "
+           "its configuration) for its fixer, which makes a small fix as a pull request. When the user says "
+           "something of nixbook is broken or annoying, or a tool failed like a bug. A new behaviour: "
+           "request_feature instead; not other apps' bugs. fix_now only when the user asked to fix it now."),
+    props={"what": "What happens, what was expected", "where": "The widget, setting, tool or file", "fix_now": None},
 )
 def t_report_problem(ctx, args):
     what = as_str(args, "what", max_len=1000)
@@ -12824,6 +13438,11 @@ def t_report_problem(ctx, args):
         "where": {"type": "string", "description": "The widget, setting, tool or file it belongs to, when known"},
         "build_now": {"type": "boolean", "description": "Start building it at once (the user asked; default false)"},
     }, ["what"]),
+    brief=("Ask for a feature in nixbook itself (a new widget, setting, shortcut or behaviour): its builder "
+           "makes a pull request the user reviews. When the user wants nixbook to do something new (\"I wish "
+           "the bar showed…\"). A bug is report_problem's. build_now only when the user asked to build it "
+           "now."),
+    props={"what": "What it should do, how one would use it", "where": "Where it belongs", "build_now": None},
 )
 def t_request_feature(ctx, args):
     what = as_str(args, "what", max_len=1500)
@@ -12860,6 +13479,8 @@ IMPROVE_CI = {"pending": "CI running", "pass": "CI passed", "fail": "CI failed"}
     "id start_improvement takes.",
     obj({}),
     read_only=True,
+    brief=("What nixbook's fixer has to do or did lately (fixes and features), newest first, with ids, kind,"
+           " what was asked and where it stands (queued, being made, pull request + CI, merged, failed…)."),
 )
 def t_list_improvements(ctx, args):
     st = improve_cmd(["status"])
@@ -12899,6 +13520,8 @@ def t_list_improvements(ctx, args):
     "(Settings > Desktop agents > Fixes it makes itself, Features it builds). It "
     "becomes a pull request the user reviews; list_improvements says how it goes.",
     obj({"id": {"type": "string", "description": "The item's id (list_improvements)"}}, ["id"]),
+    brief=("Start a queued fix or feature now (its id from list_improvements), as Settings' Fix now / Build "
+           "now: only when the user asked for it in this conversation."),
 )
 def t_start_improvement(ctx, args):
     iid = as_str(args, "id", max_len=40)
@@ -13023,6 +13646,10 @@ IMPROVE_CI = {"pending": "checks running", "pass": "checks passing", "fail": "ch
     obj({"kind": {"type": "string", "enum": ["fix", "feature"],
                   "description": "Only the fixes or only the feature requests (default both)"}}),
     read_only=True,
+    brief=("The fix and feature requests filed for nixbook's fixer, newest first: when, by whom, status "
+           "(queued, building, pull request, merged, dropped…) and why. For \"did you file it?\"; changes "
+           "nothing."),
+    props={"kind": "fix or feature (default both)"},
 )
 def t_list_requests(ctx, args):
     kind = as_str(args, "kind", required=False) or ""
@@ -13265,6 +13892,9 @@ def shared_image(want, fallback):
     "follows, as when the user picks it with Mod+W. A web address won't do: "
     "download the image first.",
     obj({"path": {"type": "string", "description": "Absolute path (or ~/…) of the image"}}, ["path"]),
+    brief=("Set the wallpaper to an image file (JPEG, PNG, WebP, AVIF) from a folder the user shares with "
+           "agents; the palette follows. A web image: download it first."),
+    props={"path": None},
 )
 def t_set_wallpaper(ctx, args):
     path = shared_image(as_str(args, "path", max_len=1024), "set the wallpaper with Mod+W")
@@ -13340,6 +13970,8 @@ def capture_geometry(args):
     "already. Never the sidePanel (the user's chat with you), the lock "
     "screen or a password prompt.",
     obj({"name": {"type": "string", "enum": ["notificationPopups", "cutIn", "speechBubble"]}}, ["name"]),
+    brief=("Hide a shell surface in your way for a few seconds (nothing dismissed): notificationPopups, "
+           "cutIn, speechBubble. Rarely needed: they let input through and are hidden from screenshots."),
 )
 def t_set_aside(ctx, args):
     name = as_str(args, "name", max_len=32)
@@ -13373,6 +14005,10 @@ def t_set_aside(ctx, args):
         "to": {"type": "string", "enum": ["file", "clipboard", "both"]},
         "sound": {"type": "boolean", "description": "record_start: with the desktop audio"},
     }, ["action"]),
+    brief=("Screenshots and recordings for the user (to look yourself: screenshot). screenshot {monitor | "
+           "region | window_id, to: file, clipboard or both}: saved where the shell saves them; record_start"
+           " {monitor | region, sound?}; record_stop (the video's path); record_status."),
+    props={"monitor": None, "region": REGION_BRIEF, "window_id": None, "sound": None},
 )
 def t_screen_capture(ctx, args):
     action = as_str(args, "action", max_len=16)
@@ -13414,8 +14050,8 @@ def t_screen_capture(ctx, args):
         ctx.guard.check_rate()
         widget_call("region", "recordStart", target, "true" if sound else "false")
         # The script marks the recording as started once wf-recorder runs.
-        for _ in range(20):
-            time.sleep(0.25)
+        for _ in range(50):
+            time.sleep(0.1)
             if json.loads(widget_call("region", "recordStatus")).get("recording"):
                 return [text(f"recording the {what}{' with sound' if sound else ''}; record_stop to end it")]
         raise ToolError("the recording didn't start (is wf-recorder installed? see the user's notifications)")
@@ -13541,6 +14177,31 @@ def arrange_widget(ctx, action, want, args):
         "monitors": {"type": ["string", "array"], "items": {"type": "string"},
                      "description": "images monitors: all, none, or monitor names"},
     }, ["action"]),
+    brief=("The desktop widgets, without clicking. list, show/hide {widget}; layout (monitors, widget "
+           "boxes); place {widget, monitor?, x, y}, hide_on/raise {widget, monitor?}, placement {widget, "
+           "strategy}. notes: list, add {text}, update {id, text}, remove {id}, open {id?}. todo: list, add "
+           "{text}, done/undone/remove {index}. timers: status, pomodoro_toggle/_reset, "
+           "stopwatch_toggle/_lap/_reset, countdown_add {minutes}, countdown_toggle/_reset/_dismiss, "
+           "alarm_set {when, label?, daily?}, alarm_toggle/_clear/_dismiss/_snooze. images: list, add {path,"
+           " monitor?}, remove/recenter {image}, set {image, key, value}, monitors {image, monitors}. music "
+           "(recognize the song): listen, stop, status, use_system_sound, use_microphone."),
+    props={
+        "text": None,
+        "id": None,
+        "index": None,
+        "x": None,
+        "y": None,
+        "label": None,
+        "daily": None,
+        "image": None,
+        "path": None,
+        "monitor": None,
+        "key": None,
+        "value": None,
+        "monitors": None,
+        "widget": "notes, todo, timers, images, music, or a widget from list",
+        "when": "\"YYYY-MM-DD HH:MM\" or \"HH:MM\"",
+    },
 )
 def t_widget(ctx, args):
     action = as_str(args, "action", max_len=32).strip().lower()
@@ -13633,6 +14294,9 @@ def t_widget(ctx, args):
     if changes:
         ctx.guard.check_rate()
     out = notes_call(fn, *argv) if target == "notes" and fn in NOTES_FILE_FUNCTIONS else widget_call(target, fn, *argv)
+    if changes:
+        # The shell (or the notes file) made it before answering "ok".
+        ctx.verified = out.startswith("ok")
     if not changes:
         try:
             return [text(json.loads(out))]
@@ -13673,6 +14337,11 @@ EQ_BANDS_HZ = [32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
         "db": {"type": "number", "description": "preamp, song_curve: the preamp in dB, -12..12"},
         "on": {"type": "boolean", "description": "auto, agent: on or off"},
     }, ["action"]),
+    brief=("The audio equalizer (EasyEffects). status: curve, preamp, presets, Auto, what's playing (genre "
+           "tags); preset {name}; bands {gains: 10 dB values -12..12, 32 Hz…16 kHz}; song_curve {gains, db} "
+           "(this song only); preamp {db}; auto {on}; agent {on} (a Muse task tunes each song); open/close. "
+           "Keep boosts ≤ +6 dB and lower the preamp by the biggest boost."),
+    props={"name": None, "gains": None, "db": None, "on": None},
 )
 def t_equalizer(ctx, args):
     action = as_str(args, "action", max_len=16)
@@ -13722,6 +14391,8 @@ def t_equalizer(ctx, args):
         out = widget_call("equalizer", action, "true" if on else "false")
     else:
         raise ToolError("`action`: status, preset, bands, song_curve, preamp, auto, agent, open or close")
+    # The shell applies it before answering "ok:".
+    ctx.verified = out.startswith("ok")
     return [text(out[3:].strip() if out.startswith("ok:") else out)]
 
 
@@ -13797,6 +14468,22 @@ def calendar_op(args, op):
         "recurrence": {"type": ["string", "null"]},
     }, ["action"]),
     destructive=True,
+    brief=("The user's calendars, every account merged. Read: next, upcoming {days: 1 = today, ≤60}, day "
+           "{date}, calendars. Change: create {summary, start, end?, allDay?, calendar?, location?, "
+           "description?, reminders? (minutes before), recurrence? (daily, weekdays, weekly, monthly, "
+           "yearly, an RRULE)}, update {id, occurrence?, all?, …fields}, delete {id, occurrence?} (ask "
+           "first), show_calendar/hide_calendar {calendar}, open {date?}. Local times: YYYY-MM-DDTHH:MM, or "
+           "YYYY-MM-DD all-day."),
+    props={
+        "days": None,
+        "date": None,
+        "id": None,
+        "all": None,
+        "calendar": None,
+        "end": None,
+        "occurrence": "A recurring event's occurrence (its start)",
+        "start": "YYYY-MM-DDTHH:MM or YYYY-MM-DD",
+    },
 )
 def t_calendar(ctx, args):
     action = as_str(args, "action", max_len=16)
@@ -13813,6 +14500,9 @@ def t_calendar(ctx, args):
         if not r.get("ok"):
             raise ToolError(r.get("error", "failed"))
         res = r["result"]
+        # The accounts backend made the change before answering (a new
+        # event: with its id).
+        ctx.verified = action != "create" or bool(isinstance(res, dict) and res.get("id"))
         if action == "show_calendar":
             # Its events now (Google's aren't fetched while it is off).
             accounts_call("calendar", "sync", timeout=120)
@@ -13919,6 +14609,20 @@ def task_op(args, op):
                 "description": "batch: [{action, task?, title?, notes?, list?, due?, name?}, …]"},
     }, ["action"]),
     destructive=True,
+    brief=("The user's to-do lists (the Tasks app; Google Tasks, or local). list {list?, include_done?}: the"
+           " lists and tasks with their ids. create {title, list?, notes?, due?}, update {task, title?, "
+           "notes?, due?}, done/undone/delete {task}, move {task, list}, clear_completed {list?}, open "
+           "{task?}, create_list {name}, rename_list {list, name}, delete_list {list} (ask first), batch "
+           "{ops (≤50)}. A new task gets its id once synced: list again before changing it."),
+    props={
+        "task": None,
+        "notes": None,
+        "list": None,
+        "name": None,
+        "include_done": None,
+        "ops": None,
+        "due": "YYYY-MM-DD, today, tomorrow, +N, or \"\" to clear",
+    },
 )
 def t_tasks(ctx, args):
     action = as_str(args, "action", max_len=32).strip().lower()
@@ -13954,6 +14658,8 @@ def t_tasks(ctx, args):
         request = task_op(args, action)
     ctx.guard.check_rate()
     results = tasks_call("apply", request)
+    # Applied before the answer: each change it reports ok is made.
+    ctx.verified = bool(results) and all(r.get("ok") for r in results)
     if action != "batch":
         r = results[0]
         if not r.get("ok"):
@@ -14129,6 +14835,26 @@ def contact_op(args, op):
                 "description": "batch: [{action, id?, …fields}, …]"},
     }, ["action"]),
     destructive=True,
+    brief=("The user's contacts, every account merged (Google, CardDAV, \"local\"). list {query?, label?, "
+           "account?, starred?, limit?}: accounts, labels and matching contacts (ids \"<account>:…\"); get "
+           "{id}. Changes (fields given replace, others stay): create {account?, name, …the fields below}, "
+           "update {id, …}, star/unstar {id}, delete {id} (ask first),"
+           " set_photo {id, photo: a path or image URL, \"\" removes}, create_label {label_name, account?}, "
+           "rename_label {label, label_name}, delete_label {label}, batch {ops: [{action, …}] (≤50)}, sync "
+           "{full?}, open {id?} (the Contacts app)."),
+    props={
+        "id": None,
+        "label": None,
+        "account": None,
+        "label_name": None,
+        "full": None,
+        "name": None,
+        "organization": None,
+        "title": None,
+        "birthday": "YYYY-MM-DD or MM-DD",
+        "photo": None,
+        "ops": None,
+    },
 )
 def t_contacts(ctx, args):
     action = as_str(args, "action", max_len=32).strip().lower()
@@ -14181,6 +14907,8 @@ def t_contacts(ctx, args):
     with tempfile.TemporaryDirectory(dir=runtime_dir()) as folder:
         photo_paths(request.get("ops") or [request], folder)
         results = accounts_call("contacts", "apply", json.dumps(request), timeout=120)
+    _CONTACTS["list"] = None  # changed: read again
+    ctx.verified = bool(results) and all(r.get("ok") for r in results)
 
     def summary(r):
         res = r.get("result")
@@ -14519,6 +15247,10 @@ def ui_resolve(Atspi, path):
         "max_elements": {"type": "integer", "description": "At most this many (default 80, at most 400)"},
     }),
     read_only=True,
+    brief=("Read a window through its accessibility tree: buttons, fields, labels, items, numbered for "
+           "ui_act, with text and state. Exact, a few hundred tokens. The focused window unless `window_id`."
+           " Prefer `find`."),
+    props={"window_id": None, "find": "Only elements whose line contains this", "max_elements": "Default 80"},
 )
 @in_ui_worker
 def t_ui_read(ctx, args):
@@ -14618,6 +15350,10 @@ def ui_event_waiter(Atspi):
         "timeout_ms": {"type": "integer", "description": "Give up after this long (default 5000, at most 15000)"},
     }, ["find"]),
     read_only=True,
+    brief=("Wait until a window's accessibility tree shows an element whose line has `find` (or with `gone`,"
+           " until none does), instead of a fixed wait and a screenshot. Returns the matches numbered for "
+           "ui_act."),
+    props={"find": None, "gone": None, "window_id": None, "timeout_ms": "Default 5000, at most 15000"},
 )
 @in_ui_worker
 def t_ui_wait(ctx, args):
@@ -14777,6 +15513,10 @@ def ui_find_target(Atspi, w, frame_path, frame, target, role=None):
         "value": {"type": "string", "description": "The text, for set_text"},
     }, ["action"]),
     destructive=True,
+    brief=("Act on a window's element through the app (no coordinates): `index` from the last ui_read, or "
+           "`target` (its name, with `role` when names repeat). action: click, focus, set_text (`value`), or"
+           " an action name the app lists. Returns the element after. Password fields are refused."),
+    props={"target": None, "role": None, "window_id": None, "action": None, "value": None},
 )
 @in_ui_worker
 def t_ui_act(ctx, args):
@@ -14816,6 +15556,17 @@ def t_ui_act(ctx, args):
     if role == "terminal":
         raise ToolError("refused: terminals are off limits; ask the user to do this step")
     ctx.guard.check_rate()
+
+    def element():
+        """The element as it reads now: (its line, its text, its states)."""
+        line = f"{node.get_role_name()} {(node.get_name() or '').strip()!r}"
+        t = ui_text(Atspi, node, role)
+        states = ui_states(Atspi, node)
+        return line + (f" = {t[:80]!r}" if t else "") + (f" ({', '.join(states)})" if states else ""), t, states
+    try:
+        before = element()
+    except Exception:
+        before = None
     if action == "focus":
         if node.get_component_iface() is None or not Atspi.Component.grab_focus(node):
             raise ToolError("that element can't take the focus")
@@ -14839,14 +15590,21 @@ def t_ui_act(ctx, args):
                             "click it at its position from a screenshot instead")
         Atspi.Action.do_action(node, pick)
     ui_learn(w, frame_path, path, role, name)
-    time.sleep(0.3)
-    try:
-        after = f"{node.get_role_name()} {(node.get_name() or '').strip()!r}"
-        t = ui_text(Atspi, node, role)
-        states = ui_states(Atspi, node)
-        after += (f" = {t[:80]!r}" if t else "") + (f" ({', '.join(states)})" if states else "")
-    except Exception:
-        after = "(the element is gone: the window changed)"
+    # The element after: read as soon as it shows the action (its text set,
+    # the focus, a state or text changed), else after at most 0.3 s.
+    deadline = time.monotonic() + 0.3
+    while True:
+        try:
+            now = element()
+            after = now[0]
+        except Exception:
+            after = "(the element is gone: the window changed)"
+            break
+        if (action == "set_text" and now[1] == args.get("value")) or (action == "focus" and "focused" in now[2]) \
+                or (action not in ("set_text", "focus") and before is not None and now != before) \
+                or time.monotonic() >= deadline:
+            break
+        time.sleep(0.03)
     return [text(f"done{f' ({how})' if how else ''}: {after}")]
 
 
@@ -14915,6 +15673,11 @@ class Context:
         self.last_note = None
         # The app of the last action's focused window (its desktop id).
         self.last_app = None
+        # Whether the call running checked its own effect (True: read back
+        # after acting; False: it looked and couldn't confirm it), and the
+        # focused window after it (after_action): the reply's _meta.
+        self.verified = None
+        self.focused_after = None
 
 
 def enabled_tools(cfg):
@@ -15043,6 +15806,16 @@ def t_browser_tab(ctx, args):
          "chars": {"type": "integer", "description": "At most this much text (default 12000)"},
          "max": {"type": "integer", "description": "At most this many elements (default 150)"}}),
     read_only=True,
+    brief=("Read a Zen tab in the page itself (any tab, background too): title, address, text and the "
+           "elements to act on, numbered [ref] role 'name' = value. `query`: only elements named so. Then "
+           "browser_act."),
+    props={
+        "tab": "A tab id (default: the one shown)",
+        "query": None,
+        "text": "With the page's text (default true)",
+        "chars": None,
+        "max": None,
+    },
 )
 def t_browser_read(ctx, args):
     r = zen(ctx, "read", tab=args.get("tab"), query=as_str(args, "query", max_len=200, required=False) or None,
@@ -15092,6 +15865,11 @@ def t_browser_read(ctx, args):
                                                "scroll"]},
          "value": {"type": "string"}, "append": {"type": "boolean"}}, ["ref", "name", "action"]),
     destructive=True,
+    brief=("Act on an element of a Zen tab from its last browser_read, in the page (no pointer or keys): "
+           "click, type (`value`; `append` adds), select, check (`value` \"false\" unchecks), submit, press (a"
+           " key), focus, scroll. Give its `ref` and `name` as read: a changed page is told, not acted on. "
+           "Password fields are refused."),
+    props={"tab": None, "name": "Its name as browser_read listed it"},
 )
 def t_browser_act(ctx, args):
     value = args.get("value")
@@ -15162,6 +15940,10 @@ def call_tool(ctx, name, args, session=None, meta=None):
 
 
 def call_tool_now(ctx, name, args, session=None, meta=None):
+    """call_tool, unmasked. meta also gets "verified": true when the tool
+    confirmed its own effect (it read the result back after acting: the
+    client needs no check), else, for a tool that acts, "observe" {tool,
+    args}: the read-only call that would show its effect."""
     t = enabled_tools(ctx.cfg).get(name)
     if not t:
         raise KeyError(name)
@@ -15171,6 +15953,71 @@ def call_tool_now(ctx, name, args, session=None, meta=None):
     if ai_policy() == 0:
         audit(ctx.client, name, args, "AI off")
         return [text("refused: the user turned AI features off (Settings > Desktop agents > AI features)")], True
+    # The guide behind a short description: nothing runs, paused or not.
+    if args.get("help") is True:
+        return [text(guide_text(name))], False
+    ctx.verified = ctx.focused_after = None
+    content, failed = call_tool_run(ctx, t, name, args, session, meta)
+    if meta is not None and not failed and not t["read_only"]:
+        if ctx.verified is True or (name in SELF_VERIFIED and ctx.verified is None):
+            meta["verified"] = True
+        else:
+            hint = observe_hint(ctx, name, args)
+            if hint:
+                meta["observe"] = hint
+    return content, failed
+
+
+# Tools whose effect is a local write done before they answer (the memory,
+# a file, a list kept here): no error means it is done.
+SELF_VERIFIED = {
+    "remember", "forget", "remind", "watch", "routine", "habits", "remember_about_user", "forget_about_user",
+    "save_layout", "standing_order", "background_task", "notify", "clipboard_set", "set_aside",
+    "report_problem", "request_feature", "start_improvement", "delete_conversations",
+    "clear_notification_history", "snooze_notification",
+}
+
+
+def observe_hint(ctx, name, args):
+    """The read-only call that shows what an acting tool did: {tool, args},
+    or None (only when that tool is on offer)."""
+    on = enabled_tools(ctx.cfg)
+    wid = (ctx.focused_after or {}).get("id")
+    hint = None
+    keys = args.get("keys") if isinstance(args.get("keys"), list) else [args.get("keys")]
+    if name == "press_keys" and keys and all(isinstance(k, str) and k in MEDIA_PLAYER_KEYS | MEDIA_VOLUME_KEYS
+                                             for k in keys):
+        # Media keys: nothing on screen to look at (the player's state is
+        # read back when it can be).
+        return None
+    if name in ("type_text", "press_keys", "click", "drag", "scroll", "move_pointer", "run_steps", "run_recipe",
+                "clipboard_set"):
+        hint = ("screenshot", {"window_id": wid} if wid is not None else {})
+    elif name == "ui_act":
+        w = args.get("window_id") if isinstance(args.get("window_id"), int) else wid
+        hint = ("ui_read", {"window_id": w} if w is not None else {})
+    elif name in BROWSER_ACTS:
+        tab = args.get("tab") if isinstance(args.get("tab"), int) else None
+        hint = ("browser_read", {"tab": tab, "text": False} if tab is not None else {"text": False})
+    elif name in ("launch_app", "close_window", "focus_window", "window_action", "move_window_to_workspace",
+                  "restore_layout"):
+        hint = ("list_windows", {})
+    elif name == "focus_workspace":
+        hint = ("list_workspaces", {})
+    elif name == "set_theme":
+        hint = ("list_themes", {})
+    elif name in ("dismiss_notifications", "notification_action"):
+        hint = ("notifications", {"on_screen": True})
+    elif name in ("set_wallpaper", "screen_capture", "shell_ipc", "conversation"):
+        hint = ("screenshot", {})
+    # Only a read-only tool on offer here (calendar, tasks, widget… read
+    # their own effect back: verified when it showed).
+    if not hint or hint[0] not in on or not on[hint[0]]["read_only"]:
+        return None
+    return {"tool": hint[0], "args": hint[1]}
+
+
+def call_tool_run(ctx, t, name, args, session=None, meta=None):
     if t["group"] == "personal":
         return call_personal(ctx, t, name, args)
     if name not in PAUSE_FREE:
@@ -15261,7 +16108,7 @@ def call_tool_now(ctx, name, args, session=None, meta=None):
 
 
 # Tools that don't touch the desktop: they answer while it is paused.
-PAUSE_FREE = ("get_status", "system_info")
+PAUSE_FREE = ("get_status", "system_info", "machine_help", "tool_help")
 
 
 def call_personal(ctx, t, name, args):
@@ -15296,6 +16143,7 @@ def after_action_now(ctx, args, shot, extra):
             extra.append(text(f"(the screen was still changing after {SETTLE_MAX_MS / 1000:g} s)"))
     try:
         w = focused_window()
+        ctx.focused_after = w
         extra.append(text(f"Focused: {w.get('app_id')} — {w.get('title')!r} (id {w.get('id')})" if w else "Focused: no window"))
         app_id = (w or {}).get("app_id") or ""
         ctx.last_app = (desktop_for_app(app_id, applications()) or app_id) if app_id else None
@@ -15355,7 +16203,9 @@ INSTRUCTIONS = (
     "forget notes that turned out wrong or slow. \"Remind me when…\": remind. "
     "\"From now on, when…\" or \"every evening…\": standing_order (the user "
     "turns it on). Long multi-step work the user asks for or agrees to "
-    "(finding, comparing, preparing): background_task."
+    "(finding, comparing, preparing): background_task. How this machine is set "
+    "up (its how-tos, key bindings, packages, modules): machine_help. A tool's "
+    "full guide: call it with help: true, or tool_help."
 )
 
 
@@ -15549,11 +16399,20 @@ class Session:
                     content = [text(mask_text(note) if privacy_on() else note)] + content
             result = {"content": content, "isError": is_error}
             # A reversible call says how to take it back (the agent passes it
-            # to the journal: the user's Undo).
-            if meta.get("undo") and not is_error:
-                result["_meta"] = {"undo": meta["undo"]}
+            # to the journal: the user's Undo); one that checked its effect
+            # says so (verified), else how to look (observe).
+            extra = result_meta(meta, is_error)
+            if extra:
+                result["_meta"] = extra
             return result
         raise RpcError(-32601, f"method not found: {method}")
+
+
+def result_meta(meta, is_error):
+    """A tool result's _meta: {undo, verified, observe}, what it has."""
+    if not meta or is_error:
+        return {}
+    return {k: meta[k] for k in ("undo", "verified", "observe") if meta.get(k)}
 
 
 class RpcError(Exception):
@@ -16591,6 +17450,10 @@ def order_command(cfg, argv):
     "with questions, ask the user and call again with the details in the "
     "words. Only when the user asks for one.",
     obj({"text": {"type": "string", "description": "The user's words"}}, ["text"]),
+    brief=("Something the user wants done from now on, on its own (\"from now on, when I join a meeting, mute"
+           " the music\", \"every evening at 6 give me a digest of my Slack mentions\"): their words in `text` "
+           "become a routine they turn on (it stays off until they do). Returns {id, summary, questions}: "
+           "ask the questions, then call again with the answers in the words."),
 )
 def t_standing_order(ctx, args):
     out = order_add(ctx.cfg, as_str(args, "text", max_len=ORDER_TEXT_MAX), ctx.client)
@@ -16758,6 +17621,9 @@ def tasks_refused():
     "asks them there when it needs an approval or a detail. Give the whole "
     "task in `text`, with what you know of it. Returns its id.",
     obj({"text": {"type": "string", "description": "The task, in full"}}, ["text"]),
+    brief=("Run a long multi-step task in the background when the user asks or agrees (finding, comparing, "
+           "preparing…); not for quick actions. They follow it in Tasks, where it asks for approvals. The "
+           "whole task in `text`. Returns its id."),
 )
 def t_background_task(ctx, args):
     why = tasks_refused()
@@ -17662,7 +18528,7 @@ def main(argv):
         # --json: the whole result, images included (for clients calling the
         # tools without MCP that can see them: nixbook-quick-ai's agent).
         as_json = "--json" in argv
-        # --meta: {content, isError, _meta: {undo}} (a client journaling
+        # --meta: {content, isError, _meta: {undo, verified, observe}} (a client journaling
         # what it did without MCP).
         with_meta = "--meta" in argv
         argv = [a for a in argv if a not in ("--json", "--meta")]
@@ -17684,8 +18550,8 @@ def main(argv):
             print(f"unknown or disabled tool: {argv[1]}", file=sys.stderr)
             return 2
         if with_meta:
-            print(json.dumps({"content": content, "isError": is_error,
-                              **({"_meta": {"undo": meta["undo"]}} if meta.get("undo") and not is_error else {})},
+            extra = result_meta(meta, is_error)
+            print(json.dumps({"content": content, "isError": is_error, **({"_meta": extra} if extra else {})},
                              ensure_ascii=False))
         elif as_json:
             print(json.dumps(content, ensure_ascii=False))

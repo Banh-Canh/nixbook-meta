@@ -155,11 +155,44 @@ lib.runTests {
         decisions = "big";
         decisionsEffort = "low";
         quick = "small";
+        resolve = "small";
+        verify = "small";
+        effortMinimal = true;
       }
       true
       true
       true
       30
+    ];
+  };
+  # Speed: the checks on the small model at minimal effort, the agent kept
+  # warm an hour, the desktop server's core tools up front.
+  testSpeedSettings = {
+    expr = shellLib.pinnedSettings (evalSettings {
+      ai.routing.resolve = "main";
+      ai.routing.verify = "small";
+      ai.routing.effortMinimal = false;
+      ai.agent.keepWarmMinutes = 30;
+      ai.agent.coreTools = false;
+    });
+    expected = {
+      ai.routing.resolve = "main";
+      ai.routing.verify = "small";
+      ai.routing.effortMinimal = false;
+      ai.agent.keepWarmMinutes = 30;
+      ai.agent.coreTools = false;
+    };
+  };
+  testSpeedDefaults = {
+    expr = with shellLib.builtinDefaults.ai; [
+      agent.keepWarmMinutes
+      agent.coreTools
+      routing.effortMinimal
+    ];
+    expected = [
+      60
+      true
+      true
     ];
   };
   # Autonomy and reactivity (standing orders, trust ladder, journal,
