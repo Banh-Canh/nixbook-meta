@@ -781,11 +781,11 @@ Scope {
                                 MaterialSymbol {
                                     visible: Voice.available
                                     Layout.alignment: Qt.AlignVCenter
-                                    text: Voice.listening ? "mic" : Voice.transcribing ? "graphic_eq" : "mic_none"
+                                    text: Voice.speaking ? "volume_up" : Voice.listening ? "mic" : Voice.transcribing ? "graphic_eq" : "mic_none"
                                     fill: Voice.listening ? 1 : 0
                                     iconSize: Appearance.font.pixelSize.larger
                                     color: Voice.listening ? Appearance.m3colors.m3error : root.fg
-                                    opacity: Voice.listening || Voice.transcribing || micMouse.containsMouse ? 1 : 0.6
+                                    opacity: Voice.listening || Voice.transcribing || Voice.speaking || micMouse.containsMouse ? 1 : 0.6
                                     scale: Voice.listening ? 1 + 0.25 * Voice.level : 1
                                     Behavior on scale { NumberAnimation { duration: 80 } }
                                     MouseArea {
@@ -797,7 +797,7 @@ Scope {
                                         onClicked: Voice.toggle()
                                     }
                                     StyledToolTip {
-                                        text: Translation.tr("Talk (Mod+T)")
+                                        text: Voice.speaking ? Translation.tr("Stop it and talk (Mod+T)") : Translation.tr("Talk (Mod+T)")
                                         extraVisibleCondition: micMouse.containsMouse
                                     }
                                 }
@@ -834,6 +834,9 @@ Scope {
                                             root.send()
                                         } else if (event.key === Qt.Key_V && event.modifiers === Qt.ControlModifier && attacher.paste(input)) {
                                             event.accepted = true
+                                        } else if (event.key === Qt.Key_Escape && Voice.speaking && !Voice.listening) {
+                                            event.accepted = true
+                                            Voice.stopSpeaking()
                                         } else if (event.key === Qt.Key_Escape && (Voice.listening || Voice.transcribing)) {
                                             event.accepted = true
                                             Voice.cancel()

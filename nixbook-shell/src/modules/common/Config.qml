@@ -256,6 +256,12 @@ Singleton {
                     // A conversation: the microphone opens again after each answer
                     // until "that's all", Escape or a silence.
                     property bool conversation: true
+                    // The answers read out, by Meta's MMS-TTS on this computer
+                    // (English or French): "voice" (the answers to what was
+                    // said, and Full AI mode), "always", "never". The style:
+                    // "cute" or "natural" (MMS's own voice).
+                    property string speak: "voice"
+                    property string style: "cute"
                 }
                 // Claude through Claude Code (`claude -p`, the user's own
                 // Claude login): the "Claude" model, with the desktop tools
