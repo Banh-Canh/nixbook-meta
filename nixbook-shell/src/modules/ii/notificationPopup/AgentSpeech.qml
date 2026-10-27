@@ -137,17 +137,22 @@ Scope {
     PanelWindow {
         id: window
         visible: ((root.item !== null && !Initiative.quiet) || Initiative.stacked.length > 0) && !GlobalStates.screenLocked
+            && !window.remapping
         screen: Quickshell.screens.find(s => s.name === WM.focusedMonitor?.name) ?? null
 
         WlrLayershell.namespace: "quickshell:agentSpeech"
         WlrLayershell.layer: WlrLayer.Overlay
-        // The keys when called up with them (Mod+C), until put
-        // away (Escape, close, expand) or an agent starts acting (its keys
-        // and clicks go to the apps then, the field only once clicked into);
-        // else only once clicked into, never taken from the app.
+        // The keys like any window's: on demand, so a click elsewhere takes
+        // them back (niri). Called up with them (Mod+C, `grab`): niri gives
+        // a newly mapped on-demand surface the keyboard, so one already shown
+        // is mapped again for a frame (`remapping`). Else only once clicked
+        // into (on demand while hovered), never taken from the app by a word
+        // that shows up; none while an agent acts (its keys go to the apps).
         property bool grab: false
+        property bool remapping: false
+        property bool hadKeys: false
         WlrLayershell.keyboardFocus: MakeWay.active ? WlrKeyboardFocus.None
-            : window.grab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+            : window.grab || hover.hovered || window.hadKeys ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         // Only the card takes clicks; none while an agent works underneath.
         mask: MakeWay.active ? noInput : cardRegion
         Region {
@@ -167,8 +172,9 @@ Scope {
         }
         implicitWidth: 404
         implicitHeight: stackColumn.y + stackColumn.implicitHeight + 24
-        onVisibleChanged: if (!visible) {
+        onVisibleChanged: if (!visible && !window.remapping) {
             window.grab = false
+            window.hadKeys = false
             input.focus = false
             input.text = ""
         }
@@ -181,6 +187,11 @@ Scope {
             target: Initiative
             function onFocusWanted() {
                 window.grab = true
+                // Already shown without the keys: mapped again to get them.
+                if (window.visible && !input.activeFocus) {
+                    window.remapping = true
+                    remap.restart()
+                }
                 focusLater.restart()
             }
         }
@@ -191,6 +202,14 @@ Scope {
             function onPartialChanged() { if (Voice.partial.length > 0) input.text = Voice.partial }
             function onDelivered() { input.text = "" }
             function onListeningChanged() { if (Voice.listening) input.text = "" }
+        }
+        Timer {
+            id: remap
+            interval: 30
+            onTriggered: {
+                window.remapping = false
+                focusLater.restart()
+            }
         }
         Timer {
             id: focusLater
@@ -821,6 +840,13 @@ Scope {
                                         : Translation.tr("Answer Claude…")
                                     onActiveFocusChanged: {
                                         Initiative.typing = activeFocus || text.length > 0
+                                        // The keys gone elsewhere (a click on another
+                                        // window): no more asking for them.
+                                        if (activeFocus) window.hadKeys = true
+                                        else if (window.hadKeys && !window.remapping) {
+                                            window.hadKeys = false
+                                            window.grab = false
+                                        }
                                         if (activeFocus) {
                                             Initiative.markRead()
                                             Initiative.prepare()

@@ -17,6 +17,10 @@
 #   a 1 ms infinite CSS animation on a hidden element as a timer clock: a
 #   style recalc on every frame, ~45% CPU on the page's main thread. It skips
 #   itself without WebGL, which is why the AppImage never paid for it.
+# - Chromium's autoplay policy off (--autoplay-policy=no-user-gesture-
+#   required): after a start, until the page had a real click, it refused to
+#   play from script, so MPRIS, the API Server (youtube-music-mcp) and the
+#   desktop agents could load a song but never start it.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -29,7 +33,7 @@ let
         && ${lib.getExe pkgs.jq} '.plugins["performance-improvement"] = {enabled: false}' "$cfg" >"$tmp" \
         && mv "$tmp" "$cfg" || rm -f "$tmp"
     fi
-    exec ${lib.getExe app} "$@"
+    exec ${lib.getExe app} --autoplay-policy=no-user-gesture-required "$@"
   '';
   desktopEntry =
     extra:
