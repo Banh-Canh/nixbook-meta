@@ -43,6 +43,14 @@ What you say or type in the bubble is an order or a question:
    event): **Allow** or **No** under the answer. Settings > Desktop agents >
    Talk to your desktop > _Ask me before_ also offers _Every action_ and _Never_.
 
+**It has the whole brain**: every desktop tool you have enabled (the same as
+Claude's in the side panel, screenshots included: it sees them), your desktop
+memory and what agents remember about you, what this machine is (from its Nix
+configuration: modules, shell, shortcuts) and what you just did (when _Recent
+context_ is on). For what needs more (the web, your files, your mail or calendar
+accounts, other MCP servers), it hands the task over to Claude Code in the same
+conversation, which answers there.
+
 It follows desktop control's own rules: `Mod+Shift+Escape` pauses it (the bubble
 then offers **Allow desktop control and retry**), it never types into terminals
 or password managers, and every step goes to the audit log. While it acts, the

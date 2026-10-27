@@ -14663,6 +14663,10 @@ def main(argv):
         print(json.dumps([t["spec"] for t in enabled_tools(cfg).values()], indent=1))
         return 0
     if cmd == "call":
+        # --json: the whole result, images included (for clients calling the
+        # tools without MCP that can see them: nixbook-quick-ai's agent).
+        as_json = "--json" in argv
+        argv = [a for a in argv if a != "--json"]
         if len(argv) < 2:
             print(USAGE, end="", file=sys.stderr)
             return 2
@@ -14679,7 +14683,10 @@ def main(argv):
         except KeyError:
             print(f"unknown or disabled tool: {argv[1]}", file=sys.stderr)
             return 2
-        print("\n".join(c["text"] for c in content if c.get("type") == "text"))
+        if as_json:
+            print(json.dumps(content, ensure_ascii=False))
+        else:
+            print("\n".join(c["text"] for c in content if c.get("type") == "text"))
         return 1 if is_error else 0
     if cmd == "toggle":
         cmd = "resume" if is_paused() else "pause"

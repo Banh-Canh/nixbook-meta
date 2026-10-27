@@ -97,6 +97,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"content": [{"type": "text", "text": answer}], "stop_reason": "end_turn"})
             call = ({"name": "close_window", "input": {"id": 7}} if "CLOSE" in text
                     else {"name": "tasks", "input": {"action": "list"}} if "TASKS" in text
+                    else {"name": "screenshot", "input": {}} if "LOOKSCREEN" in text
+                    else {"name": "ask_claude", "input": {"task": "search the web for the news"}} if "DELEGATE" in text
                     else {"name": "launch_app", "input": {"app": "firefox"}})
             return self.send(200, {"content": [{"type": "tool_use", "id": "call_1", **call}], "stop_reason": "tool_use"})
         if '"replies"' in text:

@@ -313,15 +313,10 @@ def call_claude(req, system, prompt):
 # groups, no terminals or password managers, the audit log); the card asks
 # before a step that destroys something (a window closed, an event
 # deleted), or before every acting step with confirm "actions".
-AGENT_TOOLS = [
-    "list_windows", "list_workspaces", "system_info", "list_apps", "launch_app", "focus_window", "close_window",
-    "focus_workspace", "move_window_to_workspace", "window_action", "save_layout", "list_layouts", "restore_layout",
-    "read_screen", "clipboard_get", "clipboard_set", "notifications", "dismiss_notifications", "notification_action",
-    "snooze_notification", "do_not_disturb", "clear_notification_history", "type_text", "press_keys", "run_steps",
-    "shell_ipc", "shell_ipc_list", "list_themes", "set_theme", "set_wallpaper", "widget", "equalizer", "calendar",
-    "tasks", "contacts", "notify", "ui_read", "ui_act", "remind", "recall", "remember", "routine",
-    "recall_about_user", "remember_about_user", "screen_capture", "conversation", "delete_conversations",
-]
+# Every desktop tool the user has enabled (desktop-mcp's tool groups): the
+# agent has the same hands and eyes as Claude in the side panel. None left
+# out but the agent desktop's switch (Full AI works on the user's desktop).
+AGENT_SKIP = {"desktop"}
 AGENT_SYSTEM = (
     "You run the user's desktop for them (nixbook: NixOS, the niri scrolling compositor, its own shell). They "
     "talk to you instead of clicking, so you must be at least as fast as doing it by hand: act at once with the "
@@ -351,7 +346,7 @@ def agent_tools():
         raise RuntimeError("the desktop tools (nixbook-desktop-mcp) aren't available")
     specs, meta = [], {}
     for t in json.loads(out):
-        if t.get("name") not in AGENT_TOOLS:
+        if t.get("name") in AGENT_SKIP:
             continue
         schema = dict(t.get("inputSchema") or {"type": "object", "properties": {}})
         # desktop-mcp's after-action extras: not for this loop.
@@ -392,16 +387,34 @@ def needs_ok(req, name, args, meta):
 
 
 def run_tool(name, args):
+    """A desktop tool: (its text, failed, the tool_result content: text and
+    images, so the model sees a screenshot)."""
     exe = shutil.which("nixbook-desktop-mcp")
     env = {**os.environ, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}
     for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
         env.pop(k, None)
     try:
-        p = subprocess.run([exe, "call", name, json.dumps(args)], capture_output=True, text=True, timeout=120, env=env)
+        p = subprocess.run([exe, "call", name, json.dumps(args), "--json"], capture_output=True, text=True,
+                           timeout=120, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return f"error: {e}", True
-    out = (p.stdout or "").strip() or (p.stderr or "").strip() or ("done" if p.returncode == 0 else "failed")
-    return out[:6000], p.returncode != 0
+        return f"error: {e}", True, f"error: {e}"
+    failed = p.returncode != 0
+    try:
+        items = json.loads(p.stdout)
+        if not isinstance(items, list):
+            raise ValueError
+    except ValueError:
+        out = (p.stdout or "").strip() or (p.stderr or "").strip() or ("done" if not failed else "failed")
+        return out[:6000], failed, out[:6000]
+    texts, blocks = [], []
+    for c in items:
+        if c.get("type") == "text":
+            texts.append(str(c.get("text", "")))
+        elif c.get("type") == "image" and c.get("data"):
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": c.get("mimeType") or "image/png",
+                                                        "data": c["data"]}})
+    out = "\n".join(texts).strip()[:6000] or ("done" if not failed else "failed")
+    return out, failed, ([{"type": "text", "text": out}] + blocks[:2]) if blocks else out
 
 
 def step_summary(name, args):
@@ -497,6 +510,37 @@ def tool_instructions(req):
     return (out or "").strip()[:8000]
 
 
+ASK_CLAUDE = {
+    "name": "ask_claude",
+    "description": "Hand the task over to Claude, the user's full assistant, when it needs what you don't have: "
+                   "searching the web, reading or writing the user's files, their mail or calendar accounts "
+                   "(connectors), other MCP servers, long work. The conversation goes on there (it sees what was "
+                   "said). Give the complete task with everything you already know; don't use it for what your "
+                   "own tools do.",
+    "input_schema": {"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"]},
+}
+
+
+def machine_context():
+    """The shell's own reference about this machine (system-context.md, made
+    by the Home Manager module): the parts that help acting on it (the
+    machine, the shell, how things are done), not the package lists."""
+    path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                        "nixbook-shell", "system-context.md")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    keep, out = False, []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            keep = any(w in line for w in ("This machine", "Desktop shell", "How things are done", "Keyboard shortcuts (niri"))
+        if keep:
+            out.append(line)
+    return ("About this machine:\n" + "\n".join(out))[:14000] if out else ""
+
+
 def agent(req, system, messages):
     """The model with the desktop tools, up to AGENT_STEPS rounds. Each
     call is a "step" event; one needing the user's OK an "approve" event,
@@ -505,6 +549,16 @@ def agent(req, system, messages):
     told = tool_instructions(req)
     if told:
         system = f"{system}\n\nThe desktop tools' own instructions (from their server):\n{mask(told)}"
+    machine = machine_context()
+    if machine:
+        system = f"{system}\n\n{mask(machine)}"
+    if req.get("activity"):
+        system = f"{system}\n\nWhat the user did just before (most recent last):\n{mask(str(req['activity'])[-3000:])}"
+    # Claude Code, the whole assistant (web, files, the user's mail and
+    # calendar connectors, other MCP servers): the task handed over, the
+    # conversation going on there.
+    if req.get("claude") and req.get("delegate", True):
+        specs = specs + [ASK_CLAUDE]
     model = model_for(req)
     said = []
     for _ in range(AGENT_STEPS):
@@ -516,6 +570,12 @@ def agent(req, system, messages):
             emit("note", text=unmask(" ".join(texts)))
         if not calls:
             said = texts
+            break
+        handoff = next((c for c in calls if c.get("name") == "ask_claude"), None)
+        if handoff:
+            task = str((handoff.get("input") or {}).get("task") or "").strip()
+            emit("delegate", task=unmask(task))
+            said = [" ".join(texts) or "Asking Claude…"]
             break
         messages.append({"role": "assistant", "content": content})
         results = []
@@ -532,14 +592,14 @@ def agent(req, system, messages):
                                     "content": "the user said no: don't do it, don't retry it another way"})
                     continue
             emit("step", id=c["id"], tool=name, summary=shown, status="run")
-            out, failed = run_tool(name, args)
+            out, failed, result = run_tool(name, args)
             emit("step", id=c["id"], tool=name, summary=shown, status="error" if failed else "ok",
                  result=unmask(out[:300]))
             note_step(c["id"], name, shown, "error" if failed else "ok", unmask(out[:300]),
                       reads_only(name, args, meta))
             if failed and "desktop control is paused" in out:
                 emit("paused")
-            results.append({"type": "tool_result", "tool_use_id": c["id"], "content": out, "is_error": failed})
+            results.append({"type": "tool_result", "tool_use_id": c["id"], "content": result, "is_error": failed})
         messages.append({"role": "user", "content": results})
     else:
         # Out of steps: an answer all the same, from what it has, no more tools.
