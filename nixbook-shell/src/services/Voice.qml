@@ -209,9 +209,10 @@ Singleton {
             root.speaking = false;
             const again = speaker.reopen;
             speaker.reopen = false;
-            // Said: the user's turn (a conversation, Full AI mode); a
+            // Said: the user's turn (a conversation, Full AI mode — also
+            // when Mod+T cut it short: the mic it had closed opens again); a
             // conversation out of sight and over: put away.
-            if (speaker.wanted && (root.session || again || FullAi.active)) relisten.restart();
+            if (FullAi.active || (speaker.wanted && (root.session || again))) relisten.restart();
             else if (Initiative.quiet && !FullAi.active && !Initiative.thinking) Initiative.hush("wait");
         }
     }
@@ -266,8 +267,13 @@ Singleton {
             stream.running = true;
             return;
         }
+        // It is talking (Full AI mode's greeting, an answer): the mic opens
+        // once it is done (the speaker calls relisten), so it doesn't take
+        // the room's noise, or a word, from its voice.
+        if (root.speaking && FullAi.active) return;
         rec.frames = 0;
         rec.floor = -50;
+        rec.first = [];
         rec.loud = 0;
         rec.quiet = 0;
         rec.wanted = true;
@@ -392,9 +398,17 @@ Singleton {
         property string file: ""
         property bool wanted: true
         // Silence detection against the room's own noise (the floor):
-        // speech is 10 dB above it, silence under 5 dB above.
+        // speech is 15 dB above it for 150 ms, then anything under half way
+        // up to the speaker's level is the pause. The floor is the noise's
+        // median, not its quietest frame: behind the echo canceller's noise
+        // suppression a room swings 15–20 dB (totoro: -71 to -44 dB), and
+        // against its minimum ordinary noise never counted as silence (the
+        // turn ran to maxSeconds) while its bumps counted as speech.
         property int frames: 0
         property real floor: -50
+        property var first: []
+        // The user's speaking level (dB), learnt while they speak.
+        property real peak: -30
         property int loud: 0
         property real quiet: 0
         // The recorder never outlives the shell (an orphan would go on
@@ -417,21 +431,34 @@ Singleton {
                 const db = m[1] === "-inf" ? -90 : parseFloat(m[1]);
                 rec.frames++;
                 // The meter: above the room's noise (0 when quiet).
-                root.level = rec.frames <= 10 ? 0 : Math.max(0, Math.min(1, (db - rec.floor - 2) / 28));
+                root.level = rec.frames <= 10 ? 0 : Math.max(0, Math.min(1, (db - rec.floor - 6) / 28));
                 // The first 200 ms are the device starting (silence, a
-                // click); the quietest of the next 300 ms is the floor, and
-                // it only goes down after (speech never raises it).
+                // click); the median of the next 300 ms is the floor.
                 if (rec.frames <= 4) return;
                 if (rec.frames <= 10) {
-                    rec.floor = rec.frames === 5 ? db : Math.min(rec.floor, db);
+                    rec.first = rec.first.concat([db]);
+                    if (rec.frames === 10) rec.floor = rec.first.slice().sort((a, b) => a - b)[3];
                     return;
                 }
-                if (db > -85) rec.floor = Math.min(rec.floor, db);
-                if (db > rec.floor + 10) {
+                // Once the user has spoken, still speaking means close to
+                // their own level (half way from the noise up to it), so a
+                // click or a key well under the voice doesn't hold the turn
+                // open; everything under that counts as the pause.
+                const talk = rec.floor + Math.max(15, root.heard ? (rec.peak - rec.floor) / 2 : 15);
+                const isLoud = db > talk;
+                // It follows the noise's median (0.2 dB a frame towards each
+                // one), never speech: a fan starting, a quiet room after a
+                // noisy start.
+                if (db > -85 && db <= rec.floor + 15) rec.floor += db > rec.floor ? 0.2 : -0.2;
+                if (isLoud) {
                     rec.loud++;
-                    rec.quiet = 0;
-                    if (rec.loud >= 2) root.heard = true;
-                } else if (db < rec.floor + 5) {
+                    if (rec.loud >= 3 && !root.heard) {
+                        root.heard = true;
+                        rec.peak = db;
+                    }
+                    if (root.heard) rec.peak += (db - rec.peak) * 0.1;
+                    if (rec.loud >= 2) rec.quiet = 0;
+                } else {
                     rec.loud = 0;
                     if (root.heard) {
                         rec.quiet += 0.05;
@@ -567,10 +594,13 @@ Singleton {
             const text = transcript.text.trim();
             if (code !== 0) {
                 root.error = Translation.tr("Transcription failed: %1").arg(transcriptErr.text.trim().split("\n").pop() || code);
+                // Full AI mode listens on.
+                if (FullAi.active) relisten.restart();
                 return;
             }
             if (text.length === 0) {
-                root.error = Translation.tr("I didn't catch that");
+                if (FullAi.active) relisten.restart();
+                else root.error = Translation.tr("I didn't catch that");
                 return;
             }
             root.deliver(text);

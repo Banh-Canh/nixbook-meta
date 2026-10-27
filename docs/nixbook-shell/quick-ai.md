@@ -223,7 +223,10 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
   moment you stop. Your computer only records. Your interface language and
   English are hinted to it (`ai.voice.language`, e.g. `"fr,en"`).
 - **This computer**: whisper.cpp (the `small` model, or `base`), nothing leaves
-  the computer; it stops after a short silence. It needs a reasonable GPU or
+  the computer; it stops after a short silence (`ai.voice.pauseSeconds`,
+  measured against the room's usual noise, so typing or a fan doesn't keep it
+  open). Only the parts Silero VAD finds to be speech are transcribed, so noise
+  alone gives nothing instead of made-up words. It needs a reasonable GPU or
   CPU (about a second for a short sentence on a Radeon 680M).
 - **Auto** (the default): Meta when it is the model provider, otherwise this
   computer.

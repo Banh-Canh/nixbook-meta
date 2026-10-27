@@ -94,6 +94,16 @@ let
         hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
       };
     }
+    # Silero VAD (~0.9 MB): only the parts that are speech go to whisper,
+    # which otherwise makes words up from a room's noise ("That's Jason
+    # Bourne.").
+    {
+      name = "ggml-silero-vad.bin";
+      path = pkgs.fetchurl {
+        url = "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin";
+        hash = "sha256-KZQNmNQrkfvQXOSJ8+z3xy8KQvAn5IdZGaKPtMBOos8=";
+      };
+    }
   ];
   # Quick AI's voice through Meta (scripts/voice-stream.py): the microphone
   # streamed to Muse Voice Transcribe (ai.voice.engine meta/auto), run

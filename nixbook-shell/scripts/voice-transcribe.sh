@@ -19,9 +19,14 @@ model=${3:-small}
 m="$NIXBOOK_WHISPER_MODELS/ggml-$model.bin"
 [ -e "$m" ] || m="$NIXBOOK_WHISPER_MODELS/ggml-small.bin"
 
+# Silero VAD: only speech is transcribed (noise alone gives nothing, where
+# whisper would make words up); without its model, the whole file.
+vad=()
+[ -e "$NIXBOOK_WHISPER_MODELS/ggml-silero-vad.bin" ] && vad=(--vad -vm "$NIXBOOK_WHISPER_MODELS/ggml-silero-vad.bin")
+
 # -nt: no timestamps, -np: only the text. Whisper's markers for what isn't
 # speech ([BLANK_AUDIO], (music), *sighs*) dropped; lines joined.
-whisper-cli -m "$m" -f "$wav" -l "$lang" -nt -np 2>/dev/null |
+whisper-cli -m "$m" -f "$wav" -l "$lang" -nt -np "${vad[@]}" 2>/dev/null |
   sed -E 's/\[[^]]*\]//g; s/\([^)]*\)//g; s/\*[^*]*\*//g' |
   tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
 echo
