@@ -220,6 +220,8 @@ touch "$tmp/voices/en/model.onnx" "$tmp/voices/fr/model.onnx"
 cat >"$tmp/sbin/sherpa-onnx-offline-tts" <<EOF
 #!/usr/bin/env bash
 for a; do case "\$a" in --vits-model=*) m="\${a#*=}" ;; --output-filename=*) o="\${a#*=}" ;; esac; done
+case "\$1" in --*) ;; *) echo "not an option first: \$1" >&2; exit 255 ;; esac
+case "\${@: -1}" in -*) echo "unknown option \${@: -1}" >&2; exit 255 ;; *FAIL*) echo "it broke" >&2; exit 3 ;; esac
 echo "tts \$(basename "\$(dirname "\$m")") \${@: -1}" >>"$tmp/speak.log"; echo raw >"\$o"
 EOF
 cat >"$tmp/sbin/ffmpeg" <<EOF
@@ -236,7 +238,8 @@ echo "play \$(basename "\${@: -1}")" >>"$tmp/speak.log"
 EOF
 chmod +x "$tmp/sbin/"*
 sp() { PATH="$tmp/sbin:$PATH" NIXBOOK_MMS_VOICES="$tmp/voices" python3 -I "$speak" "$@"; }
-sp "Firefox is open on workspace three. Anything else for you?"
+# As the shell calls it (Voice.qml: --style STYLE -- TEXT).
+sp --style cute -- "Firefox is open on workspace three. Anything else for you?"
 expect_eq "speak: English voice, sentence by sentence" "tts en Firefox is open on workspace three.|tts en Anything else for you?" \
   "$(grep '^tts' "$tmp/speak.log" | paste -sd'|')"
 expect_contains_ "speak: cute = voice and timbre raised together" "$(cat "$tmp/speak.log")" "asetrate=16000*1.35"
@@ -246,6 +249,14 @@ expect_eq "speak: played in order" "play cute1.wav|play cute2.wav" "$(grep '^pla
 sp --style natural "Coucou ! Julien demande si tu viens ce soir."
 expect_eq "speak: French voice" "tts fr" "$(grep '^tts' "$tmp/speak.log" | cut -d' ' -f1-2 | sort -u)"
 expect_eq "speak: natural = no cute chain" "" "$(grep -E '^(ffmpeg|rubberband)' "$tmp/speak.log" || true)"
+: >"$tmp/speak.log"
+sp -- "-5 degrees outside."
+expect_eq "speak: a sentence never starts with a dash (an option to sherpa-onnx)" "tts en five degrees outside." "$(grep '^tts' "$tmp/speak.log")"
+expect_eq "speak: a failure said, not silent" "sherpa-onnx-offline-tts failed (3): it broke 1" \
+  "$(
+    sp -- "This will FAIL now." 2>&1 >/dev/null | tr -d '\n'
+    echo " ${PIPESTATUS[0]}"
+  )"
 : >"$tmp/speak.log"
 # shellcheck disable=SC2016 # Markdown backticks, not an expansion
 sp '🎉 ```x```'

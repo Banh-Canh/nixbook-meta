@@ -135,15 +135,18 @@ class Speaker:
     def run(self, cmd, **kw):
         if self.stopped:
             raise RuntimeError("stopped")
-        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
+        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **kw)
         self.procs.append(p)
-        rc = p.wait()
+        _, err = p.communicate()
         self.procs.remove(p)
-        if rc != 0 and not self.stopped:
-            raise RuntimeError(f"{os.path.basename(cmd[0])} failed ({rc})")
+        if p.returncode != 0 and not self.stopped:
+            last = err.decode(errors="replace").strip().splitlines()[-1:] or [""]
+            raise RuntimeError(f"{os.path.basename(cmd[0])} failed ({p.returncode}): {last[0][:300]}")
 
     def make(self, text):
         """One sentence → a WAV, made cute."""
+        # Never an option to sherpa-onnx (a sentence starting with a dash).
+        text = text.lstrip("-–— ")
         self.n += 1
         raw = os.path.join(self.tmp, f"raw{self.n}.wav")
         self.run(["sherpa-onnx-offline-tts", f"--vits-model={self.model}/model.onnx",
@@ -178,6 +181,9 @@ def main(argv):
             style = args.pop(0)
         elif a == "--file" and args:
             out_file = args.pop(0)
+        elif a == "--":
+            words += args
+            break
         else:
             words.append(a)
     raw_text = " ".join(words) if words else sys.stdin.read()
@@ -211,12 +217,15 @@ def main(argv):
         # ready when the last one ends.
         ready = queue.Queue()
 
+        failed = []
+
         def maker():
             try:
                 for s in sentences(text):
                     ready.put(sp.make(s))
-            except RuntimeError:
-                pass
+            except RuntimeError as e:
+                if not sp.stopped:
+                    failed.append(str(e))
             ready.put(None)
 
         threading.Thread(target=maker, daemon=True).start()
@@ -226,8 +235,12 @@ def main(argv):
                 break
             try:
                 sp.run(["pw-play", "--media-role=Assistant", wav])
-            except RuntimeError:
+            except RuntimeError as e:
+                failed.append(str(e))
                 break
+        if failed and not sp.stopped:
+            print(failed[0], file=sys.stderr)
+            return 1
     return 0
 
 
