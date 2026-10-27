@@ -50,6 +50,7 @@ tools) cat <<'JSON'
 JSON
 ;;
 call) echo "\$2 \$3" >>"$tmp/calls.log"
+  case "\$3" in *BROKEN* | *OTHERFIRST*) echo "error: no such app"; exit 1 ;; esac
   if [ "\$2" = screenshot ]; then echo '[{"type": "text", "text": "the screen"}, {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}]'
   else echo "done: \$2"; fi ;;
 privacy)
@@ -116,7 +117,8 @@ ask act '{"mode": "do", "question": "open firefox", "lang": "en"}'
 expect_eq "do: the step ran" '"run"
 "ok"' "$(event act step .status)"
 expect_eq "do: through desktop-mcp" 'launch_app {"app": "firefox"}' "$(head -n1 "$tmp/calls.log")"
-expect_eq "do: the answer, the report under it" '"Firefox is open.\n- ✓ launch app (app=firefox)"' "$(event act answer .text)"
+expect_eq "do: just the answer when it went well, as in a chat" '"Firefox is open."' "$(event act answer .text)"
+expect_eq "do: no report when it went well" "" "$(event act report .summary)"
 expect_eq "do: every tool but the agent desktop's switch, without desktop-mcp's extras" '["launch_app","close_window","tasks","screenshot"]
 []' "$(jq -c 'select(.body.tools) | [.body.tools[].name], [.body.tools[0].input_schema.properties | keys[] | select(. == "wait_ms")]' "$tmp/requests.log" | head -n2)"
 
@@ -132,11 +134,14 @@ expect_eq "brain: the panel's prompt, first and cached" '{"type":"ephemeral"} tr
   "$(jq -c 'select(.body.tools) | .body.system[0] | "\(.cache_control | tojson) \(.text | contains("PANELBRAIN"))"' -r "$tmp/requests.log" | head -n1)"
 expect_contains_ "brain: the memory for this task after it" "$(jq -c 'select(.body.tools) | .body.system[1].text' "$tmp/requests.log" | head -n1)" "QUERY=open firefox"
 
-# The report after acting: built from the steps when the model gives none,
-# the model's own otherwise; none for a plain answer.
-expect_eq "report: from the steps" '["launch app (app=firefox)"]' "$(event act report .done)"
-expect_eq "report: the steps counted" '1 1 0' "$(event act report ' | "\(.steps) \(.ok) \(.ko)"' | tr -d '"')"
-expect_contains_ "report: in the answer too" "$(event act answer .text)" "✓ launch app"
+# The report only when it matters: a step that failed for good (said even
+# when the model leaves it out), or something the user must do.
+ask failed '{"mode": "do", "question": "FAILSTEP open it", "lang": "en"}'
+expect_eq "report: a failed step, from the steps" '["launch app (app=BROKEN): error: no such app"]' "$(event failed report .failed)"
+expect_eq "report: the steps counted" '1 0 1' "$(event failed report ' | "\(.steps) \(.ok) \(.ko)"' | tr -d '"')"
+expect_contains_ "report: in the answer too" "$(event failed answer .text)" "✗ launch app"
+ask retried '{"mode": "do", "question": "RETRY open firefox", "lang": "en"}'
+expect_eq "report: none when a failed step was then done" "" "$(event retried report .summary)"
 ask reported '{"mode": "do", "question": "REPORTME open firefox", "lang": "en"}'
 expect_eq "report: the model's summary" '"Firefox is ready"' "$(event reported report .summary)"
 expect_eq "report: what needs the user" '["Sign in to your account"]' "$(event reported report .needsYou)"
@@ -189,7 +194,7 @@ expect_eq "apps: no schema dialect key sent" "null" "$(jq -c 'select(.body.tools
 expect_contains_ "apps: their instructions" "$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | head -n1)" "Plays songs in YouTube Music."
 expect_eq "apps: a step like any other" '"ok"' "$(event music step .status | tail -n1)"
 expect_eq "apps: shown as app: tool" '"youtube-music: play"' "$(event music step .tool | tail -n1)"
-expect_eq "apps: playing is an action (reported)" '["youtube-music: play (query=FIRESTARTER)"]' "$(event music report .done)"
+expect_eq "apps: done, just said" "" "$(event music report .summary)"
 : >"$tmp/requests.log"
 ask photos '{"mode": "do", "question": "PHOTOS find my holiday pictures", "lang": "en"}'
 expect_contains_ "apps: opened on demand, for the next steps" "$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | tail -n1)" '"immich__search_12"'
@@ -208,16 +213,20 @@ expect_eq "read actions: no report" "" "$(event reads report .summary)"
 
 # A destructive step: asked, refused, not run.
 : >"$tmp/calls.log"
-ask deny '{"mode": "do", "question": "CLOSE the window", "lang": "en"}' $'no\n'
-expect_eq "deny: asked first" '"close_window"' "$(event deny approve .tool)"
+ask deny '{"mode": "do", "question": "DELETE the task", "lang": "en"}' $'no\n'
+expect_eq "deny: a risky step asked first" '"tasks"' "$(event deny approve .tool)"
 expect_eq "deny: not run" '"denied"' "$(event deny step .status)"
 expect_eq "deny: nothing called" "" "$(cat "$tmp/calls.log")"
-expect_eq "deny: reported as failed" '["close window (id=7): you said no"]' "$(event deny report .failed)"
+expect_eq "deny: reported as failed" '["tasks (id=t1, action=delete): you said no"]' "$(event deny report .failed)"
 : >"$tmp/calls.log"
-ask allow '{"mode": "do", "question": "CLOSE the window", "lang": "en"}' $'yes\n'
-expect_eq "allow: run once allowed" 'close_window {"id": 7}' "$(cat "$tmp/calls.log")"
+ask closing '{"mode": "do", "question": "CLOSE the window", "lang": "en"}'
+expect_eq "risky only: closing a window isn't asked" "" "$(event closing approve .tool)"
+expect_eq "risky only: done at once" 'close_window {"id": 7}' "$(cat "$tmp/calls.log")"
 : >"$tmp/calls.log"
-ask never '{"mode": "do", "question": "CLOSE the window", "lang": "en", "confirm": "never"}'
+ask allow '{"mode": "do", "question": "DELETE the task", "lang": "en"}' $'yes\n'
+expect_eq "allow: run once allowed" 'tasks {"action": "delete", "id": "t1"}' "$(cat "$tmp/calls.log")"
+: >"$tmp/calls.log"
+ask never '{"mode": "do", "question": "DELETE the task", "lang": "en", "confirm": "never"}'
 expect_eq "confirm never: not asked" "" "$(event never approve .tool)"
 
 # Full AI mode's reactions: ask by default, act alone only when told or

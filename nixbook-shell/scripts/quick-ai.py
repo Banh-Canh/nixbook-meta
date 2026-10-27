@@ -320,13 +320,15 @@ AGENT_SKIP = {"desktop"}
 AGENT_SYSTEM = (
     "You run the user's desktop for them (nixbook: NixOS, the niri scrolling compositor, its own shell). They "
     "talk to you instead of clicking, so you must be at least as fast as doing it by hand: act at once with the "
-    "fewest tool calls (several independent calls in one turn), never ask \"shall I?\" (the user's bubble asks "
-    "them before anything destructive), never explain what you are about to do. When you changed anything, end "
-    "with a report for the user, exactly: <report>{{\"summary\": \"one line: the outcome\", \"done\": [\"each thing "
-    "you did, with its result, one line each (\\\"Dismissed 12 Spotify notifications\\\")\"], \"failed\": [\"what didn't "
-    "work, and why\"], \"needs_you\": [\"what only the user can do or decide now\"]}}</report>, nothing after it; "
-    "empty lists are fine, never invent results. A question with no change: just answer it in two or three "
-    "sentences, no report, with tools only if it is about their desktop or data. What the desktop already knows "
+    "fewest tool calls (several independent calls in one turn), never ask \"shall I?\" (the shell asks them itself "
+    "before the few really risky steps: deleting their data, sending messages for them), never explain what you are "
+    "about to do. Then answer as Claude would in a chat: what you did or found, in plain words, as long as the "
+    "question needs and no longer (\"Done, Firefox is on workspace 3.\"; a real answer to a real question), with "
+    "tools only when it is about their desktop or data; never invent results. Only when a task of several steps "
+    "partly failed, or something now needs the user, add after your answer a report, exactly: "
+    "<report>{{\"summary\": \"one line: the outcome\", \"done\": [\"what worked, one line each\"], \"failed\": [\"what "
+    "didn't work, and why\"], \"needs_you\": [\"what only the user can do or decide now\"]}}</report>, nothing after "
+    "it; otherwise no report. What the desktop already knows "
     "comes with the request (time, weather, battery, next events, music): answer from it directly, no tool. Never "
     "open panels, take screenshots or poke around to find information: use the tool made for it, or say you can't "
     "tell. Media and volume: shell_ipc (target mpris: playPause, next, previous; target audio or brightness when "
@@ -429,17 +431,41 @@ def reads_only(name, args, meta):
     return action in READ_ACTIONS
 
 
+# The really risky steps, the only ones asked about by default (confirm
+# "destructive"): data deleted, words sent to other people in the user's
+# name, credentials, money. Closing a window, adding an event, clicking
+# around or playing music just happen.
+RISKY_TOOL = re.compile(r"(^|_)(delete|remove|empty_trash|purge|wipe|clear|merge|resolve_duplicates|credentials|"
+                        r"send|sms|reply|connect_with|partner|uninstall|format|buy|pay|purchase|order)", re.I)
+RISKY_ACTION = re.compile(r"^(delete|remove|clear|purge|empty|reply|send)", re.I)
+# A click on such a button (ui_act/click on an element named so).
+RISKY_TARGET = re.compile(r"\b(delete|remove|send|reply|pay|buy|purchase|order|checkout|unsubscribe|empty trash|"
+                          r"erase|format|uninstall|supprimer|envoyer|payer|acheter|l(ö|oe)schen|senden|x(ó|o)a|g(ử|u)i)\b", re.I)
+HARMLESS_TOOL = re.compile(r"(queue|playlist|playback|volume|seek|repeat|shuffle)", re.I)
+
+
+def is_risky(name, args, meta):
+    tool = str(meta.get(name, {}).get("tool") or name)
+    if HARMLESS_TOOL.search(tool):
+        return False
+    if RISKY_TOOL.search(tool):
+        return True
+    action = str((args or {}).get("action") or "")
+    if RISKY_ACTION.match(action):
+        return True
+    if tool in ("ui_act", "click", "notification_action"):
+        said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
+        return bool(RISKY_TARGET.search(said))
+    return False
+
+
 def needs_ok(req, name, args, meta):
-    m = meta.get(name, {})
     confirm = str(req.get("confirm") or "destructive")
     if reads_only(name, args, meta) or confirm == "never":
         return False
     if confirm == "actions":
         return True
-    if m.get("destructive"):
-        return True
-    # Removing data through the generic tools.
-    return name in ("calendar", "tasks", "contacts") and str(args.get("action", "")).lower() in ("delete", "remove")
+    return is_risky(name, args, meta)
 
 
 def run_tool(name, args, info=None):
@@ -544,9 +570,18 @@ def build_report(text):
         return text, None
     lst = lambda k: [str(x).strip() for x in (model.get(k) or []) if str(x).strip()][:12]  # noqa: E731
     done, failed, needs = lst("done"), lst("failed"), lst("needs_you")
-    bad = [s for s in steps if s["status"] in ("error", "denied")]
+    # The steps that failed and weren't done after all (no later success of
+    # the same tool): said even when the model leaves them out. One that
+    # failed and then worked isn't the user's business.
+    bad = [s for i, s in enumerate(steps) if s["status"] in ("error", "denied")
+           and not any(t["tool"] == s["tool"] and t["status"] == "ok" for t in steps[i + 1:])]
     if bad and not failed:
         failed = [step_line(s) for s in bad][:8]
+    # It went well and nothing needs them: just the answer, as in a chat.
+    if not failed and not needs:
+        if not text:
+            text = str(model.get("summary") or "").strip() or ("\n".join(done) if done else "Done.")
+        return text, None
     if not done:
         done = [step_line(s) for s in acted if s["status"] == "ok"][:12]
     summary = str(model.get("summary") or "").strip() or (text.splitlines()[0] if text else "") or \

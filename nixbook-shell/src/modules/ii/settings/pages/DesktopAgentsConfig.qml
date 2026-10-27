@@ -237,7 +237,7 @@ ContentPage {
                 currentValue: Config.options.ai.quick.confirm
                 onSelected: newValue => { Config.options.ai.quick.confirm = newValue }
                 options: [
-                    { displayName: Translation.tr("Destructive steps"), icon: "delete", value: "destructive" },
+                    { displayName: Translation.tr("Risky steps only"), icon: "gpp_maybe", value: "destructive" },
                     { displayName: Translation.tr("Every action"), icon: "touch_app", value: "actions" },
                     { displayName: Translation.tr("Never"), icon: "bolt", value: "never" }
                 ]

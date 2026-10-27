@@ -409,7 +409,8 @@ Singleton {
         if (root.chat) root.chat.queueMemoryPass();
         // It acted: the user hears of it, the bubble put away meanwhile
         // coming back (the bar's bubble lit when they are busy).
-        if (root.report && root.chat) Initiative.chatAnswered(root.chat);
+        if ((root.report || root.steps.some(s => s.status === "ok" || s.status === "error")) && root.chat)
+            Initiative.chatAnswered(root.chat);
     }
     function stop() {
         if (proc.running) {
