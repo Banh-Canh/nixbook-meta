@@ -11,11 +11,11 @@ import QtQuick
  * Full AI mode (Mod+Shift+T, `fullAi toggle`): the AI runs the desktop and
  * the user talks to it. A cute mascot (modules/ii/fullAi) moves around the
  * screen as the MC: it shows what it hears, what it is doing and what it
- * answers. The user's keyboard and mouse are taken by
- * a transparent layer over every screen (FullAiOverlay.qml): only Escape
- * (leave), and the compositor's own shortcuts — Mod+T mutes or unmutes the
- * microphone, Mod+Shift+T leaves — still work. The agent's own clicks and
- * keys go through (MakeWay, as for the shell's other overlays).
+ * answers, over a glow at the screens' edges (FullAiOverlay.qml) that takes
+ * neither keys nor clicks: the user keeps their desktop. Mod+T mutes or
+ * unmutes the microphone, Mod+Shift+T (or Escape in the bubble) leaves.
+ * With ai.quick.bubble "needed" the bubble stays out of sight
+ * (Initiative.quiet): the mascot's balloon and its voice answer.
  * The microphone stays open the whole time, also while the agent works: a
  * new order takes over (Quick AI's agent, in Claude's speech bubble, which
  * keeps the conversation).
@@ -68,7 +68,7 @@ Singleton {
         if (!root.micOn) return Translation.tr("Mic off. Mod+T to talk to me again.");
         return Translation.tr("I'm listening. What should I do?");
     }
-    readonly property string hint: Translation.tr("Esc: leave Full AI · Mod+T: mic %1").arg(root.micOn ? Translation.tr("off") : Translation.tr("on"))
+    readonly property string hint: Translation.tr("Mod+Shift+T: leave Full AI · Mod+T: mic %1").arg(root.micOn ? Translation.tr("off") : Translation.tr("on"))
 
     // A new line in the balloon, said out loud in its cute voice (Voice.speak,
     // unless ai.voice.speak is "never": then its mouth moves a moment).
@@ -90,6 +90,8 @@ Singleton {
         root.said = "";
         root.active = true;
         Voice.session = true;
+        // Out of sight unless wanted (ai.quick.bubble): the mascot's balloon.
+        if (Voice.hideBubble) Initiative.quiet = true;
         QuickAi.askQuestion("", "voice");
         root.say(Translation.tr("I've got it from here. Tell me what to do."));
         // Listening at once (Voice.start also calls the bubble up).

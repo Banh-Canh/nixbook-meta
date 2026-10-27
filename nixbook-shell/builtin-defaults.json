@@ -29,7 +29,8 @@
       "translateTo": "",
       "launcher": true,
       "notifications": true,
-      "confirm": "destructive"
+      "confirm": "destructive",
+      "bubble": "always"
     },
     "fullAi": {
       "react": true

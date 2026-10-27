@@ -34,12 +34,17 @@ What you say or type in the bubble is an order or a question:
    time, the weather, the battery, your next events, the music playing. "Quel
    temps fait-il ?" or "what's next today?" is answered at once, without a tool,
    in the language you used.
-3. **Anything else goes to the model with the desktop tools** (the same ones as
+3. **Your apps' own tools are its too**: the MCP servers of the side panel
+   (YouTube Music, Spotify, your phone, Immich, LinkedIn…). "Play FIRESTARTER"
+   or "put some music on" starts it through YouTube Music's own API in about a
+   second, not by clicking in the app. Small apps' tools come with every
+   request; a big one's (Immich) when you name it or the agent asks for them.
+4. **Anything else goes to the model with the desktop tools** (the same ones as
    [desktop control](./desktop-agents.md): windows, workspaces, apps, layouts,
    clipboard, typing, notifications, calendar, tasks, contacts, themes,
    wallpaper, widgets, equalizer, shell actions). The bubble says which step it
    is on. When it is done, it says what changed; if it runs out of steps (10), it still answers with what it found and what it couldn't do.
-4. **It asks before anything destructive** (closing a window, deleting an
+5. **It asks before anything destructive** (closing a window, deleting an
    event): **Allow** or **No** under the answer. Settings > Desktop agents >
    Talk to your desktop > _Ask me before_ also offers _Every action_ and _Never_.
 
@@ -69,6 +74,14 @@ the side panel, the report is in the message.
 Follow-ups typed (or said) in the bubble keep the conversation; **Copy** copies
 the last answer; the stop button stops it.
 
+**Without the bubble** (Settings > Desktop agents > Talk to your desktop >
+_Show the bubble_: **Only when needed**): when you talk to it (`Mod+T`, Full AI
+mode) the bubble stays out of sight; the answer is said out loud (and shown in
+the mascot's balloon in Full AI mode). It comes up only for what needs your
+eyes: replies to pick, an error, an OK you can't give by voice. `Mod+C` shows
+it, and hides it again while you talk. With _Read the answers out_ on
+_Never_, the bubble always shows (something has to answer you).
+
 ## Full AI mode
 
 `Mod+Shift+T` (or Settings > Desktop agents > Talk to your desktop > **Full AI
@@ -78,10 +91,9 @@ is doing (it darts off when the agent starts a step), and what it answers, which
 it jumps for joy when a task is done and wobbles when
 something failed. A soft glow around the screens says the AI is in charge.
 
-- **Your keyboard and mouse are taken**: clicks and keys no longer reach your
-  apps (the agent's own still do, while it acts). **`Escape` leaves** the mode
-  (so does `Mod+Shift+T` again, or locking the screen). The compositor's own
-  shortcuts (niri's `Mod+…`) keep working: a Wayland shell can't take those.
+- **You keep your keyboard and mouse**: the mode never takes them, so you can
+  go on working while it does what you asked. **`Mod+Shift+T` again leaves**
+  (so does `Esc` in the bubble, or locking the screen).
 - **The microphone stays open**, also while the agent works: give the next order
   whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
 - **It talks**: what it says in its balloon (what it does, its questions, the
