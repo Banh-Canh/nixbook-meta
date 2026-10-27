@@ -44,9 +44,14 @@ What you say or type in the bubble is an order or a question:
    clipboard, typing, notifications, calendar, tasks, contacts, themes,
    wallpaper, widgets, equalizer, shell actions). The bubble says which step it
    is on. When it is done, it says what changed; if it runs out of steps (10), it still answers with what it found and what it couldn't do.
-5. **It asks before anything destructive** (closing a window, deleting an
-   event): **Allow** or **No** under the answer. Settings > Desktop agents >
-   Talk to your desktop > _Ask me before_ also offers _Every action_ and _Never_.
+5. **It asks only before really risky steps**: deleting your data (an event,
+   photos, conversations), speaking for you to other people (an SMS, a
+   message, a reply), credentials, paying, a click on a button such as
+   "Delete" or "Send". **Allow** or **No** under the answer (or say yes / no).
+   Closing a window, adding an event, ticking a task, clicking around or
+   playing music just happen. Settings > Desktop agents > Talk to your desktop
+   > _Ask me before_: _Risky steps only_ (the default), _Every action_ or
+   > _Never_.
 
 **It has the same brain as Claude in the side panel**, and so does Full AI
 mode:
@@ -74,13 +79,15 @@ or password managers, and every step goes to the audit log. While it acts, the
 bubble lets clicks and keys through to the apps and hides from the agent's
 screenshots.
 
-**When it has changed something, it reports**, as a brief under its answer (in
-the style of a Kiroshi scan): a one-line outcome, then **DONE** (what it did,
+**It answers like Claude in the side panel**: what it did or found, in plain
+words ("Done, Firefox is on workspace 3."). **Only when part of a task failed
+for good, or something needs you, it adds a report** under its answer (in the
+style of a Kiroshi scan): a one-line outcome, then **DONE** (what it did,
 with each result), **FAILED** (what didn't work, and why) and **NEEDS YOU** (what
 only you can do or decide), and how many steps really ran (`7 steps · 6 ✓ · 1 ✗`,
 counted from the tool calls, not from what the model says; a failed step it
-leaves out is added). If you put the bubble away while it worked, it comes back
-with the report (or the bar's bubble lights up while you are busy). Expanded to
+leaves out is added; one that failed and was then done another way isn't). If
+you put the bubble away while it worked, it comes back with the answer (or the bar's bubble lights up while you are busy). Expanded to
 the side panel, the report is in the message.
 
 Follow-ups typed (or said) in the bubble keep the conversation; **Copy** copies
@@ -112,7 +119,7 @@ something failed. A soft glow around the screens says the AI is in charge.
   outcome) is said out loud in its cute voice; the microphone is held meanwhile
   so it never hears itself, and `Mod+T` cuts it short.
 - Steps that need your OK are asked in its balloon: say "yes" or "no".
-- The conversation is still in the speech bubble, with its reports.
+- The conversation is still in the speech bubble.
 
 **It reacts to what happens** (_Full AI reacts to what happens_, on by default):
 a notification, a download, the battery running low, a screen or audio output
@@ -196,7 +203,7 @@ restart PipeWire once: `systemctl --user restart pipewire pipewire-pulse wireplu
 by default, _Always_ or _Never_). The answer to what you said is read on this
 computer by Meta's MMS voices (Massively Multilingual Speech), in English or
 French, picked from the answer's language: Meta's Model API has no speech
-synthesis. After acting, it says the report's outcome and what needs you; when
+synthesis. After acting, it says what it did (a report's outcome and what needs you, when there is one); when
 a step waits for your OK, it asks "May I …?"; a plain command says what it did.
 _Voice_ picks **Cute** (higher and bouncier, the default) or **Natural** (MMS's
 own voice). The microphone doesn't take it for you, and `Mod+T` or `Esc` cuts

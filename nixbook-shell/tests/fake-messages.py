@@ -90,12 +90,19 @@ class Handler(BaseHTTPRequestHandler):
             done = isinstance(last.get("content"), list) and any(b.get("type") == "tool_result" for b in last["content"])
             if done:
                 denied = any(b.get("is_error") for b in last["content"] if b.get("type") == "tool_result")
+                # Failed, then done another way.
+                if "RETRY" in text and denied and json.dumps(body["messages"]).count("tool_result") == 1:
+                    return self.send(200, {"content": [{"type": "tool_use", "id": "call_2", "name": "launch_app",
+                                                        "input": {"app": "firefox"}}], "stop_reason": "tool_use"})
                 answer = "Not done." if denied else ("Closed." if "CLOSE" in text else "Firefox is open.")
                 if "REPORTME" in text:
                     answer = ('Opened it.<report>{"summary": "Firefox is ready", "done": ["Opened Firefox"], '
                               '"failed": [], "needs_you": ["Sign in to your account"]}</report>')
                 return self.send(200, {"content": [{"type": "text", "text": answer}], "stop_reason": "end_turn"})
             call = ({"name": "close_window", "input": {"id": 7}} if "CLOSE" in text
+                    else {"name": "tasks", "input": {"action": "delete", "id": "t1"}} if "DELETE" in text
+                    else {"name": "launch_app", "input": {"app": "BROKEN"}} if "FAILSTEP" in text
+                    else {"name": "launch_app", "input": {"app": "OTHERFIRST"}} if "RETRY" in text and "tool_result" not in json.dumps(body["messages"])
                     else {"name": "tasks", "input": {"action": "list"}} if "TASKS" in text
                     else {"name": "screenshot", "input": {}} if "LOOKSCREEN" in text
                     else {"name": "ask_claude", "input": {"task": "search the web for the news"}} if "DELEGATE" in text
