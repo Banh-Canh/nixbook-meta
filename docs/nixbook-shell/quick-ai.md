@@ -48,11 +48,23 @@ What you say or type in the bubble is an order or a question:
    event): **Allow** or **No** under the answer. Settings > Desktop agents >
    Talk to your desktop > _Ask me before_ also offers _Every action_ and _Never_.
 
-**It has the whole brain**: every desktop tool you have enabled (the same as
-Claude's in the side panel, screenshots included: it sees them), your desktop
-memory and what agents remember about you, what this machine is (from its Nix
-configuration: modules, shell, shortcuts) and what you just did (when _Recent
-context_ is on). For what needs more (the web, your files, your mail or calendar
+**It has the same brain as Claude in the side panel**, and so does Full AI
+mode:
+
+- every desktop tool you have enabled (screenshots included: it sees them) and
+  your apps' own tools;
+- the side panel's whole system prompt: your configured prompt, this machine's
+  reference (modules, packages, shortcuts, Neovim keymaps, how things are done)
+  and the shell's live settings, when _Include system context_ is on. It is
+  cached by the provider, so it costs no time after the first request;
+- your desktop memory and what agents remember about you, picked for each
+  request, and what you just did (when _Recent context_ is on).
+
+**It learns like the side panel too**: what a task did goes to the desktop
+memory's learning pass (the notes that helped count up, a new way of doing
+something that took work becomes a note or a recipe), and once a conversation
+goes quiet, the same memory pass as the side panel's chats saves what it showed
+about you. For what needs more (the web, your files, your mail or calendar
 accounts, other MCP servers), it hands the task over to Claude Code in the same
 conversation, which answers there.
 

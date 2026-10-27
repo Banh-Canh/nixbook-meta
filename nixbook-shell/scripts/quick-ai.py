@@ -603,9 +603,18 @@ def agent(req, system, messages):
     call is a "step" event; one needing the user's OK an "approve" event,
     answered by a line on stdin (yes / no)."""
     specs, meta = agent_tools()
+    # What the side panel's Claude starts with (Ai.stableSystemPrompt: the
+    # configured prompt, this machine's whole reference and the shell's live
+    # settings, when ai.includeSystemContext): the same knowledge. It comes
+    # first and is cached (it changes rarely): the next calls read it from
+    # the provider's cache instead of paying ~0.5 s each for its tokens.
+    panel = str(req.get("panel") or "").strip() if "panel" in req else machine_context()
+    stable = f"{system}\n\n{mask(panel)}" if panel else system
+    system = ""
     told = tool_instructions(req)
     if told:
-        system = f"{system}\n\nThe desktop tools' own instructions (from their server):\n{mask(told)}"
+        system = ("The desktop tools' own instructions (from their server: with the desktop memory and what "
+                  f"agents remember about the user, for this task):\n{mask(told)}")
     # The apps' tools: the small servers', and a big one's when it is named.
     apps = app_servers()
     asked = str(req.get("followUp") or req.get("question") or "").lower()
@@ -619,11 +628,10 @@ def agent(req, system, messages):
     hints = [f"{n}: {i['instructions'][:400]}" for n, i in apps.items() if n in up_front and i.get("instructions")]
     if hints:
         system = f"{system}\n\nThe apps' own instructions:\n" + "\n".join(hints)
-    machine = machine_context()
-    if machine:
-        system = f"{system}\n\n{mask(machine)}"
     if req.get("activity"):
         system = f"{system}\n\nWhat the user did just before (most recent last):\n{mask(str(req['activity'])[-3000:])}"
+    system = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}] + (
+        [{"type": "text", "text": system.strip()}] if system.strip() else [])
     # Claude Code, the whole assistant (web, files, the user's mail and
     # calendar connectors, other MCP servers): the task handed over, the
     # conversation going on there.
@@ -698,7 +706,32 @@ def agent(req, system, messages):
             pass
         if not said:
             said = [f"I stopped after {AGENT_STEPS} steps without finishing."]
+    learn_episode(req)
     return model, "\n".join(said)
+
+
+def learn_episode(req):
+    """What this task did, to the desktop memory's learning pass, as the side
+    panel's desktop MCP session does when a task ends: the notes that helped
+    counted, a new way of doing something that took work saved as a note or
+    a recipe. In the background: the answer waits for nothing."""
+    steps = [s for s in RUN_STEPS.values() if s["status"] in ("ok", "error")]
+    if not any(not s["read_only"] for s in steps):
+        return
+    exe = shutil.which("nixbook-desktop-mcp")
+    if not exe:
+        return
+    episode = {"task": unmask(str(req.get("followUp") or req.get("question") or ""))[:500],
+               "actions": [{"tool": s["tool"], "do": s.get("summary") or "",
+                            "error": str(s["result"])[:160] if s["status"] == "error" else None} for s in steps]}
+    try:
+        p = subprocess.Popen([exe, "episode", "-"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, text=True, start_new_session=True,
+                             env={**os.environ, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"})
+        p.stdin.write(json.dumps(episode, ensure_ascii=False))
+        p.stdin.close()
+    except OSError:
+        pass
 
 
 def agent_claude(req, system, prompt):
@@ -708,6 +741,8 @@ def agent_claude(req, system, prompt):
     claude = req.get("claude") or shutil.which("claude")
     if not claude:
         raise RuntimeError("Claude Code isn't installed (Settings > Desktop agents)")
+    if req.get("panel"):
+        system = f"{system}\n\n{mask(str(req['panel']))}"
     specs, meta = agent_tools()
     allowed = ",".join(f"mcp__desktop__{t['name']}" for t in specs if not needs_ok(req, t["name"], {}, meta))
     workdir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "nixbook-shell", "quick-ai")
