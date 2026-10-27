@@ -52,6 +52,9 @@ Singleton {
     property string error: ""
     property string provider: ""
     property string model: ""
+    // The task the agent handed over to Claude Code (ask_claude): sent in the
+    // same conversation once its run is over.
+    property string handoff: ""
     // After acting: the report ({summary, done, failed, needsYou, steps,
     // ok, ko}) the bubble shows as a brief under its message (reportMsg).
     property var report: null
@@ -313,6 +316,7 @@ Singleton {
     }
 
     function clear() {
+        root.handoff = "";
         root.report = null;
         root.reportMsg = null;
         root.answer = "";
@@ -344,6 +348,8 @@ Singleton {
             lang: ConfigAssistant.uiLang(), target: Config.options.ai.quick?.translateTo || "",
             model: Config.options.ai.quick?.model ?? "small", effort: Config.options.ai.quick?.effort ?? "low",
             claude: Ai.claudeCodePath, confirm: Config.options.ai.quick?.confirm ?? "destructive",
+            // What the user did just before (RecentContext, when its setting is on).
+            activity: RecentContext.enabled ? RecentContext.text : "",
             facts: root.facts(),
         };
         // Modes about a text or an image ask nothing themselves.
@@ -527,6 +533,9 @@ Singleton {
                 case "paused":
                     root.paused = true;
                     break;
+                case "delegate":
+                    root.handoff = ev.task ?? "";
+                    break;
                 case "report":
                     root.report = ev;
                     root.reportMsg = root.msg;
@@ -546,6 +555,12 @@ Singleton {
             if (code !== 0 && root.error.length === 0 && root.answer.length === 0)
                 root.error = Translation.tr("The model didn't answer (exit %1)").arg(code);
             root.finish();
+            // Handed over: Claude Code (the side panel's agent: web, files,
+            // connectors, every MCP server) goes on in this conversation.
+            const task = root.handoff;
+            root.handoff = "";
+            if (task && root.chat && Ai.claudeCodePath.length > 0)
+                root.chat.sendUserMessage(Translation.tr("(for Claude) %1").arg(task));
         }
     }
 

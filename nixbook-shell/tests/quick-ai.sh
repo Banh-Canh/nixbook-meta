@@ -44,10 +44,14 @@ tools) cat <<'JSON'
   "annotations": {"readOnlyHint": false, "destructiveHint": true}, "_meta": {"nixbook/group": "windows"}},
  {"name": "tasks", "description": "The to-do lists: list, add, done", "inputSchema": {"type": "object", "properties": {"action": {"type": "string"}}},
   "annotations": {"readOnlyHint": false, "destructiveHint": true}, "_meta": {"nixbook/group": "shell"}},
- {"name": "ignored_tool", "description": "Not offered", "inputSchema": {"type": "object"}, "annotations": {}}]
+ {"name": "screenshot", "description": "A screenshot", "inputSchema": {"type": "object", "properties": {}},
+  "annotations": {"readOnlyHint": true}, "_meta": {"nixbook/group": "screen"}},
+ {"name": "desktop", "description": "Not offered", "inputSchema": {"type": "object"}, "annotations": {}}]
 JSON
 ;;
-call) echo "\$2 \$3" >>"$tmp/calls.log"; echo "done: \$2" ;;
+call) echo "\$2 \$3" >>"$tmp/calls.log"
+  if [ "\$2" = screenshot ]; then echo '[{"type": "text", "text": "the screen"}, {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}]'
+  else echo "done: \$2"; fi ;;
 privacy)
   if [ "\$2" = mask ]; then sed 's/Julien/⟦Person 1⟧/g'; else sed 's/⟦Person 1⟧/Julien/g'; fi ;;
 sent) echo "\$3|\$5" >>"$tmp/sent.log" ;;
@@ -110,7 +114,7 @@ expect_eq "do: the step ran" '"run"
 "ok"' "$(event act step .status)"
 expect_eq "do: through desktop-mcp" 'launch_app {"app": "firefox"}' "$(head -n1 "$tmp/calls.log")"
 expect_eq "do: the answer, the report under it" '"Firefox is open.\n- ✓ launch app (app=firefox)"' "$(event act answer .text)"
-expect_eq "do: only the offered tools, without desktop-mcp's extras" '["launch_app","close_window","tasks"]
+expect_eq "do: every tool but the agent desktop's switch, without desktop-mcp's extras" '["launch_app","close_window","tasks","screenshot"]
 []' "$(jq -c 'select(.body.tools) | [.body.tools[].name], [.body.tools[0].input_schema.properties | keys[] | select(. == "wait_ms")]' "$tmp/requests.log" | head -n2)"
 
 # The report after acting: built from the steps when the model gives none,
@@ -133,6 +137,23 @@ expect_contains_ "out of steps: an answer all the same" "$(event loop answer .te
 expect_eq "out of steps: asked without tools" '{"type":"none"}' "$(jq -c 'select(.body.tool_choice) | .body.tool_choice' "$tmp/requests.log" | tail -n1)"
 
 expect_contains_ "do: the tools' own instructions, for this task" "$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | head -n1)" "QUERY=open firefox"
+# Eyes: a screenshot comes back to the model as an image.
+: >"$tmp/calls.log"
+ask look '{"mode": "do", "question": "LOOKSCREEN what is on my screen?", "lang": "en"}'
+expect_contains_ "eyes: the image in the tool result" "$(jq -c 'select(.body.tools) | .body.messages[-1].content' "$tmp/requests.log" | grep tool_result | tail -n1)" '"type":"image"'
+# The whole assistant: a task handed over to Claude Code.
+ask handoff '{"mode": "do", "question": "DELEGATE find the news", "lang": "en", "claude": "/bin/true"}'
+expect_eq "ask_claude: handed over" '"search the web for the news"' "$(event handoff delegate .task)"
+expect_eq "ask_claude: offered only with Claude Code" "" "$(jq -c 'select(.body.tools) | [.body.tools[].name] | index("ask_claude")' "$tmp/requests.log" | head -n1 | grep -v null)"
+# What the machine is (system-context.md) and what the user just did.
+mkdir -p "$tmp/cfg/nixbook-shell"
+printf '# About\n## This machine\nHost testhost\n## Packages installed\nhuge list\n' >"$tmp/cfg/nixbook-shell/system-context.md"
+XDG_CONFIG_HOME="$tmp/cfg" ask ctx '{"mode": "do", "question": "open firefox CTX", "lang": "en", "activity": "opened kitty"}'
+sys=$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | grep -F "CTX" -m1 || jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | tail -n1)
+expect_contains_ "context: the machine" "$sys" "Host testhost"
+expect_contains_ "context: not the package lists" "$(echo "$sys" | grep -c 'huge list' | sed 's/^0$/none/')" "none"
+expect_contains_ "context: what the user just did" "$sys" "opened kitty"
+
 # A tool that also writes, asked only to read (its action): no OK needed,
 # even when every action is asked about; and no report for it.
 : >"$tmp/calls.log"
