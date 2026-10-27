@@ -339,6 +339,22 @@ Singleton {
         || (QuickAi.busy && (QuickAi.owns(root.chat) || QuickAi.owns(root.parked?.chat ?? null)))
     // The user is writing in the bubble: nothing takes its place meanwhile.
     property bool typing: false
+    // The conversation goes on out of sight (ai.quick.bubble "needed": talking
+    // to it, Full AI mode): the answers said out loud or in the mascot's
+    // balloon, the bubble shown only for what needs the user's eyes (replies
+    // to pick, an error, an OK that can't be said) or when called up (Mod+C,
+    // which hides it again while they talk).
+    property bool quiet: false
+    onQuietChanged: if (!root.quiet && root.speaking) root.focusWanted()
+    Connections {
+        target: QuickAi
+        function onRepliesChanged() { if (QuickAi.replies.length > 0) root.quiet = false }
+        function onErrorChanged() { if (QuickAi.error.length > 0) root.quiet = false }
+        function onPendingChanged() {
+            // An OK nobody can say (no microphone coming back): asked on screen.
+            if (QuickAi.pending && !Voice.session && !FullAi.active) root.quiet = false
+        }
+    }
     // The bubble's field wants the keys (it was called up with the keyboard).
     signal focusWanted()
     property string _answeredId: ""
@@ -375,14 +391,25 @@ Singleton {
     // A question asked in the bubble takes what the user just did along
     // (RecentContext.text, shown there), unless they leave it out (its ×).
     property bool skipContext: false
-    onSpeakingChanged: if (root.speaking?.kind === "ask" && !root.conversing) {
-        root.skipContext = false
-        RecentContext.refresh()
+    onSpeakingChanged: {
+        // Nothing said any more: the next bubble is seen.
+        if (!root.speaking) root.quiet = false
+        else if (root.speaking.kind === "ask" && !root.conversing) {
+            root.skipContext = false
+            RecentContext.refresh()
+        }
     }
     // Mod+C, the bar's robot button: called up, or put away when shown.
     function toggle() {
-        if (root.speaking) root.hush("wait")
-        else root.summon()
+        // Out of sight: shown. Shown while talking: out of sight again (the
+        // conversation goes on by voice).
+        if (root.speaking && root.quiet) root.quiet = false
+        else if (root.speaking && Voice.hideBubble && (Voice.session || FullAi.active)) root.quiet = true
+        else if (root.speaking) root.hush("wait")
+        else {
+            root.quiet = false
+            root.summon()
+        }
     }
     // Called up by the user (Mod+C), or what it did for them there at once
     // ("quick"): a new conversation of theirs, not a "From Claude" thread.
@@ -784,6 +811,7 @@ Singleton {
             return "ok: the bubble put away (the conversation comes back with Mod+C)"
         }
         function show(): string {
+            root.quiet = false
             root.summon()
             return "ok: the bubble is up"
         }

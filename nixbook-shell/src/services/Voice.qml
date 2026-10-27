@@ -78,6 +78,9 @@ Singleton {
     function endSession() {
         root.session = false;
         relisten.stop();
+        // A conversation out of sight, over: put away (Mod+C brings it back),
+        // so the bubble is free for what comes next.
+        if (Initiative.quiet && !FullAi.active && !Initiative.thinking && !root.speaking) Initiative.hush("wait");
     }
     Timer {
         id: relisten
@@ -136,6 +139,11 @@ Singleton {
     property bool voiceTurn: false
     readonly property string speakMode: Config.options.ai.voice?.speak ?? "voice"
     readonly property string voiceStyle: Config.options.ai.voice?.style ?? "cute"
+    // ai.quick.bubble "needed": talking to it, the bubble stays out of sight
+    // (Initiative.quiet), the answers said out loud (or in Full AI's
+    // mascot); not when nothing would say them.
+    readonly property bool hideBubble: (Config.options.ai.quick?.bubble ?? "always") === "needed"
+        && (root.speakMode !== "never" || FullAi.active)
     function wantsSpeech() {
         const yes = root.speakMode === "always" || (root.speakMode === "voice" && root.voiceTurn);
         root.voiceTurn = false;
@@ -201,8 +209,10 @@ Singleton {
             root.speaking = false;
             const again = speaker.reopen;
             speaker.reopen = false;
-            // Said: the user's turn (a conversation, Full AI mode).
+            // Said: the user's turn (a conversation, Full AI mode); a
+            // conversation out of sight and over: put away.
             if (speaker.wanted && (root.session || again || FullAi.active)) relisten.restart();
+            else if (Initiative.quiet && !FullAi.active && !Initiative.thinking) Initiative.hush("wait");
         }
     }
 
@@ -230,7 +240,9 @@ Singleton {
                 Translation.tr("Turn it on in Settings > Desktop agents > Quick AI")]);
             return;
         }
-        // The bubble shows the listening (called up when it isn't).
+        // The bubble shows the listening (called up when it isn't), or stays
+        // out of sight (ai.quick.bubble "needed") unless already shown.
+        if (root.hideBubble && !(Initiative.speaking && !Initiative.quiet)) Initiative.quiet = true;
         QuickAi.askQuestion("", "voice");
         root.error = "";
         root.heard = false;

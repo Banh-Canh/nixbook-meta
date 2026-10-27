@@ -1684,6 +1684,8 @@ for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("method") == "initialize":
         print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": "fake"}}}), flush=True)
+    elif msg.get("method") == "tools/list":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": [{"name": "play", "description": "Play a song", "inputSchema": {"type": "object"}}]}}), flush=True)
     elif msg.get("method") == "tools/call":
         with open(os.environ["FAKE_MUSIC_LOG"], "a") as f:
             f.write(json.dumps(msg["params"]) + "\n")
@@ -1872,6 +1874,21 @@ expect_eq "undone twice: off" '{"off": true}' "$(python3 "$mcp" routine undone "
 expect_contains "undone: says why" "$(python3 "$mcp" initiative pending | jq -r '.[].text')" "twice, so I turned it off"
 call routine "{\"action\":\"remove\",\"id\":\"$agent\"}" >/dev/null
 expect_eq "routine remove" 2 "$(jq '.routines | length' "$mem")"
+# The apps' tools for agents without MCP (nixbook-quick-ai): listed (and
+# cached), called, audited, refused while AI is off.
+export XDG_CACHE_HOME="$tmp/cache"
+: >"$FAKE_MUSIC_LOG"
+expect_eq "app-tools: the side panel's servers' tools" '{"youtube-music":["play"]}' \
+  "$(python3 "$mcp" app-tools | jq -c 'map_values([.tools[].name])')"
+expect_eq "app-tools: cached" '["youtube-music"]' "$(jq -c 'keys' "$XDG_CACHE_HOME/nixbook-shell/app-tools.json")"
+expect_eq "app-call: through the server" "playing" "$(NIXBOOK_DESKTOP_MCP_CLIENT="Quick AI" python3 "$mcp" app-call youtube-music play '{"query":"FIRESTARTER"}')"
+expect_eq "app-call: the server got it" '{"name":"play","arguments":{"query":"FIRESTARTER"}}' "$(jq -c . "$FAKE_MUSIC_LOG")"
+expect_contains "app-call: audited" "$(tail -n1 "$XDG_STATE_HOME/nixbook-shell/desktop-mcp.log")" '"tool": "youtube-music:play"'
+expect_eq "app-call: an unknown server refused" "no app server nothing (or it is turned off) rc=1" "$(
+  python3 "$mcp" app-call nothing play '{}' 2>&1 | tr -d '\n'
+  echo " rc=${PIPESTATUS[0]}"
+)"
+unset XDG_CACHE_HOME
 rm "$XDG_CONFIG_HOME/nixbook-shell/assistant-mcp.json"
 python3 "$mcp" memory clear >/dev/null
 python3 "$mcp" initiative clear

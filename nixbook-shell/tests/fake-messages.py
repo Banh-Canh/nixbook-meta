@@ -99,6 +99,8 @@ class Handler(BaseHTTPRequestHandler):
                     else {"name": "tasks", "input": {"action": "list"}} if "TASKS" in text
                     else {"name": "screenshot", "input": {}} if "LOOKSCREEN" in text
                     else {"name": "ask_claude", "input": {"task": "search the web for the news"}} if "DELEGATE" in text
+                    else {"name": "youtube-music__play", "input": {"query": "FIRESTARTER"}} if "MUSIC" in text
+                    else {"name": "open_app_tools", "input": {"server": "immich"}} if "PHOTOS" in text
                     else {"name": "launch_app", "input": {"app": "firefox"}})
             return self.send(200, {"content": [{"type": "tool_use", "id": "call_1", **call}], "stop_reason": "tool_use"})
         if '"replies"' in text:

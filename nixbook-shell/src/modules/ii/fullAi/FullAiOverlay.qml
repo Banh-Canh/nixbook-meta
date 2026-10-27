@@ -9,12 +9,11 @@ import Quickshell
 import Quickshell.Wayland
 
 /**
- * Full AI mode's layer (services/FullAi.qml): over every screen, it takes
- * the user's keyboard and mouse (Escape leaves the mode), with a soft glow
- * at the edges saying the AI is in charge, and the mascot (MascotStage) on
- * the screen the mode was started on. While the agent acts (MakeWay), it
- * lets its clicks and keys through and gives up the keyboard; while the
- * agent takes a screenshot, it vanishes.
+ * Full AI mode's layer (services/FullAi.qml): over every screen, a soft
+ * glow at the edges saying the AI is listening, and the mascot
+ * (MascotStage) on the screen the mode was started on. It takes neither
+ * keys nor clicks: the user keeps working, the agent's own clicks and keys
+ * go through too. While the agent takes a screenshot, it vanishes.
  */
 Scope {
     id: root
@@ -33,74 +32,16 @@ Scope {
             anchors { top: true; bottom: true; left: true; right: true }
             WlrLayershell.namespace: "quickshell:fullAi"
             WlrLayershell.layer: WlrLayer.Overlay
-            // The keys: one screen takes them (Escape), none while the agent acts.
-            // `regrab` drops it for a moment and asks again: a surface mapped
-            // after it (the speech bubble) can leave the compositor's keyboard
-            // elsewhere, and Escape must always reach the mode.
-            property bool regrab: false
-            WlrLayershell.keyboardFocus: window.main && !MakeWay.active && !window.regrab ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-            // Every click caught, but the agent's while it acts.
-            mask: MakeWay.active ? noInput : null
-            Region { id: noInput }
+            // Never in the way: no keys, every click through to the apps
+            // (the user keeps their desktop; Mod+Shift+T leaves the mode).
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            mask: Region {}
 
-            onVisibleChanged: if (visible && window.main) {
-                focusLater.restart()
-                regrabTimer.count = 0
-                regrabTimer.restart()
-            }
-            Timer {
-                id: regrabTimer
-                property int count: 0
-                interval: 700
-                onTriggered: {
-                    window.regrab = true
-                    regrabBack.restart()
-                    if (++count < 3) restart()
-                }
-            }
-            Timer {
-                id: regrabBack
-                interval: 60
-                onTriggered: {
-                    window.regrab = false
-                    focusLater.restart()
-                }
-            }
-            // The agent done acting: the keys back to the mode.
-            Connections {
-                target: MakeWay
-                function onActiveChanged() { if (!MakeWay.active && window.main && window.visible) focusLater.restart() }
-            }
-            // Escape whatever item has the focus in the window.
-            Shortcut {
-                sequences: ["Escape"]
-                context: Qt.WindowShortcut
-                enabled: window.main && window.visible
-                onActivated: FullAi.exit()
-            }
-            Timer {
-                id: focusLater
-                interval: 50
-                onTriggered: keys.forceActiveFocus()
-            }
             Item {
                 id: keys
                 anchors.fill: parent
-                focus: window.main
-                Component.onCompleted: if (window.main) focusLater.restart()
                 // Hidden from the agent's own screenshots.
                 opacity: MakeWay.capture ? 0 : 1
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Escape) FullAi.exit();
-                    event.accepted = true;
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.AllButtons
-                    hoverEnabled: true
-                    preventStealing: true
-                    onWheel: wheel => wheel.accepted = true
-                }
 
                 // The AI is in charge: a breathing glow around the screen.
                 Rectangle {
