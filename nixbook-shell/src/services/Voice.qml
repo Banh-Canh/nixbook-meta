@@ -137,6 +137,14 @@ Singleton {
         root.level = 0;
         root.partial = "";
         if (root.engine === "meta") {
+            // The last stream still closing: started again once it has.
+            if (stream.running) {
+                stream.again = true;
+                return;
+            }
+            // Full AI mode: one stream for the whole session (each sentence
+            // sent when the user pauses, nothing to reopen between orders).
+            stream.continuous = FullAi.active;
             stream.wanted = true;
             stream.frames = 0;
             stream.floor = -50;
@@ -187,6 +195,7 @@ Singleton {
     }
     function cancel() {
         root.endSession();
+        stream.again = false;
         if (stream.running) {
             stream.wanted = false;
             stream.write("cancel\n");
@@ -336,12 +345,15 @@ Singleton {
     Process {
         id: stream
         property bool wanted: true
+        property bool continuous: false
+        // start() came while it was still closing.
+        property bool again: false
         // The meter against the room's own noise, as for the local engine.
         property int frames: 0
         property real floor: -50
         stdinEnabled: true
-        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1" --pause "$2" --max "$3"', "_",
-            root.languages, String(root.pauseSeconds), String(root.maxSeconds)]
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-model-provider run nixbook-voice-stream --lang "$1" --pause "$2" --max "$3" $4', "_",
+            root.languages, String(root.pauseSeconds), String(root.maxSeconds), stream.continuous ? "--continuous" : ""]
         stdout: SplitParser {
             onRead: (line) => {
                 let ev;
@@ -369,9 +381,14 @@ Singleton {
                     root.partial = ev.text ?? "";
                     break;
                 case "final":
-                    root.listening = false;
-                    root.transcribing = false;
-                    root.level = 0;
+                    // Continuous (Full AI mode): an order, the microphone still
+                    // open for the next one.
+                    if (!stream.continuous) {
+                        root.listening = false;
+                        root.transcribing = false;
+                        root.level = 0;
+                    }
+                    root.heard = false;
                     root.partial = "";
                     if ((ev.text ?? "").trim().length > 0) root.deliver(ev.text.trim());
                     break;
@@ -399,7 +416,18 @@ Singleton {
             root.transcribing = false;
             root.level = 0;
             root.partial = "";
+            // Asked to listen while it was closing, or Full AI mode's stream
+            // ended (the server, the hour): listening again at once.
+            if (stream.again || (stream.wanted && FullAi.active && FullAi.micOn)) {
+                stream.again = false;
+                reopen.restart();
+            }
         }
+    }
+    Timer {
+        id: reopen
+        interval: 150
+        onTriggered: root.start()
     }
 
     Process {
