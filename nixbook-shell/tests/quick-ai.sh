@@ -57,6 +57,7 @@ privacy)
 sent) echo "\$3|\$5" >>"$tmp/sent.log" ;;
 instructions) echo "Tools to see and drive the desktop. Notes: QUERY=\$NIXBOOK_DESKTOP_MCP_QUERY" ;;
 app-tools) cat "$tmp/app-tools.json" 2>/dev/null || echo '{}' ;;
+episode) cat >>"$tmp/episode.log"; echo >>"$tmp/episode.log" ;;
 app-call) echo "app \$2 \$3 \$4" >>"$tmp/calls.log"; echo '{"title": "FIRESTARTER", "isPaused": false}' ;;
 esac
 EOF
@@ -118,6 +119,18 @@ expect_eq "do: through desktop-mcp" 'launch_app {"app": "firefox"}' "$(head -n1 
 expect_eq "do: the answer, the report under it" '"Firefox is open.\n- ✓ launch app (app=firefox)"' "$(event act answer .text)"
 expect_eq "do: every tool but the agent desktop's switch, without desktop-mcp's extras" '["launch_app","close_window","tasks","screenshot"]
 []' "$(jq -c 'select(.body.tools) | [.body.tools[].name], [.body.tools[0].input_schema.properties | keys[] | select(. == "wait_ms")]' "$tmp/requests.log" | head -n2)"
+
+# What it did goes to the desktop memory's learning pass (as an MCP session's
+# task does); a task that only read, not.
+sleep 0.3
+expect_eq "learn: the episode told" '{"task":"open firefox","actions":[{"tool":"launch_app","do":"app=firefox","error":null}]}' \
+  "$(head -n1 "$tmp/episode.log" | jq -c .)"
+# The side panel's knowledge (Ai.stableSystemPrompt) first, cached.
+: >"$tmp/requests.log"
+ask brain '{"mode": "do", "question": "open firefox", "lang": "en", "panel": "PANELBRAIN: host totoro, theme Momonga"}'
+expect_eq "brain: the panel's prompt, first and cached" '{"type":"ephemeral"} true' \
+  "$(jq -c 'select(.body.tools) | .body.system[0] | "\(.cache_control | tojson) \(.text | contains("PANELBRAIN"))"' -r "$tmp/requests.log" | head -n1)"
+expect_contains_ "brain: the memory for this task after it" "$(jq -c 'select(.body.tools) | .body.system[1].text' "$tmp/requests.log" | head -n1)" "QUERY=open firefox"
 
 # The report after acting: built from the steps when the model gives none,
 # the model's own otherwise; none for a plain answer.
