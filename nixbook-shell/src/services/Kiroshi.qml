@@ -20,8 +20,9 @@ import QtQuick
  * (boxes, urgency, a gist) in ~6 s, then each one's substance and handle
  * (a plan, a draft, a self-contained instruction for the desktop agent) as
  * they come. The overlay (modules/ii/kiroshi/KiroshiScan.qml) shows them;
- * Do it hands the instruction (with the draft as edited) to Quick AI's
- * "do" (services/QuickAi.qml), Tell me more asks about the item's crop,
+ * Do it hands the instruction (with the draft as edited) to Muse's agent in
+ * the speech bubble's session (QuickAi.command), Tell me more asks about the
+ * item's crop,
  * and the routine ones go in one combined instruction. Gated like Quick AI
  * (QuickAi.available: ai.quick.enable, policies.ai).
  */

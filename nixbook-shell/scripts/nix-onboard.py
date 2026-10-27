@@ -36,8 +36,11 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
+
+# The shared client (nixbook_ai.py), next to this script in the source tree
+# and in the package.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import nixbook_ai  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_LIB = os.environ.get("NIXBOOK_SETTINGS_LIB") or os.path.dirname(HERE)
@@ -121,59 +124,16 @@ def catalog():
     return "\n".join(lines)
 
 
-# ── The model ──
-def post(system, messages, effort):
-    base = os.environ.get("NIXBOOK_AI_BASE_URL", "").rstrip("/")
-    key = os.environ.get("NIXBOOK_AI_KEY", "")
-    if not base or not key:
-        raise RuntimeError("no model provider with an API key (Settings > Desktop agents > Model provider: Meta)")
-    model = os.environ.get("NIXBOOK_AI_MODEL") or os.environ.get("NIXBOOK_AI_SMALL_MODEL") or ""
-    body = {"model": model, "max_tokens": 8000, "system": system, "messages": messages}
-    tuned = {**body, "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
-    for attempt in (tuned, body):
-        r = urllib.request.Request(base + "/v1/messages", data=json.dumps(attempt).encode(), method="POST",
-                                   headers={"Authorization": f"Bearer {key}", "anthropic-version": "2023-06-01",
-                                            "content-type": "application/json"})
-        try:
-            with urllib.request.urlopen(r, timeout=180) as resp:
-                d = json.loads(resp.read().decode())
-                return model, "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text")
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")
-            try:
-                dd = json.loads(detail)
-                detail = (dd.get("error") or {}).get("message") or dd.get("message") or detail
-            except ValueError:
-                pass
-            if attempt is tuned and e.code == 400 and any(w in detail for w in ("thinking", "effort", "output_config")):
-                continue
-            raise RuntimeError(f"HTTP {e.code}: {str(detail)[:300]}")
-    raise RuntimeError("the server refused the request")
-
-
-def desktop_mcp(args, data):
-    """nixbook-desktop-mcp ARGS with DATA on stdin: its stdout, None
-    without it (outside the package) or on failure."""
-    exe = shutil.which("nixbook-desktop-mcp")
-    if not exe:
-        return None
-    try:
-        p = subprocess.run([exe, *args], input=data, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return p.stdout if p.returncode == 0 else None
-
-
+# ── The model (nixbook_ai: the client every AI script of the shell shares) ──
 def masked_post(system, convo, effort):
-    """post() through the privacy mask, like every other AI pass: what the
-    user typed leaves with names, emails… as placeholders, and the answer
-    (the configuration included) comes back with the real values."""
-    sent = [dict(m, content=desktop_mcp(["privacy", "mask"], m["content"]) or m["content"])
-            if m["role"] == "user" else m for m in convo]
-    model, text = post(system, sent, effort)
-    if "⟦" in text:
-        text = desktop_mcp(["privacy", "unmask"], text) or text
-    return model, text
+    """One answer of the provider's main model, through the privacy mask
+    like every other AI pass: what the user typed leaves with names,
+    emails… as placeholders, and the answer (the configuration included)
+    comes back with the real values."""
+    p = nixbook_ai.Provider.from_env()
+    sent = [dict(m, content=nixbook_ai.mask(m["content"])) if m["role"] == "user" else m for m in convo]
+    text = nixbook_ai.answer(system, sent, model="main", effort=effort, max_tokens=8000, provider=p)
+    return p.model("main"), nixbook_ai.unmask(text)
 
 
 def blocks_of(text):
@@ -359,19 +319,9 @@ def turn(path):
     return 0
 
 
-def through_provider(argv):
-    """Run without the provider's key: through nixbook-model-provider, which
-    sets it (once: it marks the environment)."""
-    if os.environ.get("NIXBOOK_AI_KEY") or os.environ.get("NIXBOOK_AI_PROVIDED"):
-        return
-    provider = shutil.which("nixbook-model-provider")
-    if provider:
-        os.execv(provider, [provider, "run", sys.executable, "-I", os.path.abspath(__file__), *argv[1:]])
-
-
 def main(argv):
     if len(argv) == 3 and argv[1] == "turn":
-        through_provider(argv)
+        nixbook_ai.ensure_provider(argv[1:], __file__)
         return turn(argv[2])
     if len(argv) == 2 and argv[1] == "catalog":
         print(catalog())

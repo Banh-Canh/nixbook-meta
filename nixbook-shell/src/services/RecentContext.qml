@@ -15,7 +15,11 @@ import QtQuick
  * never on disk; `nixbook-desktop-mcp context` filters it (private apps and
  * windows out, secrets redacted) before it is sent: with a question asked
  * in Muse's bubble (the bubble says so, and its × leaves it out), and as
- * a word when back from a break ("before the break you were on…").
+ * a word when back from a break ("before the break you were on…"). The
+ * filtered text is also kept in $XDG_RUNTIME_DIR/nixbook-shell/recent.txt
+ * (the runtime dir: never on disk, gone at logout; empty while this is
+ * off) for the context broker (`nixbook-desktop-mcp context build`, its
+ * `activity` section), which every agent turn reads.
  * Also plain code, with no model call until a click:
  *   - terminal (ai.initiative.terminal): the same command failing twice in
  *     10 minutes offers "Explain it". The shell hook (hm-module.nix) writes
@@ -41,7 +45,9 @@ Singleton {
     function load() {
         Quickshell.execDetached(["rm", "-f", root.copiedPath])
         root._flag()
+        root._writeRecent()
     }
+    onEnabledChanged: root.enabled ? root.refresh() : root._writeRecent()
 
     function _add(e) {
         if (!root.enabled || GlobalStates.screenLocked || DesktopControl.active) return
@@ -51,6 +57,35 @@ Singleton {
         // The same window, its title changing (a tab, a file): one line.
         if (e.kind === "window" && last?.kind === "window" && last.app === e.app && t - last.time < 20000) kept.pop()
         root.events = [...kept, Object.assign({ time: t }, e)].slice(-40)
+        refreshSoon.restart()
+    }
+    // recent.txt follows the events (a burst filtered once), and the
+    // window of the last minutes moves on by itself.
+    Timer {
+        id: refreshSoon
+        interval: 3000
+        onTriggered: root.refresh()
+    }
+    Timer {
+        interval: 2 * 60000
+        running: root.enabled && root.events.length > 0
+        repeat: true
+        onTriggered: root.refresh()
+    }
+    FileView {
+        id: recentFile
+        path: `${root.dir}/recent.txt`
+        blockWrites: true
+        printErrors: false
+    }
+    property string _written: "\u0000"
+    function _writeRecent() {
+        const text = root.enabled ? root.text : ""
+        if (text === root._written) return
+        root._written = text
+        // An empty text: the file emptied (FileView writes nothing for it).
+        if (text.length === 0) Quickshell.execDetached(["bash", "-c", 'mkdir -p "$1" && : >"$1/recent.txt"', "recent", root.dir])
+        else recentFile.setText(text)
     }
     // The events of the `keepMinutes` before `until` (ms), for the filter.
     function snapshot(until) {
@@ -60,18 +95,17 @@ Singleton {
     }
     // Called up to ask: what it would send, filtered (`text`).
     function refresh() {
-        root.text = ""
         const events = root.enabled ? root.snapshot() : []
-        if (events.length === 0) return
-        filter.command = ["nixbook-desktop-mcp", "context", JSON.stringify({ now: Math.round(Date.now() / 1000), events: events })]
-        filter.running = true
-    }
-    Process {
-        id: filter
-        stdout: StdioCollector {
-            id: filtered
-            onStreamFinished: root.text = filtered.text.trim()
+        if (events.length === 0) {
+            root.text = ""
+            root._writeRecent()
+            return
         }
+        // On the helper's thread (no Python start each time).
+        DesktopHelper.run(["context", JSON.stringify({ now: Math.round(Date.now() / 1000), events: events })], "", (code, out) => {
+            root.text = code === 0 ? String(out ?? "").trim() : ""
+            root._writeRecent()
+        })
     }
 
     // The windows in front, and their titles as they change.

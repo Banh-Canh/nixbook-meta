@@ -1,7 +1,8 @@
-"""nixbook-quick-ai: the instant answers of the shell's Quick AI card (a
-selection, the screen, the launcher, a notification). One request, one
-answer, no agent start: the provider's Messages API (Meta's: Muse) called
-directly with its small model, so the card answers in a couple of seconds.
+"""nixbook-quick-ai: the instant answers of the shell's Quick AI (a
+selection, the screen, the launcher, a notification, Full AI's reactions,
+Kiroshi's scan). One request, one answer, no agent start: the provider's
+Messages API (Meta's: Muse) called directly through nixbook_ai (the client
+every AI script of the shell shares), so it answers in a couple of seconds.
 
 Run through `nixbook-model-provider run nixbook-quick-ai ask REQUEST.json`,
 which sets the provider's environment (NIXBOOK_AI_BASE_URL, NIXBOOK_AI_KEY,
@@ -9,29 +10,40 @@ NIXBOOK_AI_MODEL, NIXBOOK_AI_SMALL_MODEL, NIXBOOK_AI_BIG_MODEL); run without
 it, the script goes through the provider itself.
 
 The request (JSON): {mode, question, text, image, context: {app, title,
-source}, history: [{role, text}], lang, effort, model: small|main|big,
-agent (the side panel's agent is there to hand a task to), delegate}. The answer, one JSON object per line on stdout:
+source}, history: [{role, text}], lang, effort, model: small|main|big}. The
+answer, one JSON object per line on stdout:
   {"type": "start", "provider", "model"}
   {"type": "delta", "text"}        (streamed text, when the server streams)
   {"type": "answer", "text"}       (the whole answer, always last)
   {"type": "replies", "replies"}   (mode reply: the suggestions)
   {"type": "error", "error"}
   {"type": "done", "ms"}
-Text is masked by nixbook-desktop-mcp's privacy mask (names, emails… →
-⟦Person 1⟧) before it leaves, and the answer unmasked; what was sent is
-recorded in the desktop-mcp sent log, like every other AI pass.
+What the desktop knows for the request (the time, weather, next events, the
+user's corrections and preferences, the memory, what they just did) comes
+from desktop-mcp's context broker (`context build --for text|react|scan`),
+the one every AI surface reads. Text is masked by desktop-mcp's privacy mask
+(names, emails… → ⟦Person 1⟧) before it leaves, and the answer unmasked;
+what was sent is recorded in the desktop-mcp sent log, like every other AI
+pass.
+
+The `do` mode (the desktop agent) is nixbook-meta-agent's now, the shell's
+only agent loop: the request is handed to it (exec), its stream-json events
+on stdout instead of these.
 """
 
+import base64
+import concurrent.futures
 import json
-import re
 import os
-import shutil
-import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
-import base64
+
+# The shared client (nixbook_ai.py), next to this script in the source tree
+# and in the package.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import nixbook_ai  # noqa: E402
+
+mask, unmask = nixbook_ai.mask, nixbook_ai.unmask
 
 MODES = {
     "explain": "Explain the text below clearly and briefly: what it means, and anything worth knowing "
@@ -76,31 +88,25 @@ def emit(kind, **fields):
     sys.stdout.flush()
 
 
-def desktop_mcp(*args, data=None, env=None):
-    """nixbook-desktop-mcp ARGS (stdin DATA): its stdout, None without it."""
-    exe = shutil.which("nixbook-desktop-mcp")
-    if not exe:
-        return None
+def broker(surface, query="", app="", title="", no_activity=False):
+    """What the desktop knows for this request, from desktop-mcp's context
+    broker (`context build --for SURFACE`): its text, "" when it can't say
+    (then the request's own pieces are used)."""
+    argv = ["context", "build", "--for", surface, "--query", str(query or "")[:500]]
+    if app:
+        argv += ["--app", str(app)[:200]]
+    if title:
+        argv += ["--title", str(title)[:200]]
+    if no_activity:
+        argv.append("--no-activity")
+    code, out = nixbook_ai.dm(argv, timeout=10)
+    if code != 0:
+        return ""
     try:
-        p = subprocess.run([exe, *args], input=data, capture_output=True, text=True, timeout=30,
-                           env={**os.environ, **env} if env else None)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return p.stdout if p.returncode == 0 else None
-
-
-def mask(text):
-    if not text:
-        return text
-    out = desktop_mcp("privacy", "mask", data=text)
-    return text if out is None else out
-
-
-def unmask(text):
-    if not text or "⟦" not in text:
-        return text
-    out = desktop_mcp("privacy", "unmask", data=text)
-    return text if out is None else out
+        d = json.loads(out)
+    except ValueError:
+        return ""
+    return str(d.get("text") or "").strip() if isinstance(d, dict) else ""
 
 
 def build(req):
@@ -131,9 +137,16 @@ def build(req):
         parts.append(f"Question: {question}")
     if text:
         parts.append(f"Text:\n<<<\n{text}\n>>>")
-    facts = str(req.get("facts") or "").strip()
-    if facts and mode in ("do", "ask"):
-        parts.append(f"What the desktop knows right now:\n{facts[:2000]}")
+    # What the desktop knows (the broker: facts, corrections, preferences,
+    # memory): not for a text copied out of an image; the text's own
+    # rewrites without what the user just did.
+    known = "" if mode == "extract" else broker(
+        "text", question or text[:300], ctx.get("app") or "", ctx.get("title") or "", no_activity=mode in TEXT_ONLY)
+    if not known and mode == "ask":
+        known = str(req.get("facts") or "").strip()[:2000]
+    if known:
+        parts.append("What the desktop knows (the time, the user's preferences, their memory; use it only where it "
+                     f"helps):\n{known}")
     prompt = mask("\n\n".join(parts))
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
     content = [{"type": "text", "text": prompt}]
@@ -162,592 +175,63 @@ def build(req):
     return mode, system, messages, prompt
 
 
-def model_for(req):
-    which = req.get("model") or "small"
-    env = os.environ
-    main = env.get("NIXBOOK_AI_MODEL", "")
-    return {"small": env.get("NIXBOOK_AI_SMALL_MODEL") or main,
-            "big": env.get("NIXBOOK_AI_BIG_MODEL") or main}.get(which, main)
+def model_alias(req, default="small"):
+    return str(req.get("model") or default)
 
 
-def endpoint():
-    """The provider's base URL and key (nixbook-model-provider's)."""
-    base = os.environ.get("NIXBOOK_AI_BASE_URL", "").rstrip("/")
-    key = os.environ.get("NIXBOOK_AI_KEY", "")
-    if not base or not key:
-        raise RuntimeError("no model provider with an API key (Settings > Desktop agents > Model provider)")
-    return base, key
-
-
-def child_env(extra=None):
-    """What the desktop tools run with: never the provider's key."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("NIXBOOK_AI_")}
-    env.update(extra or {})
-    return env
-
-
-def call_api(req, system, messages, on_delta):
-    """The provider's Messages API, streamed. A server that refuses the
-    effort settings (not every server with a Messages API has them) is asked
-    again without them."""
-    base, key = endpoint()
-    model = model_for(req)
+def answer_text(req, p, system, messages, on_delta):
+    """The text modes' answer: Meta's fast chat endpoint first when the
+    effort is low (reasoning_effort "minimal": about 2 s faster), else the
+    Messages API streamed, its effort settings dropped if refused."""
     effort = str(req.get("effort") or "low")
-    # The OpenAI-style chat endpoint first (Meta's): it takes reasoning_effort
-    # "minimal", about 2 s faster than the Messages API's lowest thinking.
-    text = chat_answer(req, base, key, model, system, messages, effort)
-    if text is not None:
-        on_delta(text)
-        return model, text
-    body = {"model": model, "max_tokens": 4000, "stream": True, "system": system, "messages": messages}
-    tuned = {**body, "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
-    for attempt in (tuned, body):
-        r = urllib.request.Request(base + "/v1/messages", data=json.dumps(attempt).encode(), method="POST",
-                                   headers={"Authorization": f"Bearer {key}", "anthropic-version": "2023-06-01",
-                                            "content-type": "application/json", "accept": "text/event-stream"})
-        try:
-            with urllib.request.urlopen(r, timeout=90) as resp:
-                return model, read_stream(resp, on_delta)
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")
-            try:
-                d = json.loads(detail)
-                detail = (d.get("error") or {}).get("message") or d.get("message") or detail
-            except ValueError:
-                pass
-            if attempt is tuned and e.code == 400 and any(w in detail for w in ("thinking", "effort", "output_config")):
-                continue
-            raise RuntimeError(f"HTTP {e.code}: {str(detail)[:300]}")
-    raise RuntimeError("the server refused the request")
+    stream = []
 
-
-def chat_messages(system, messages):
-    """Messages API messages in the OpenAI chat shape (text and base64
-    images)."""
-    out = [{"role": "system", "content": system}]
-    for m in messages:
-        c = m["content"]
-        if isinstance(c, str):
-            out.append({"role": m["role"], "content": c})
-            continue
-        parts = []
-        for b in c:
-            if b.get("type") == "text":
-                parts.append({"type": "text", "text": b["text"]})
-            elif b.get("type") == "image":
-                src = b["source"]
-                parts.append({"type": "image_url", "image_url": {"url": f"data:{src['media_type']};base64,{src['data']}"}})
-        out.append({"role": m["role"], "content": parts})
-    return out
-
-
-def chat_answer(req, base, key, model, system, messages, effort):
-    """The answer through /v1/chat/completions, or None when the server has
-    no such endpoint (then the Messages API answers)."""
-    global CHAT_OK
-    if CHAT_OK is False or effort not in ("low", "minimal"):
-        return None
-    body = {"model": model, "max_completion_tokens": 4000, "reasoning_effort": "minimal",
-            "messages": chat_messages(system, messages)}
-    r = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
-                               headers={"Authorization": f"Bearer {key}", "content-type": "application/json"})
-    try:
-        with urllib.request.urlopen(r, timeout=90) as resp:
-            d = json.loads(resp.read().decode())
-        text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content")
-        if not isinstance(text, str):
-            raise ValueError("no choices")
-        CHAT_OK = True
-        return text
-    except urllib.error.HTTPError as e:
-        if e.code not in (400, 404, 405, 422):
-            raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:300]}")
-    except (ValueError, KeyError, IndexError, AttributeError):
-        pass
-    CHAT_OK = False
-    return None
-
-
-def read_stream(resp, on_delta):
-    if "text/event-stream" not in (resp.headers.get("content-type") or ""):
-        d = json.loads(resp.read().decode())
-        return "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text")
-    text = []
-    for raw in resp:
-        line = raw.decode("utf-8", "replace").strip()
-        if not line.startswith("data:"):
-            continue
-        try:
-            ev = json.loads(line[5:])
-        except ValueError:
-            continue
+    def relay(ev):
         if ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta":
             piece = ev["delta"].get("text", "")
-            text.append(piece)
+            stream.append(piece)
             on_delta(piece)
-        elif ev.get("type") == "error":
-            raise RuntimeError(str((ev.get("error") or {}).get("message") or ev))
-    return "".join(text)
+    msg = nixbook_ai.call(system, messages, model=model_alias(req), effort=effort, max_tokens=4000, stream=True,
+                          on_event=relay, fast=effort in ("low", "minimal"), timeout=90, provider=p)
+    return nixbook_ai.text_of(msg) or "".join(stream)
 
 
-# ── Doing things: the desktop tools (nixbook-desktop-mcp), called by the
-# model itself. The guardrails are desktop-mcp's own (the pause, the tool
-# groups, no terminals or password managers, the audit log); the card asks
-# before a step that destroys something (a window closed, an event
-# deleted), or before every acting step with confirm "actions".
-# Every desktop tool the user has enabled (desktop-mcp's tool groups): the
-# agent has the same hands and eyes as Muse in the side panel. None left
-# out but the agent desktop's switch (Full AI works on the user's desktop).
-AGENT_SKIP = {"desktop"}
-AGENT_SYSTEM = (
-    "You run the user's desktop for them (nixbook: NixOS, the niri scrolling compositor, its own shell). They "
-    "talk to you instead of clicking, so you must be at least as fast as doing it by hand: act at once with the "
-    "fewest tool calls (several independent calls in one turn), never ask \"shall I?\" (the shell asks them itself "
-    "before the few really risky steps: deleting their data, sending messages for them), never explain what you are "
-    "about to do. Then answer as you would in a chat: what you did or found, in plain words, as long as the "
-    "question needs and no longer (\"Done, Firefox is on workspace 3.\"; a real answer to a real question), with "
-    "tools only when it is about their desktop or data; never invent results. Only when a task of several steps "
-    "partly failed, or something now needs the user, add after your answer a report, exactly: "
-    "<report>{{\"summary\": \"one line: the outcome\", \"done\": [\"what worked, one line each\"], \"failed\": [\"what "
-    "didn't work, and why\"], \"needs_you\": [\"what only the user can do or decide now\"]}}</report>, nothing after "
-    "it; otherwise no report. What the desktop already knows "
-    "comes with the request (time, weather, battery, next events, music): answer from it directly, no tool. Never "
-    "open panels, take screenshots or poke around to find information: use the tool made for it, or say you can't "
-    "tell. Media and volume: shell_ipc (target mpris: playPause, next, previous; target audio or brightness when "
-    "listed by shell_ipc_list). The user's apps' own tools are yours too, named app__tool (youtube-music__play, "
-    "spotify__search, phone__send_sms…): use them before clicking in the app. Music: play/pause only resumes what "
-    "is loaded, and does nothing when the song has ended or nothing is loaded; to start music (a song, an artist, "
-    "\"some music\", or when play/pause didn't take) use the music app's play tool (ask it what is playing first "
-    "if unsure). Bigger apps' tools come with open_app_tools. Keep learning: when the user states a lasting preference or a standing order "
-    "(\"always…\", \"never…\", \"when X happens, do Y\"), save it at once (a routine for \"when X, do Y\", "
-    "remember_about_user for what they like and who matters to them) and say you will. You only have the tools listed to you (the server's instructions below may name "
-    "others): you can't see images, so read the screen with read_screen. Answer in the language the user writes "
-    "or speaks in ({lang} when it isn't clear)."
-)
-AGENT_STEPS = 10
-
-
-# The user's apps' tools (the side panel's MCP servers, through
-# `nixbook-desktop-mcp app-tools` / `app-call`): those of a small server
-# (APP_SMALL tools or fewer: music, the phone) are given up front, a bigger
-# one's (photos: ~90) when the request names it or the model asks for them
-# (open_app_tools), so every request doesn't carry them all.
-APP_SMALL = 12
-APP_SEP = "__"
-# Few servers annotate their tools: these names only read.
-APP_READS = re.compile(r"(get|list|search|find|show|read|now_playing|my_|status|devices|ping|info)", re.I)
-
-
-def app_tool_name(server, tool):
-    return re.sub(r"[^A-Za-z0-9_-]", "_", f"{server}{APP_SEP}{tool}")[:64]
-
-
-def app_specs(servers, only=None):
-    specs, meta = [], {}
-    for server, info in servers.items():
-        if only is not None and server not in only:
-            continue
-        for t in info.get("tools") or []:
-            name = app_tool_name(server, str(t.get("name") or ""))
-            schema = {k: v for k, v in (t.get("inputSchema") or {"type": "object", "properties": {}}).items()
-                      if k != "$schema"}
-            schema.setdefault("type", "object")
-            specs.append({"name": name, "description": f"[{server}] " + str(t.get("description") or "")[:2000],
-                          "input_schema": schema})
-            ann = t.get("annotations") or {}
-            reads = bool(ann.get("readOnlyHint")) or bool(APP_READS.match(str(t.get("name") or "")))
-            meta[name] = {"group": "app", "server": server, "tool": t.get("name"), "shown": f"{server}: {t.get('name')}",
-                          "read_only": reads, "destructive": bool(ann.get("destructiveHint"))}
-    return specs, meta
-
-
-def app_servers():
-    out = desktop_mcp("app-tools")
-    try:
-        servers = json.loads(out or "{}")
-        return servers if isinstance(servers, dict) else {}
-    except ValueError:
-        return {}
-
-
-def open_app_tools_spec(big):
-    lines = [f"{n}: {', '.join(str(t.get('name')) for t in (i.get('tools') or [])[:12])}…" for n, i in big.items()]
-    return {"name": "open_app_tools",
-            "description": "Get the tools of one of the user's bigger apps, to use them in your next steps: "
-                           + "; ".join(lines),
-            "input_schema": {"type": "object", "properties": {"server": {"type": "string", "enum": sorted(big)}},
-                             "required": ["server"]}}
-
-
-def agent_tools():
-    """The tools' specs in the Messages API shape, and their groups/hints."""
-    out = desktop_mcp("tools")
-    if out is None:
-        raise RuntimeError("the desktop tools (nixbook-desktop-mcp) aren't available")
-    specs, meta = [], {}
-    for t in json.loads(out):
-        if t.get("name") in AGENT_SKIP:
-            continue
-        schema = dict(t.get("inputSchema") or {"type": "object", "properties": {}})
-        # desktop-mcp's after-action extras: not for this loop.
-        props = {k: v for k, v in (schema.get("properties") or {}).items() if k not in ("screenshot_after", "wait_ms")}
-        schema["properties"] = props
-        # Whole: the long ones (calendar, widget, contacts…) say how to use them.
-        specs.append({"name": t["name"], "description": str(t.get("description") or "")[:4000], "input_schema": schema})
-        ann = t.get("annotations") or {}
-        meta[t["name"]] = {"group": (t.get("_meta") or {}).get("nixbook/group", ""),
-                           "read_only": bool(ann.get("readOnlyHint")), "destructive": bool(ann.get("destructiveHint"))}
-    return specs, meta
-
-
-# The tools that both read and write (calendar, tasks, contacts, widget,
-# equalizer, layouts…) say which with their `action`: these only read.
-READ_ACTIONS = {"list", "lists", "upcoming", "get", "search", "find", "show", "status", "layout", "day", "events",
-                "read", "next", "agenda", "info", "count", "check", "history"}
-
-
-def reads_only(name, args, meta):
-    if meta.get(name, {}).get("read_only"):
-        return True
-    action = str((args or {}).get("action") or "").lower()
-    return action in READ_ACTIONS
-
-
-# The really risky steps, the only ones asked about by default (confirm
-# "destructive"): data deleted, words sent to other people in the user's
-# name, credentials, money. Closing a window, adding an event, clicking
-# around or playing music just happen.
-RISKY_TOOL = re.compile(r"(^|_)(delete|remove|empty_trash|purge|wipe|clear|merge|resolve_duplicates|credentials|"
-                        r"send|sms|reply|connect_with|partner|uninstall|format|buy|pay|purchase|order)", re.I)
-RISKY_ACTION = re.compile(r"^(delete|remove|clear|purge|empty|reply|send)", re.I)
-# A click on such a button (ui_act/click on an element named so).
-RISKY_TARGET = re.compile(r"\b(delete|remove|send|reply|pay|buy|purchase|order|checkout|unsubscribe|empty trash|"
-                          r"erase|format|uninstall|supprimer|envoyer|payer|acheter|l(ö|oe)schen|senden|x(ó|o)a|g(ử|u)i)\b", re.I)
-HARMLESS_TOOL = re.compile(r"(queue|playlist|playback|volume|seek|repeat|shuffle)", re.I)
-
-
-def is_risky(name, args, meta):
-    tool = str(meta.get(name, {}).get("tool") or name)
-    if HARMLESS_TOOL.search(tool):
-        return False
-    if RISKY_TOOL.search(tool):
-        return True
-    action = str((args or {}).get("action") or "")
-    if RISKY_ACTION.match(action):
-        return True
-    if tool == "browser_act":
-        # A click (or a form sent) on a "Send", "Pay", "Order"… button.
-        return str((args or {}).get("action") or "") in ("click", "submit", "press") and bool(
-            RISKY_TARGET.search(str((args or {}).get("name") or "")))
-    if tool in ("ui_act", "click", "notification_action"):
-        said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
-        return bool(RISKY_TARGET.search(said))
-    return False
-
-
-def needs_ok(req, name, args, meta):
-    confirm = str(req.get("confirm") or "destructive")
-    if reads_only(name, args, meta) or confirm == "never":
-        return False
-    if confirm == "actions":
-        return True
-    return is_risky(name, args, meta)
-
-
-def run_tool(name, args, info=None):
-    """A desktop tool, or an app's (info: its server): (its text, failed, the
-    tool_result content: text and images, so the model sees a screenshot)."""
-    exe = shutil.which("nixbook-desktop-mcp")
-    env = child_env({"NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"})
-    cmd = [exe, "app-call", info["server"], str(info["tool"]), json.dumps(args)] if (info or {}).get("server") else \
-        [exe, "call", name, json.dumps(args), "--json"]
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return f"error: {e}", True, f"error: {e}"
-    failed = p.returncode != 0
-    try:
-        items = json.loads(p.stdout)
-        if not isinstance(items, list):
-            raise ValueError
-    except ValueError:
-        out = (p.stdout or "").strip() or (p.stderr or "").strip() or ("done" if not failed else "failed")
-        return out[:6000], failed, out[:6000]
-    texts, blocks = [], []
-    for c in items:
-        if c.get("type") == "text":
-            texts.append(str(c.get("text", "")))
-        elif c.get("type") == "image" and c.get("data"):
-            blocks.append({"type": "image", "source": {"type": "base64", "media_type": c.get("mimeType") or "image/png",
-                                                        "data": c["data"]}})
-    out = "\n".join(texts).strip()[:6000] or ("done" if not failed else "failed")
-    return out, failed, ([{"type": "text", "text": out}] + blocks[:2]) if blocks else out
-
-
-def step_summary(name, args):
-    keys = ("app", "name", "id", "index", "workspace", "text", "title", "body", "message", "query", "target",
-            "function", "theme", "variant", "action", "keys", "path")
-    bits = [f"{k}={str(args[k])[:40]}" for k in keys if k in args]
-    return ", ".join(bits)[:120]
-
-
-def post(req, body):
-    """One non-streamed Messages API call (the effort settings dropped if
-    the server refuses them)."""
-    base, key = endpoint()
-    tuned = {**body, "thinking": {"type": "adaptive"}, "output_config": {"effort": str(req.get("effort") or "low")}}
-    for attempt in (tuned, body):
-        r = urllib.request.Request(base + "/v1/messages", data=json.dumps(attempt).encode(), method="POST",
-                                   headers={"Authorization": f"Bearer {key}", "anthropic-version": "2023-06-01",
-                                            "content-type": "application/json"})
-        try:
-            with urllib.request.urlopen(r, timeout=120) as resp:
-                return json.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")
-            try:
-                d = json.loads(detail)
-                detail = (d.get("error") or {}).get("message") or d.get("message") or detail
-            except ValueError:
-                pass
-            if attempt is tuned and e.code == 400 and any(w in detail for w in ("thinking", "effort", "output_config")):
-                continue
-            raise RuntimeError(f"HTTP {e.code}: {str(detail)[:300]}")
-    raise RuntimeError("the server refused the request")
-
-
-# This run's steps ({tool, summary, status, result, read_only}), by id:
-# what the report says was done comes from them, not only from the model.
-RUN_STEPS = {}
-
-
-def note_step(step_id, tool, summary, status, result="", read_only=False):
-    RUN_STEPS[step_id] = {"tool": tool, "summary": summary, "status": status, "result": result, "read_only": read_only}
-
-
-def step_line(s):
-    line = s["tool"].replace("_", " ") + (f" ({s['summary']})" if s.get("summary") else "")
-    if s["status"] == "denied":
-        return line + ": you said no"
-    if s["status"] == "error" and s.get("result"):
-        return line + ": " + str(s["result"]).strip().splitlines()[0][:160]
-    return line
-
-
-def build_report(text):
-    """The answer and, when the agent changed something, its report: the
-    model's own (<report>{…}</report>) where it gave one, the steps that
-    failed added when it left them out. None for a plain answer."""
-    import re as _re
-    m = _re.search(r"<report>\s*(\{.*?\})\s*</report>", text, _re.S)
-    model = {}
-    if m:
-        try:
-            model = json.loads(m.group(1))
-        except ValueError:
-            model = {}
-        text = (text[:m.start()] + text[m.end():]).strip()
-    steps = list(RUN_STEPS.values())
-    acted = [s for s in steps if not s["read_only"]]
-    if not acted and not model:
-        return text, None
-    lst = lambda k: [str(x).strip() for x in (model.get(k) or []) if str(x).strip()][:12]  # noqa: E731
-    done, failed, needs = lst("done"), lst("failed"), lst("needs_you")
-    # The steps that failed and weren't done after all (no later success of
-    # the same tool): said even when the model leaves them out. One that
-    # failed and then worked isn't the user's business.
-    bad = [s for i, s in enumerate(steps) if s["status"] in ("error", "denied")
-           and not any(t["tool"] == s["tool"] and t["status"] == "ok" for t in steps[i + 1:])]
-    if bad and not failed:
-        failed = [step_line(s) for s in bad][:8]
-    # It went well and nothing needs them: just the answer, as in a chat.
-    if not failed and not needs:
-        if not text:
-            text = str(model.get("summary") or "").strip() or ("\n".join(done) if done else "Done.")
-        return text, None
-    if not done:
-        done = [step_line(s) for s in acted if s["status"] == "ok"][:12]
-    summary = str(model.get("summary") or "").strip() or (text.splitlines()[0] if text else "") or \
-        ("Done." if not bad else "Done, with problems.")
-    report = {"summary": summary, "done": done, "failed": failed, "needsYou": needs, "steps": len(steps),
-              "ok": sum(1 for s in steps if s["status"] == "ok"), "ko": len(bad)}
-    parts = [summary]
-    parts += [f"- ✓ {d}" for d in done] + [f"- ✗ {f}" for f in failed] + [f"- → {n}" for n in needs]
-    return "\n".join(parts), report
-
-
-def tool_instructions(req):
-    """desktop-mcp's own instructions, as an MCP client gets them at
-    initialize: how to use its tools, and the desktop memory (aliases,
-    notes, recipes) for this task."""
-    query = str(req.get("followUp") or req.get("question") or "")[:500]
-    out = desktop_mcp("instructions", env={"NIXBOOK_DESKTOP_MCP_QUERY": query, "NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"})
-    return (out or "").strip()[:8000]
-
-
-ASK_AGENT = {
-    "name": "ask_agent",
-    "description": "Hand the task over to Muse in the side panel, the user's full agent, when it needs what you "
-                   "don't have: searching the web, reading or writing the user's files, other MCP servers, long "
-                   "work. The conversation goes on there (it sees what was said). Give the complete task with "
-                   "everything you already know; don't use it for what your own tools do.",
-    "input_schema": {"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"]},
-}
-
-
-def machine_context():
-    """The shell's own reference about this machine (system-context.md, made
-    by the Home Manager module): the parts that help acting on it (the
-    machine, the shell, how things are done), not the package lists."""
-    path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-                        "nixbook-shell", "system-context.md")
-    try:
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return ""
-    keep, out = False, []
-    for line in text.splitlines():
-        if line.startswith("## "):
-            keep = any(w in line for w in ("This machine", "Desktop shell", "How things are done", "Keyboard shortcuts (niri"))
-        if keep:
-            out.append(line)
-    return ("About this machine:\n" + "\n".join(out))[:14000] if out else ""
-
-
-def agent(req, system, messages):
-    """The model with the desktop tools, up to AGENT_STEPS rounds. Each
-    call is a "step" event; one needing the user's OK an "approve" event,
-    answered by a line on stdin (yes / no)."""
-    specs, meta = agent_tools()
-    # What the side panel's Muse starts with (Ai.stableSystemPrompt: the
-    # configured prompt, this machine's whole reference and the shell's live
-    # settings, when ai.includeSystemContext): the same knowledge. It comes
-    # first and is cached (it changes rarely): the next calls read it from
-    # the provider's cache instead of paying ~0.5 s each for its tokens.
-    panel = str(req.get("panel") or "").strip() if "panel" in req else machine_context()
-    stable = f"{system}\n\n{mask(panel)}" if panel else system
-    system = ""
-    told = tool_instructions(req)
-    if told:
-        system = ("The desktop tools' own instructions (from their server: with the desktop memory and what "
-                  f"agents remember about the user, for this task):\n{mask(told)}")
-    # The apps' tools: the small servers', and a big one's when it is named.
-    apps = app_servers()
-    asked = str(req.get("followUp") or req.get("question") or "").lower()
-    up_front = {n for n, i in apps.items() if len(i.get("tools") or []) <= APP_SMALL
-                or n.lower().replace("-", " ") in asked.replace("-", " ")}
-    more, more_meta = app_specs(apps, up_front)
-    specs, meta = specs + more, {**meta, **more_meta}
-    big = {n: i for n, i in apps.items() if n not in up_front}
-    if big:
-        specs = specs + [open_app_tools_spec(big)]
-    hints = [f"{n}: {i['instructions'][:400]}" for n, i in apps.items() if n in up_front and i.get("instructions")]
-    if hints:
-        system = f"{system}\n\nThe apps' own instructions:\n" + "\n".join(hints)
-    if req.get("activity"):
-        system = f"{system}\n\nWhat the user did just before (most recent last):\n{mask(str(req['activity'])[-3000:])}"
-    system = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}] + (
-        [{"type": "text", "text": system.strip()}] if system.strip() else [])
-    # The side panel's agent, the whole assistant (web, files, other MCP
-    # servers): the task handed over, the conversation going on there.
-    if req.get("agent") and req.get("delegate", True):
-        specs = specs + [ASK_AGENT]
-    model = model_for(req)
-    said = []
-    for _ in range(AGENT_STEPS):
-        d = post(req, {"model": model, "max_tokens": 6000, "system": system, "messages": messages, "tools": specs})
-        content = [b for b in d.get("content") or [] if b.get("type") in ("text", "tool_use")]
-        texts = [b["text"] for b in content if b["type"] == "text" and b.get("text", "").strip()]
-        calls = [b for b in content if b["type"] == "tool_use"]
-        if texts and calls:
-            emit("note", text=unmask(" ".join(texts)))
-        if not calls:
-            said = texts
-            break
-        handoff = next((c for c in calls if c.get("name") == "ask_agent"), None)
-        if handoff:
-            task = str((handoff.get("input") or {}).get("task") or "").strip()
-            emit("delegate", task=unmask(task))
-            said = [" ".join(texts) or "Asking Muse…"]
-            break
-        messages.append({"role": "assistant", "content": content})
-        results = []
-        for c in calls:
-            name, args = c.get("name", ""), c.get("input") or {}
-            shown = unmask(step_summary(name, args))
-            label = meta.get(name, {}).get("shown") or name
-            if needs_ok(req, name, args, meta):
-                emit("approve", id=c["id"], tool=label, summary=shown, args=json.loads(unmask(json.dumps(args, ensure_ascii=False))))
-                answer = sys.stdin.readline().strip().lower()
-                if answer not in ("y", "yes", "ok"):
-                    note_step(c["id"], label, shown, "denied", read_only=reads_only(name, args, meta))
-                    emit("step", id=c["id"], tool=label, summary=shown, status="denied")
-                    results.append({"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
-                                    "content": "the user said no: don't do it, don't retry it another way"})
-                    continue
-            if name == "open_app_tools":
-                server = str(args.get("server") or "")
-                if server in big:
-                    extra, extra_meta = app_specs({server: big.pop(server)})
-                    specs = [t for t in specs if t["name"] != "open_app_tools"] + extra + (
-                        [open_app_tools_spec(big)] if big else [])
-                    meta.update(extra_meta)
-                    out = f"{server}'s tools are yours now: " + ", ".join(t["name"] for t in extra)
-                else:
-                    out = f"no such app: {server}"
-                note_step(c["id"], name, server, "ok", out[:300], True)
-                results.append({"type": "tool_result", "tool_use_id": c["id"], "content": out})
-                continue
-            emit("step", id=c["id"], tool=label, summary=shown, status="run")
-            out, failed, result = run_tool(name, args, meta.get(name))
-            emit("step", id=c["id"], tool=label, summary=shown, status="error" if failed else "ok",
-                 result=unmask(out[:300]))
-            note_step(c["id"], label, shown, "error" if failed else "ok", unmask(out[:300]),
-                      reads_only(name, args, meta))
-            if failed and "desktop control is paused" in out:
-                emit("paused")
-            results.append({"type": "tool_result", "tool_use_id": c["id"], "content": result, "is_error": failed})
-        messages.append({"role": "user", "content": results})
-    else:
-        # Out of steps: an answer all the same, from what it has, no more tools.
-        messages.append({"role": "user", "content": "Stop using tools now. Answer the user from what you found, "
-                         "and say plainly what you couldn't do."})
-        said = []
-        try:
-            d = post(req, {"model": model, "max_tokens": 3000, "system": system, "messages": messages,
-                           "tools": specs, "tool_choice": {"type": "none"}})
-            said = [b["text"] for b in d.get("content") or [] if b.get("type") == "text" and b.get("text", "").strip()]
-        except RuntimeError:
-            pass
-        if not said:
-            said = [f"I stopped after {AGENT_STEPS} steps without finishing."]
-    learn_episode(req)
-    return model, "\n".join(said)
-
-
-def learn_episode(req):
-    """What this task did, to the desktop memory's learning pass, as the side
-    panel's desktop MCP session does when a task ends: the notes that helped
-    counted, a new way of doing something that took work saved as a note or
-    a recipe. In the background: the answer waits for nothing."""
-    steps = [s for s in RUN_STEPS.values() if s["status"] in ("ok", "error")]
-    if not any(not s["read_only"] for s in steps):
-        return
-    exe = shutil.which("nixbook-desktop-mcp")
+# ── Doing things: nixbook-meta-agent, the shell's only agent loop. The
+# request is handed over to it as Quick AI's own loop used to run it: the
+# desktop tools (the desktop MCP server: its pause, tool groups, guardrails
+# and audit log), the broker's context for the bubble, the risky steps
+# refused (no one to answer an approval on this command line, unless
+# confirm "never"), a report, the apps' big servers on demand, the episode
+# learned. Its stream-json events come out instead of this script's.
+def do_mode(req):
+    import shutil
+    exe = shutil.which("nixbook-meta-agent")
     if not exe:
-        return
-    episode = {"task": unmask(str(req.get("followUp") or req.get("question") or ""))[:500],
-               "actions": [{"tool": s["tool"], "do": s.get("summary") or "",
-                            "error": str(s["result"])[:160] if s["status"] == "error" else None} for s in steps]}
-    try:
-        p = subprocess.Popen([exe, "episode", "-"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, text=True, start_new_session=True,
-                             env=child_env({"NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}))
-        p.stdin.write(json.dumps(episode, ensure_ascii=False))
-        p.stdin.close()
-    except OSError:
-        pass
+        emit("error", error="the desktop agent (nixbook-meta-agent) isn't installed")
+        return 1
+    question = str(req.get("followUp") or req.get("question") or "").strip()
+    text = str(req.get("text") or "")[:TEXT_MAX]
+    prompt = question + (f"\n\nText:\n<<<\n{text}\n>>>" if text else "") or "(empty message)"
+    cfg = nixbook_ai.config()
+    agent = (cfg.get("ai") or {}).get("agent") or {}
+    confirm = str(req.get("confirm") or "destructive")
+    servers = {"mcpServers": {"desktop": {"command": "nixbook-desktop-mcp",
+                                          "env": {"NIXBOOK_DESKTOP_MCP_CLIENT": "Quick AI"}}}}
+    args = [exe, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--strict-mcp-config", "--mcp-config", json.dumps(servers), "--allowedTools", "mcp__desktop",
+            "--context-for", "bubble", "--confirm", confirm if confirm in ("destructive", "actions", "never")
+            else "destructive", "--report", "--lazy-mcp", "12", "--learn",
+            "--model", model_alias(req, nixbook_ai.routing(cfg)["quick"]), "--no-session-persistence"]
+    if agent.get("resolve", True) is not False:
+        args.append("--resolve")
+    if agent.get("verify", True) is not False:
+        args.append("--verify")
+    if str(req.get("effort") or "") in nixbook_ai.EFFORTS:
+        args += ["--effort", str(req["effort"])]
+    if str(req.get("panel") or "").strip():
+        args += ["--append-system-prompt", str(req["panel"])]
+    sys.stdout.flush()
+    os.execv(exe, args + ["--", prompt])
 
 
 def replies_of(text):
@@ -839,74 +323,101 @@ def learned_for(ev, d):
 
 def learn_command(raw):
     """`learn JSON`: {sig?, event?, decision, outcome, said?} a reaction and
-    the user's answer; {pref: text} a preference; {forget: true} all gone."""
+    the user's answer (kept here: the past reactions Full AI reads back);
+    {pref: text, app?, sig?} a preference, in the one memory every AI
+    surface reads (desktop-mcp's `prefs add`; here only when it can't);
+    {forget: true} the reactions gone."""
     try:
         item = json.loads(raw)
     except ValueError:
         print("learn: JSON expected", file=sys.stderr)
         return 2
+    if not isinstance(item, dict):
+        print("learn: a JSON object expected", file=sys.stderr)
+        return 2
     d = read_learned()
     if item.get("forget") is True:
         write_learned({})
         return 0
+    changed = False
     if item.get("pref"):
-        prefs = [p for p in d.get("prefs") or [] if p.get("text") != item["pref"]]
-        prefs.append({"text": str(item["pref"])[:300], "t": int(time.time())})
-        d["prefs"] = prefs[-60:]
+        pref = {"text": str(item["pref"])[:300], "source": "fullai"}
+        if item.get("app"):
+            pref["app"] = str(item["app"])[:80]
+        if item.get("sig"):
+            pref["signature"] = str(item["sig"])[:120]
+        code, _ = nixbook_ai.dm(["prefs", "add", json.dumps(pref, ensure_ascii=False)])
+        if code != 0:
+            prefs = [p for p in d.get("prefs") or [] if p.get("text") != item["pref"]]
+            prefs.append({"text": str(item["pref"])[:300], "t": int(time.time())})
+            d["prefs"] = prefs[-60:]
+            changed = True
     if item.get("decision"):
         sig = item.get("sig") or event_sig(item.get("event") or {})
         rec = {"sig": sig, "t": int(time.time()), "decision": item["decision"], "outcome": item.get("outcome", ""),
                "said": str(item.get("said") or "")[:200]}
         d["reactions"] = ((d.get("reactions") or []) + [rec])[-400:]
-    write_learned(d)
+        changed = True
+    if changed:
+        write_learned(d)
     return 0
 
 
-def react(req, started, provider):
+REACT_SCHEMA = {"type": "object", "properties": {
+    "action": {"type": "string", "enum": ["ignore", "tell", "ask", "do"]}, "say": {"type": "string"},
+    "instruction": {"type": "string"}, "basis": {"type": "string", "enum": ["told", "learned", "guess"]},
+    "learn": {"type": "string"}}, "required": ["action", "say", "basis"]}
+
+
+def react(req, started, p):
+    """A decision on the user's behalf: the routing's decisions model
+    (ai.routing.decisions, the big one by default, with its effort), the
+    broker's context for the event (its facts, the user's corrections and
+    preferences, the memory notes, whole lines), the conversation and the
+    past reactions to the same kind of thing."""
     ev = req.get("event") or {}
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
     d = read_learned()
     past, prefs = learned_for(ev, d)
+    r = nixbook_ai.routing()
+    model = str(req.get("model") or r["decisions"])
+    effort = str(req.get("effort") or r["decisionsEffort"])
     parts = ["What happened: " + json.dumps({k: v for k, v in ev.items() if v not in ("", None)}, ensure_ascii=False)]
-    if req.get("facts"):
-        parts.append("What the desktop knows right now:\n" + str(req["facts"])[:1500])
+    known = broker("react", f"{ev.get('app', '')} {ev.get('title', '')} {ev.get('text', '')}".strip(),
+                   ev.get("app") or "", ev.get("title") or "")
+    if known:
+        parts.append("What the desktop knows (the time, the user's corrections and preferences, the memory, what "
+                     f"they just did):\n{known}")
+    else:
+        # No broker: the request's own facts and the preferences kept here.
+        if req.get("facts"):
+            parts.append("What the desktop knows right now:\n" + str(req["facts"])[:1500])
+        if prefs:
+            parts.append("What the user prefers (learned):\n" + "\n".join("- " + x.get("text", "") for x in prefs))
     if req.get("recent"):
         parts.append("The conversation with the user so far (what they told you):\n" + str(req["recent"])[-2500:])
     if past:
         parts.append("Your past reactions to the same kind of thing and what the user answered:\n" + "\n".join(
-            f"- {time.strftime('%d %b', time.localtime(r.get('t', 0)))}: you {r.get('decision')}, "
-            f"the user {r.get('outcome') or 'said nothing'}{': ' + r['said'] if r.get('said') else ''}" for r in past))
-    if prefs:
-        parts.append("What the user prefers (learned):\n" + "\n".join("- " + p.get("text", "") for p in prefs))
-    told = tool_instructions({"question": f"{ev.get('app', '')} {ev.get('title', '')} {ev.get('text', '')}"})
-    if told:
-        parts.append("Notes from the desktop memory:\n" + told[-3000:])
+            f"- {time.strftime('%d %b', time.localtime(x.get('t', 0)))}: you {x.get('decision')}, "
+            f"the user {x.get('outcome') or 'said nothing'}{': ' + x['said'] if x.get('said') else ''}" for x in past))
     prompt = mask("\n\n".join(parts))
     system = REACT_SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
-    emit("start", provider=provider, model=model_for(req))
-    desktop_mcp("sent", "note", "Full AI: a reaction", prompt, f"{provider.lower()}:{model_for(req)}")
+    emit("start", provider=p.label, model=p.model(model))
+    nixbook_ai.sent_note("Full AI: a reaction", f"{p.label.lower()}:{p.model(model)}", prompt)
     try:
-        base, key = endpoint()
-        messages = [{"role": "user", "content": prompt}]
-        text = chat_answer(req, base, key, model_for(req), system, messages, "low")
-        if text is None:
-            d2 = post(req, {"model": model_for(req), "max_tokens": 2000, "system": system, "messages": messages})
-            text = "".join(b.get("text", "") for b in d2.get("content") or [] if b.get("type") == "text")
+        decision = nixbook_ai.answer(system, prompt, model=model, effort=effort, schema=REACT_SCHEMA, timeout=60,
+                                     max_tokens=3000, provider=p)
     except Exception as e:  # noqa: BLE001
         emit("error", error=str(e))
         emit("done", ms=int((time.monotonic() - started) * 1000))
         return 1
-    m = re.search(r"\{.*\}", unmask(text), re.S)
-    try:
-        decision = json.loads(m.group(0)) if m else {}
-    except ValueError:
-        decision = {}
+    decision = nixbook_ai.unmask_json(decision) if isinstance(decision, dict) else {}
     action = decision.get("action") if decision.get("action") in ("ignore", "tell", "ask", "do") else "ignore"
     basis = decision.get("basis") if decision.get("basis") in ("told", "learned", "guess") else "guess"
     # Acting alone: only on what it was told, or what the user chose at
     # least twice before for this kind of thing; else it asks.
     if action == "do":
-        agreed = sum(1 for r in past if r.get("outcome") in ("agreed", "did it") and r.get("decision") in ("ask", "do"))
+        agreed = sum(1 for x in past if x.get("outcome") in ("agreed", "did it") and x.get("decision") in ("ask", "do"))
         if basis == "guess" or (basis == "learned" and agreed < 2) or not str(decision.get("instruction") or "").strip():
             action = "ask"
     emit("react", action=action, say=str(decision.get("say") or "").strip()[:400],
@@ -924,29 +435,27 @@ def ask(path):
     except (OSError, ValueError) as e:
         emit("error", error=f"no request: {e}")
         return 2
-    base = os.environ.get("NIXBOOK_AI_BASE_URL", "")
-    provider = os.environ.get("NIXBOOK_AI_LABEL") or ("Meta" if "meta.ai" in base else "Custom")
+    if req.get("mode") == "do":
+        return do_mode(req)
+    try:
+        p = nixbook_ai.Provider.from_env()
+    except nixbook_ai.AIError as e:
+        emit("error", error=str(e))
+        emit("done", ms=int((time.monotonic() - started) * 1000))
+        return 1
     if req.get("mode") == "scan":
-        return scan(req, started, provider)
+        return scan(req, started, p)
     if req.get("mode") == "react":
-        return react(req, started, provider)
+        return react(req, started, p)
     try:
         mode, system, messages, prompt = build(req)
-        endpoint()
-        emit("start", provider=provider, model=model_for(req))
+        model = p.model(model_alias(req))
+        emit("start", provider=p.label, model=model)
         purpose = f"Quick AI: {mode}" + (" (screen)" if req.get("image") else "")
-        desktop_mcp("sent", "note", purpose, prompt, f"{provider.lower()}:{model_for(req)}")
-        if mode == "do":
-            lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
-            dsystem = AGENT_SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
-            _, text = agent(req, dsystem, messages)
-            text, report = build_report(unmask(text))
-            if report:
-                emit("report", **report)
-        else:
-            # Replies come as JSON: only the suggestions are shown.
-            stream = (lambda piece: None) if mode == "reply" else (lambda piece: emit("delta", text=unmask(piece)))
-            _, text = call_api(req, system, messages, stream)
+        nixbook_ai.sent_note(purpose, f"{p.label.lower()}:{model}", prompt)
+        # Replies come as JSON: only the suggestions are shown.
+        stream = (lambda piece: None) if mode == "reply" else (lambda piece: emit("delta", text=unmask(piece)))
+        text = answer_text(req, p, system, messages, stream)
     except Exception as e:  # noqa: BLE001 — every failure is the card's to show
         emit("error", error=str(e) or e.__class__.__name__)
         emit("done", ms=int((time.monotonic() - started) * 1000))
@@ -960,6 +469,7 @@ def ask(path):
         emit("answer", text=clean(mode, text))
     emit("done", ms=int((time.monotonic() - started) * 1000))
     return 0
+
 
 # ── Kiroshi scan (services/Kiroshi.qml): a situational brief of the focused
 # screen. A screenshot, the focused window's accessibility text and what the
@@ -1046,35 +556,38 @@ def image_size(path):
 
 def quick_call(args, timeout):
     """nixbook-desktop-mcp ARGS, its stdout if it answers in time, else ""."""
-    exe = shutil.which("nixbook-desktop-mcp")
-    if not exe:
-        return ""
-    env = child_env({"NIXBOOK_DESKTOP_MCP_CLIENT": "Kiroshi scan"})
-    try:
-        p = subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout, env=env)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return (p.stdout or "").strip() if p.returncode == 0 else ""
+    code, out = nixbook_ai.dm(args, timeout=timeout, env={"NIXBOOK_DESKTOP_MCP_CLIENT": "Kiroshi scan"})
+    return out.strip() if code == 0 else ""
 
 
 def scan_context(req):
-    """What the user is doing, as text for the prompt (masked later with it).
-    The accessibility tree and the recent-activity filter run in parallel."""
-    import concurrent.futures
+    """What the user is doing, as text for the prompt (masked later with it):
+    the broker's (the time, next events, what they just did, the memory)
+    and what is on screen (the windows, the latest notifications, the
+    focused window's accessibility tree), the tree and the broker asked in
+    parallel."""
     ctx = req.get("context") or {}
     recent = req.get("recent") or []
     with concurrent.futures.ThreadPoolExecutor(2) as pool:
         ui = pool.submit(quick_call, ["call", "ui_read", "{}"], 3)
-        filtered = pool.submit(quick_call, ["context", json.dumps({"now": int(time.time()), "events": recent[-40:]})], 3) \
-            if recent else None
-        ui_text, recent_text = ui.result()[:2500], (filtered.result()[:1500] if filtered else "")
-    parts = [f"Now: {ctx.get('now') or time.strftime('%a %d %b %Y %H:%M')}"]
+        known = pool.submit(broker, "scan", ctx.get("title") or ctx.get("app") or "", ctx.get("app") or "",
+                            ctx.get("title") or "")
+        ui_text, known_text = ui.result()[:2500], known.result()
+    recent_text = ""
+    if not known_text and recent:
+        # No broker: the recent activity filtered by desktop-mcp's `context`.
+        recent_text = quick_call(["context", json.dumps({"now": int(time.time()), "events": recent[-40:]})], 3)[:1500]
+    parts = []
+    if not known_text:
+        parts.append(f"Now: {ctx.get('now') or time.strftime('%a %d %b %Y %H:%M')}")
     where = " — ".join(str(ctx[k]) for k in ("app", "title") if ctx.get(k))
     if where:
         parts.append(f"Focused window: {where}")
     wins = [f"- {w.get('app', '')} — {str(w.get('title', ''))[:90]}" for w in (req.get("windows") or [])[:10]]
     if wins:
         parts.append("Open windows (last used first):\n" + "\n".join(wins))
+    if known_text:
+        parts.append(f"What the desktop knows (the time, next events, what they just did, their memory):\n{known_text}")
     if recent_text:
         parts.append(f"What they did the last minutes:\n{recent_text}")
     notes = []
@@ -1083,10 +596,11 @@ def scan_context(req):
         notes.append(f"- [{n.get('time', '')}] {n.get('app', '')} · {n.get('summary', '')}: {body}")
     if notes:
         parts.append("Latest notifications (newest first):\n" + "\n".join(notes))
-    events = [f"- {e.get('when', '')}: {e.get('summary', '')}" + (f" @ {e['location']}" if e.get("location") else "")
-              + (" (video call)" if e.get("meeting") else "") for e in (req.get("events") or [])[:4]]
-    if events:
-        parts.append("Next calendar events:\n" + "\n".join(events))
+    if not known_text:
+        events = [f"- {e.get('when', '')}: {e.get('summary', '')}" + (f" @ {e['location']}" if e.get("location") else "")
+                  + (" (video call)" if e.get("meeting") else "") for e in (req.get("events") or [])[:4]]
+        if events:
+            parts.append("Next calendar events:\n" + "\n".join(events))
     if ui_text:
         parts.append(f"The focused window's accessibility tree (what a screen reader sees):\n<<<\n{ui_text}\n>>>")
     return "\n\n".join(parts)
@@ -1148,49 +662,25 @@ def scan_handle(d):
     return {"detail": str(d.get("detail") or "")[:700], "handle": handle}
 
 
-def complete(req, system, image_block, image_url, parts, max_tokens):
+def complete(req, p, system, image_block, parts, max_tokens):
     """One answer from the provider, as fast as it goes: its OpenAI-style
     chat endpoint first when it has one (Meta's takes reasoning_effort
     "minimal", which the Messages API can't ask for: half the thinking),
     else the Messages API. Returns (text, usage)."""
-    global CHAT_OK
-    base, key = endpoint()
-    model = model_for(req)
-    if CHAT_OK is not False and str(req.get("scanEffort") or "minimal") == "minimal":
-        content = ([{"type": "image_url", "image_url": {"url": image_url}}] if image_url else []) + \
-            [{"type": "text", "text": t} for t in parts]
-        body = {"model": model, "max_completion_tokens": max_tokens, "reasoning_effort": "minimal",
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
-        r = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
-                                   headers={"Authorization": f"Bearer {key}", "content-type": "application/json"})
-        try:
-            with urllib.request.urlopen(r, timeout=120) as resp:
-                d = json.loads(resp.read().decode())
-            CHAT_OK = True
-            return str(((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""), d.get("usage") or {}
-        except urllib.error.HTTPError as e:
-            if CHAT_OK or e.code not in (400, 404, 405, 422):
-                raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:300]}")
-            CHAT_OK = False
-        except (ValueError, KeyError, IndexError):
-            CHAT_OK = False
     content = ([image_block] if image_block else []) + [{"type": "text", "text": t} for t in parts]
-    d = post(req, {"model": model, "max_tokens": max_tokens, "system": system,
-                   "messages": [{"role": "user", "content": content}]})
-    return "".join(b.get("text", "") for b in d.get("content") or [] if b.get("type") == "text"), d.get("usage") or {}
+    msg = nixbook_ai.call(system, [{"role": "user", "content": content}], model=model_alias(req),
+                          effort=str(req.get("effort") or "low"), max_tokens=max_tokens,
+                          fast=str(req.get("scanEffort") or "minimal") == "minimal", timeout=120, provider=p)
+    return nixbook_ai.text_of(msg), msg.get("usage") or {}
 
 
-CHAT_OK = None
-
-
-def scan(req, started, provider):
+def scan(req, started, p):
     """Three kinds of passes, the first two at once: the brief's two lines
     (emitted as "brief" in ~3 s), what is on the screen
     (the image: "scan", with boxes, urgency and a gist), then every item's
     detail and handle in parallel ("item", each as it comes). The image and
     the context come first in every request: the passes share that prefix
     (the provider's prompt cache)."""
-    import concurrent.futures
     ms = lambda: int((time.monotonic() - started) * 1000)  # noqa: E731
     image = req.get("image") or ""
     w, h = image_size(image)
@@ -1201,16 +691,10 @@ def scan(req, started, provider):
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
     shared = mask(SCAN_INTRO.format(w=w, h=h) + "\n\n" + scan_context(req))
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
-    model = model_for(req)
+    model = p.model(model_alias(req))
     fast = SCAN_FAST.format(kinds="|".join(sorted(SCAN_KINDS)), lang=lang)
-    try:
-        endpoint()
-    except RuntimeError as e:
-        emit("error", error=str(e))
-        emit("done", ms=ms())
-        return 1
-    emit("start", provider=provider, model=model, contextMs=ms())
-    desktop_mcp("sent", "note", "Kiroshi scan (screen)", shared + "\n\n" + fast, f"{provider.lower()}:{model}")
+    emit("start", provider=p.label, model=model, contextMs=ms())
+    nixbook_ai.sent_note("Kiroshi scan (screen)", f"{p.label.lower()}:{model}", shared + "\n\n" + fast)
     with open(image, "rb") as f:
         raw = f.read(IMAGE_MAX + 1)
     if len(raw) > IMAGE_MAX:
@@ -1220,11 +704,9 @@ def scan(req, started, provider):
     media = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
     data = base64.b64encode(raw).decode()
     image_block = {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
-    image_url = f"data:{media};base64,{data}"
 
     def ask_model(task, with_image=True, max_tokens=6000):
-        text, usage = complete(req, system, image_block if with_image else None, image_url if with_image else None,
-                               [shared, task], max_tokens)
+        text, usage = complete(req, p, system, image_block if with_image else None, [shared, task], max_tokens)
         emit("usage", usage=usage, ms=ms())
         return text
 
@@ -1273,19 +755,9 @@ def scan(req, started, provider):
     return 0
 
 
-def through_provider(argv):
-    """Run without the provider's key: through nixbook-model-provider, which
-    sets it (once: it marks the environment)."""
-    if os.environ.get("NIXBOOK_AI_KEY") or os.environ.get("NIXBOOK_AI_PROVIDED"):
-        return
-    provider = shutil.which("nixbook-model-provider")
-    if provider:
-        os.execv(provider, [provider, "run", sys.executable, "-I", os.path.abspath(__file__), *argv[1:]])
-
-
 def main(argv):
     if len(argv) == 3 and argv[1] == "ask":
-        through_provider(argv)
+        nixbook_ai.ensure_provider(argv[1:], __file__)
         return ask(argv[2])
     if len(argv) == 3 and argv[1] == "learn":
         return learn_command(argv[2])

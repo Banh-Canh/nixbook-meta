@@ -1,15 +1,23 @@
 # Talk to your desktop (Quick AI)
 
 Quick AI puts the AI where you already are, and answers in a couple of seconds:
-no agent to start. It all happens in **Muse's speech bubble** (the one `Mod+C`
+no agent to wait for. It all happens in **Muse's speech bubble** (the one `Mod+C`
 calls up), the one place to talk to the AI: what you type or say there, a region
 of the screen, a notification, a task from a Kiroshi scan. It can act on the
 desktop for you.
 
-It calls the [model provider](./ai-assistant.md)'s small model directly (Meta:
-`muse-spark-1.3`, about 2 to 5 seconds). Expand the bubble to go on in the side
-panel, where Muse (`nixbook-meta-agent`, the side panel's agent) takes the
-conversation over with the desktop tools.
+What you ask or order there is answered by **Muse's agent** (`nixbook-meta-agent`,
+the side panel's own), kept running for the bubble and started ahead, so it
+answers at once, on the quick model (Settings > Desktop agents > Accuracy and
+models > _Model for Muse in the bubble_, `ai.routing.quick`: the
+[model provider](./ai-assistant.md)'s small one by default, Meta's
+`muse-spark-1.3`). The one-shot answers about a text or an image (Explain,
+Summarize, Translate, a notification's buttons, a screen region's chips) call
+the provider's model directly instead, in a second or two.
+
+**The bubble and the side panel are one conversation**: the expand button opens
+it in the side panel, in the same agent session, and Muse just goes on (nothing
+is replayed).
 
 ## Where to call it
 
@@ -42,7 +50,7 @@ What you say or type in the bubble is an order or a question:
    [desktop control](./desktop-agents.md): windows, workspaces, apps, layouts,
    clipboard, typing, notifications, calendar, tasks, contacts, themes,
    wallpaper, widgets, equalizer, shell actions). The bubble says which step it
-   is on. When it is done, it says what changed; if it runs out of steps (10), it still answers with what it found and what it couldn't do.
+   is on. When it is done, it says what changed (up to 30 steps a message).
 5. **It asks only before really risky steps**: deleting your data (an event,
    photos, conversations), speaking for you to other people (an SMS, a
    message, a reply), credentials, paying, a click on a button such as
@@ -52,7 +60,7 @@ What you say or type in the bubble is an order or a question:
    > _Ask me before_: _Risky steps only_ (the default), _Every action_ or
    > _Never_.
 
-**It has the same brain as Muse in the side panel**, and so does Full AI
+**It is Muse in the side panel**, with the same brain, and so is Full AI
 mode:
 
 - every desktop tool you have enabled (screenshots included: it sees them) and
@@ -61,19 +69,37 @@ mode:
   reference (modules, packages, shortcuts, Neovim keymaps, how things are done)
   and the shell's live settings, when _Include system context_ is on. It is
   cached by the provider, so it costs no time after the first request;
-- your desktop memory and what agents remember about you, picked for each
-  request, and what you just did (when _Recent context_ is on).
+- what the desktop knows for each message, from one place (the context broker,
+  `nixbook-desktop-mcp context build`): the time, weather, battery, next events
+  and music, your corrections and preferences, what agents remember about you
+  and your desktop memory, picked for that message, and what you just did (when
+  _Recent context_ is on; the × in the bubble, or the history button in the side
+  panel, leaves it out of the next message).
 
 **It learns like the side panel too**: what a task did goes to the desktop
-memory's learning pass (the notes that helped count up, a new way of doing
-something that took work becomes a note or a recipe), and once a conversation
-goes quiet, the same memory pass as the side panel's chats saves what it showed
-about you. For what needs more (the web, your files, your mail or calendar
-accounts, other MCP servers), it hands the task over to the side panel's Muse agent in the same
-conversation, which answers there.
+memory's learning pass, credited to the app it worked in (the notes that helped
+count up, a new way of doing something that took work becomes a note or a
+recipe), and once a conversation goes quiet, the same memory pass as the side
+panel's chats saves what it showed about you. The web, your folders and the
+side panel's MCP servers are the bubble's as well, as you set them for Muse.
 
-It follows desktop control's own rules: `Mod+Shift+Escape` pauses it (the bubble
-then offers **Allow desktop control and retry**), it never types into terminals
+**It checks before and after** (Settings > Desktop agents > **Accuracy and
+models**, both on by default):
+
+- **It asks back when a request could mean several things** ("Which Julien:
+  the one from work or your cousin?"), before doing anything; the bubble says
+  **? Muse needs a detail before doing anything**. A clear request just gets
+  done (`ai.agent.resolve`).
+- **It checks its work**: after acting, it looks again with read-only tools
+  and fixes it once when it isn't done; the bubble says **✓ Checked: done** or
+  **⚠ Couldn't confirm it worked** with why (`ai.agent.verify`).
+- **👍 / 👎 under its answers** (`ai.agent.feedback`): 👍 tells it that was
+  right (what it used counts up); 👎 asks **What did you mean?**, and the
+  correction is remembered for similar requests from then on, with an offer to
+  ask again with it.
+
+It follows desktop control's own rules: `Mod+Shift+Escape` pauses it (a one-shot
+answer then offers **Allow desktop control and retry**), it never types into terminals
 or password managers, and every step goes to the audit log. While it acts, the
 bubble lets clicks and keys through to the apps and hides from the agent's
 screenshots.
@@ -120,14 +146,21 @@ something failed. A soft glow around the screens says the AI is in charge.
 - Steps that need your OK are asked in its balloon: say "yes" or "no".
 - The conversation is still in the speech bubble.
 
-**It reacts to what happens** (_Full AI reacts to what happens_, on by default):
+**It reacts to what happens** (_Full AI reacts to what happens_, on by default;
+at most `ai.fullAi.reactPerHour` times an hour, 30, set in Accuracy and models):
 a notification, a download, the battery running low, a screen or audio output
 plugged in, the network lost, you coming back. For each, it decides in a couple
 of seconds whether to **ignore** it (ads, its own doings, what you don't need),
 **tell** you, **ask** you what to do ("Julien asks if you're coming tonight.
 Shall I say yes?"), or **do** it. It reads what you told it this session ("if
 Mathieu writes, tell him I'm in a meeting"), your desktop memory and routines,
-and what you answered before for the same kind of thing.
+and what you answered before for the same kind of thing. Every notification
+and event goes through one queue (the shell's event reactor) and gets one
+decision: while Full AI mode is on, it takes them, and Muse's
+[speaking first](./desktop-agents.md#talks-to-you-on-its-own) doesn't read the
+same ones again. The decision is made by the decisions model (_Model for
+decisions made for you_, `ai.routing.decisions`: the big one, with low
+thinking, by default).
 
 It only acts alone on what you told it, or what you agreed to at least twice
 before; otherwise it asks. It never interrupts an order you gave, and waits
@@ -136,9 +169,11 @@ until it has finished speaking.
 **It keeps learning**: every reaction and your answer (yes, no, something else)
 is kept, and the next time the same kind of thing happens it is handled the way
 you chose. When you state a lasting preference ("always ignore Spotify", "when
-my sister writes, tell me at once"), it saves it, as a routine or in its memory
-of you. Settings > Desktop agents > Talk to your desktop > **Forget what Full AI
-learned** clears its learned reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
+my sister writes, tell me at once"), it saves it, as a routine or as a
+**preference** in its memory of you, the one every AI feature reads (Settings >
+Desktop agents > About you lists and deletes them). Settings > Desktop agents >
+Talk to your desktop > **Forget what Full AI learned** clears its learned
+reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
 
 ## Set up the desktop by talking
 
@@ -176,7 +211,8 @@ notifications, your next events) and shows:
   facts, who asks what, what an error means. Then **what the AI can do**:
   a short plan and, when the task writes something (a reply, a message, a
   commit message), the **draft, editable**. **Do it** (`Enter`) hands the task
-  to Quick AI, which carries it out with the desktop tools, step by step.
+  to Muse in the bubble, which carries it out with the desktop tools, step by
+  step.
   **Copy draft**, or **Tell me more** for a closer look at that part of the
   screen. Items only you can decide say so.
 - **Handle the routine ones** does every item the AI can deal with alone
@@ -243,9 +279,13 @@ scans are images: they go to the provider as they are.
 
 Settings > Desktop agents > **Talk to your desktop**: Quick AI on or off, voice,
 the launcher and notification buttons, typed-out answers, when to ask, and the
-model (small, main or big). `policies.ai` (AI features off) turns all of it off.
+model of the one-shot answers (`ai.quick.model`: small, main or big). **Accuracy
+and models**: asking back, checking the result, 👍 / 👎, the bubble's model
+(`ai.routing.quick`), the model and thinking of the decisions made for you
+(`ai.routing.decisions`, `ai.routing.decisionsEffort`) and Full AI's hourly
+reactions. `policies.ai` (AI features off) turns all of it off.
 
-The options are under `ai.quick` and `ai.voice` in the shell's settings, so Nix
+The options are under `ai.quick`, `ai.voice`, `ai.agent` and `ai.routing` in the shell's settings, so Nix
 can set them like any other (`programs.nixbook-shell.settings.ai.quick.confirm = "actions";`).
 
 From a script: `nixbook-shell ipc call quickAi selection|screen|toggle|close`,

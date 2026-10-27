@@ -1,0 +1,136 @@
+pragma Singleton
+pragma ComponentBehavior: Bound
+
+import qs
+import qs.modules.common
+import Quickshell
+import Quickshell.Io
+import Quickshell.Services.Notifications
+import QtQuick
+
+/**
+ * The one event reactor: every notification and everything Routines sees
+ * happen (a download, the battery low, a screen plugged in, the user back…)
+ * comes through here, once. Routines' fixed actions run first, as they
+ * always did (Routines.happen does them right after telling what happened),
+ * then at most ONE model decision per event: the first handler that wants
+ * it and is within its budget takes it. Full AI mode (services/FullAi.qml,
+ * its react path) comes first while it is on; else the initiative
+ * (services/Initiative.qml: its notification batch, its reactions). They
+ * register here instead of listening to Notifications and Routines
+ * themselves, so a notification is never read by two models.
+ * Each keeps its own batching and quiet rules (the initiative's 45 s
+ * notification batch and day budget, Full AI's 1.2 s pump); Full AI gets an
+ * hourly budget here too (ai.fullAi.reactPerHour, 0: no limit), spent when
+ * it actually asks its model (spend()).
+ */
+Singleton {
+    id: root
+    function load() {}
+
+    // {name, priority, wants(ev) -> bool, take(ev)}, lowest priority first.
+    property var handlers: []
+    function register(name, priority, handler) {
+        root.handlers = [...root.handlers.filter(h => h.name !== name), Object.assign({}, handler, { name: name, priority: priority })]
+            .sort((a, b) => a.priority - b.priority);
+    }
+
+    // Model decisions made lately, by handler: {name: [times (ms)]}.
+    property var spent: ({})
+    function perHour(name) {
+        return name === "fullAi" ? (Config.options?.ai?.fullAi?.reactPerHour ?? 30) : 0;
+    }
+    function used(name) {
+        const t = Date.now();
+        return (root.spent[name] ?? []).filter(x => t - x < 3600000).length;
+    }
+    function withinBudget(name) {
+        const per = root.perHour(name);
+        return per <= 0 || root.used(name) < per;
+    }
+    // A handler asked its model (counted against its hourly budget).
+    function spend(name) {
+        const t = Date.now();
+        root.spent = Object.assign({}, root.spent, { [name]: [...(root.spent[name] ?? []).filter(x => t - x < 3600000), t] });
+    }
+
+    // What came and who took it, newest last (the IPC status, for tests and
+    // Settings): {time, event, app, to}.
+    property var log: []
+    function _note(ev, to) {
+        root.log = [...root.log, { time: Date.now(), event: ev.event, app: ev.app ?? "", to: to }].slice(-30);
+    }
+    function _wants(handler, ev) {
+        try {
+            return handler.wants(ev) === true;
+        } catch (e) {
+            console.warn(`[Reactor] ${handler.name} failed to look at ${ev.event}:`, e);
+            return false;
+        }
+    }
+    // An event, to the first handler that wants it: its name, "" for none.
+    function dispatch(ev) {
+        for (const h of root.handlers) {
+            if (!root._wants(h, ev) || !root.withinBudget(h.name)) continue;
+            try {
+                h.take(ev);
+            } catch (e) {
+                console.warn(`[Reactor] ${h.name} failed on ${ev.event}:`, e);
+            }
+            root._note(ev, h.name);
+            return h.name;
+        }
+        root._note(ev, "");
+        return "";
+    }
+    // Would a handler before `name` take this event? (The initiative's own
+    // events, like the user coming back, that Full AI also gets from
+    // Routines: decided once.)
+    function takenElsewhere(ev, name) {
+        for (const h of root.handlers) {
+            if (h.name === name) return false;
+            if (root._wants(h, ev) && root.withinBudget(h.name)) return true;
+        }
+        return false;
+    }
+
+    function _urgency(n) {
+        const u = n.urgency;
+        return (u == NotificationUrgency.Critical || u === "critical") ? "critical"
+            : (u == NotificationUrgency.Low || u === "low") ? "low" : "normal";
+    }
+    Connections {
+        target: Notifications
+        function onNotify(n) {
+            root.dispatch({ event: "notification", app: n.appName ?? "", title: n.summary ?? "", body: n.body ?? "",
+                            text: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 600),
+                            urgency: root._urgency(n), id: n.notificationId, transient: n.isTransient === true });
+        }
+    }
+    // Everything else Routines sees (its notification events are the ones
+    // above, read from the notification itself).
+    Connections {
+        target: Routines
+        function onHappened(ev) {
+            if (ev.event !== "notification") root.dispatch(ev);
+        }
+    }
+
+    IpcHandler {
+        target: "reactor"
+        // JSON: the handlers in order, Full AI's budget, the last events.
+        function status(): string {
+            return JSON.stringify({ handlers: root.handlers.map(h => h.name),
+                fullAi: { perHour: root.perHour("fullAi"), used: root.used("fullAi") }, log: root.log.slice(-10) });
+        }
+        // An event as if it had happened (tests): {event, app, title, text…};
+        // the handler that took it ("" for none).
+        function simulate(json: string): string {
+            try {
+                return root.dispatch(JSON.parse(json));
+            } catch (e) {
+                return "error: " + e;
+            }
+        }
+    }
+}

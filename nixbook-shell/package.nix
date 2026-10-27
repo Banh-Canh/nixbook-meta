@@ -69,6 +69,18 @@ let
     ${builtins.readFile ./scripts/model-provider.sh}
   '';
 
+  # The scripts that call the model, next to the client they share
+  # (scripts/nixbook_ai.py: each puts its own directory on sys.path, -I
+  # leaves PYTHONPATH out), the client precompiled for its imports.
+  aiScripts = pkgs.runCommand "nixbook-ai-scripts" { } ''
+    mkdir -p $out
+    cp ${./scripts/nixbook_ai.py} $out/nixbook_ai.py
+    cp ${./scripts/meta-agent.py} $out/meta-agent.py
+    cp ${./scripts/quick-ai.py} $out/quick-ai.py
+    cp ${./scripts/nix-onboard.py} $out/nix-onboard.py
+    ${pkgs.python3}/bin/python3 -c 'import importlib.util, py_compile, sys; py_compile.compile(sys.argv[1], cfile=importlib.util.cache_from_source(sys.argv[1]), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)' $out/nixbook_ai.py
+  '';
+
   # The headless agent on Meta's Model API (scripts/meta-agent.py,
   # `nixbook-meta-agent`): a print-mode command line and stream-json
   # events, built-in tools (files, Bash, the web) and MCP servers. Every
@@ -84,14 +96,16 @@ let
         pkgs.coreutils
       ]
     }:$PATH
-    exec ${pkgs.python3}/bin/python3 -I ${./scripts/meta-agent.py} "$@"
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/meta-agent.py "$@"
   '';
 
   # Quick AI's answers (scripts/quick-ai.py, services/QuickAi.qml): the
   # provider's Messages API called directly with its small model, run
   # through nixbook-model-provider for the key.
   quickAi = pkgs.writeShellScriptBin "nixbook-quick-ai" ''
-    exec ${pkgs.python3}/bin/python3 -I ${./scripts/quick-ai.py} "$@"
+    # `do`: handed to nixbook-meta-agent.
+    export PATH=$PATH:${metaAgent}/bin
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/quick-ai.py "$@"
   '';
 
   # Quick AI's voice (scripts/voice-transcribe.sh, services/Voice.qml):
@@ -229,7 +243,7 @@ let
     export NIXBOOK_NIXPKGS_LIB=${nixOnboardInputs}/nixpkgs-lib
     # nix-instantiate: the system's (the shell's PATH may not carry it).
     export PATH=$PATH:/run/current-system/sw/bin
-    exec ${pkgs.python3}/bin/python3 -I ${./scripts/nix-onboard.py} "$@"
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/nix-onboard.py "$@"
   '';
 
   # Desktop control for AI agents (scripts/desktop-mcp.py): an MCP server
@@ -276,14 +290,19 @@ let
     # -P: not the script's directory on sys.path. That is /nix/store, which
     # the first import would list whole (tens of thousands of entries:
     # ~70 ms of each run, the shell's commands and every MCP server start).
-    exec ${desktopMcpPython}/bin/python3 -P ${desktopMcpPyc} "$@"
+    exec ${desktopMcpPython}/bin/python3 -P ${desktopMcpPyc}/desktop-mcp.pyc "$@"
   '';
   desktopMcpPython = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
   # Precompiled: the shell runs it on every habit cue, memory lookup and agent
   # tool call, and a script run as __main__ is never cached (compiling its
   # 12k lines was ~160 ms of CPU per run). Tracebacks still show the source.
-  desktopMcpPyc = pkgs.runCommand "desktop-mcp.pyc" { } ''
-    ${desktopMcpPython}/bin/python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[1], doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)' ${./scripts/desktop-mcp.py} $out
+  # The model client it imports (scripts/nixbook_ai.py, its passes calling
+  # the API in-process) next to it, precompiled too: the script's directory
+  # is what it puts on sys.path.
+  desktopMcpPyc = pkgs.runCommand "desktop-mcp-pyc" { } ''
+    mkdir -p $out
+    cp ${./scripts/nixbook_ai.py} $out/nixbook_ai.py
+    ${desktopMcpPython}/bin/python3 -c 'import importlib.util, py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], dfile=sys.argv[1], doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH); py_compile.compile(sys.argv[3], cfile=importlib.util.cache_from_source(sys.argv[3]), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)' ${./scripts/desktop-mcp.py} $out/desktop-mcp.pyc $out/nixbook_ai.py
   '';
 
   # A desktop of their own for AI agents (scripts/agent-desktop.sh): a nested

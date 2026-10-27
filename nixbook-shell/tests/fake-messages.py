@@ -9,13 +9,18 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
     of assistant messages already in the request (the last one repeats).
     A reply is a content list, {content, stop_reason}, {status, error}, or
     {tool_choice: A, otherwise: B} (A when the request forces a tool);
-    streamed when the request asks for it;
+    streamed when the request asks for it. The file may also be an object
+    {steps: [the list], system: {TEXT: reply}}: a request whose system
+    prompt contains TEXT gets that reply (a side call: the agent's request
+    resolver), the others the steps;
+  - text with RETRY429:N: an HTTP 429 (retry-after 0) the first N times;
   - GET /page: an HTML page; GET /search?q=: a search engine's results page;
   - tools offered: a tool call (launch_app firefox, or close_window 7 when
     the order says CLOSE), then, once the tool result comes back, the text;
   - a "replies" task: a JSON object of three replies;
   - text with FAIL500: an HTTP 500; NOEFFORT: a 400 while output_config is
-    sent; PRIVATE: an answer naming the masked person back;
+    sent; BIGTOKENS: a 400 naming max_tokens above 8192; PRIVATE: an answer
+    naming the masked person back;
   - otherwise "Hello world", streamed in two deltas when asked to stream.
 """
 
@@ -29,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 PORT_FILE, LOG = sys.argv[1], sys.argv[2]
 SCRIPTS = sys.argv[3] if len(sys.argv) > 3 else ""
 count = 0
+busy = {}
 
 PAGE = """<!doctype html><html><head><title>Fake page</title><style>p{color:red}</style>
 <script>var hidden = 1;</script></head><body><h1>Muse news</h1><p>The answer is <b>42</b>.</p></body></html>"""
@@ -117,8 +123,15 @@ class Handler(BaseHTTPRequestHandler):
             return False
         with open(os.path.join(SCRIPTS, m.group(1) + ".json"), encoding="utf-8") as f:
             replies = json.load(f)
-        step = sum(1 for msg in body.get("messages", []) if msg.get("role") == "assistant")
-        reply = replies[min(step, len(replies) - 1)]
+        reply = None
+        if isinstance(replies, dict):
+            system = body.get("system")
+            system = system if isinstance(system, str) else " ".join(str(b.get("text", "")) for b in system or [])
+            reply = next((r for k, r in (replies.get("system") or {}).items() if k in system), None)
+            replies = replies.get("steps") or [[{"type": "text", "text": "…"}]]
+        if reply is None:
+            step = sum(1 for msg in body.get("messages", []) if msg.get("role") == "assistant")
+            reply = replies[min(step, len(replies) - 1)]
         if isinstance(reply, dict) and "otherwise" in reply:
             # {"tool_choice": A, "otherwise": B}: A when a tool is forced.
             reply = reply["tool_choice"] if body.get("tool_choice") else reply["otherwise"]
@@ -172,10 +185,23 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith("/v1/chat/completions"):
                 return self.send(200, {"choices": [{"message": {"role": "assistant", "content": content}}]})
             return self.send(200, {"content": [{"type": "text", "text": content}]})
+        m = re.search(r"RETRY429:(\d+)", text)
+        if m:
+            busy[m.group(0)] = busy.get(m.group(0), 0) + 1
+            if busy[m.group(0)] <= int(m.group(1)):
+                data = json.dumps({"error": {"message": "slow down"}}).encode()
+                self.send_response(429)
+                self.send_header("retry-after", "0")
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
         if "FAIL500" in text:
             return self.send(500, {"error": {"message": "boom"}})
         if "NOEFFORT" in text and "output_config" in body:
             return self.send(400, {"error": {"message": "unknown parameter `output_config`"}})
+        if "BIGTOKENS" in text and body.get("max_tokens", 0) > 8192:
+            return self.send(400, {"error": {"message": "max_tokens: 16000 > 8192, the maximum for this model"}})
         if self.path.startswith("/v1/messages") and self.scripted(body, text):
             return
         if body.get("tools") and (body.get("tool_choice") or {}).get("type") == "none":

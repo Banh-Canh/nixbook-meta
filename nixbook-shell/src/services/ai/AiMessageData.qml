@@ -22,6 +22,26 @@ QtObject {
     // What Muse is to do with the user's answer (a question it asked to
     // learn: save it), told with the answer and then dropped.
     property string learnHint: ""
+    // Answered outside the agent's session (one of Quick AI's one-shot
+    // modes in the bubble: Explain, Summarize…): told to the session with
+    // the next message, then dropped.
+    property bool offSession: false
+    // What the agent is told, when the message shows something shorter (a
+    // Kiroshi task, Full AI's own order: their label is shown).
+    property string agentText: ""
+    // The agent's checks on its own answer (meta-agent --resolve/--verify):
+    // `clarify`, the answer is a question asking which of several readings
+    // the user meant (nothing was done); `verify`, after acting it looked
+    // again with read-only tools: {met: bool, note} (null: not checked).
+    property bool clarify: false
+    property var verify: null
+    // The user's 👍 / 👎 on the answer (services/AnswerFeedback.qml): "",
+    // "up", "down" (the correction field open), "downSent" (👎 alone),
+    // "corrected" (with `correction`, offered to ask again) or "retried".
+    property string feedback: ""
+    property string correction: ""
+    // The app in front when it was asked (the feedback's app).
+    property string requestApp: ""
     property var annotations: []
     property var annotationSources: []
     property list<string> searchQueries: []

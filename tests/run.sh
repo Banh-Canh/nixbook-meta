@@ -110,6 +110,8 @@ cmd_shell() {
   bash nixbook-shell/tests/scripts.sh || failed=1
   section "nixbook-shell desktop control MCP server"
   bash nixbook-shell/tests/desktop-mcp.sh || failed=1
+  section "nixbook-shell model client (nixbook_ai)"
+  bash nixbook-shell/tests/nixbook-ai.sh || failed=1
   section "nixbook-shell Quick AI (nixbook-quick-ai)"
   bash nixbook-shell/tests/quick-ai.sh || failed=1
   section "nixbook-shell headless agent (nixbook-meta-agent)"

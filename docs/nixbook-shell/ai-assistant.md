@@ -76,6 +76,24 @@ From a terminal: `nixbook-model-provider status`, `nixbook-model-provider test`,
 
 With a model selected, the configuration facts become reference for the model: it answers with its own knowledge too, and says when it isn't sure. `ai.includeSystemContext` (on by default; Settings → Services → AI) controls whether the machine context is sent.
 
+### What comes with each message
+
+Each message to Muse starts with what the desktop knows for it, picked for that message from one place (the context broker, `nixbook-desktop-mcp context build`), the same for the side panel, [the speech bubble](./quick-ai), Full AI mode and Muse [speaking first](./desktop-agents#talks-to-you-on-its-own): the time, weather, battery, next events and music; your corrections and preferences that bear on it; what agents remember [about you](./desktop-agents#personal-memory) and [about your desktop](./desktop-agents#desktop-memory); and, with _Know what I was just doing_ on, what you were just doing. The **history** icon beside the message box leaves that last part out of the next message.
+
+### One Muse, in the panel and the bubble
+
+The speech bubble (Mod+C) runs the same agent: expanding it opens the conversation here, in the same session, and Muse goes on without anything being replayed. Both use one memory.
+
+### Accuracy
+
+**Settings → Desktop agents → Accuracy and models** (all on by default):
+
+- **Ask back when a request is ambiguous** (`ai.agent.resolve`): before acting on a request that could mean several things, Muse asks which one you meant, and does nothing until you answer. A clear request gets a one-line note of what it understood, for itself.
+- **Check the result after acting** (`ai.agent.verify`): after a message in which it changed something, it looks again with read-only tools and fixes it once if the goal isn't met. The answer then says **Checked: done** or **Couldn't confirm it worked** and why.
+- **👍 / 👎 under the answers** (`ai.agent.feedback`): 👍 tells Muse that was right (the memory notes it used get stronger); 👎 opens **What did you mean?**: Enter saves your correction, which comes back with similar requests from then on, and offers to ask again with it. Escape saves the 👎 alone. Nothing goes to a model when you click.
+
+The same page picks the models: the bubble's (`ai.routing.quick`, small by default), and the one for what is decided on your behalf — which notifications deserve a word, Full AI's reactions, pairing, a routine's judgment, what an ambiguous request meant (`ai.routing.decisions`, the big one by default, with low thinking: `ai.routing.decisionsEffort`).
+
 ## Tabs
 
 The chat has **tabs**, each its own conversation answering on its own, so Muse can work on several things at once: **+** above the chat (or **Ctrl+T**) opens one, **Ctrl+Tab** / **Ctrl+Shift+Tab** go through them, and **×**, a middle-click or **Ctrl+W** closes one (its conversation stays in the history). A tab shows a spinner while it works and a dot when it answered while you were elsewhere; when the panel is closed, the notification's **Open** opens that tab. Up to 8 tabs.

@@ -120,6 +120,52 @@ lib.runTests {
       ai.includeSystemContext = true;
     };
   };
+  # The one Muse core's settings (routing, accuracy, Full AI's budget):
+  # options with their built-in defaults' types.
+  testConsolidationSettings = {
+    expr = shellLib.pinnedSettings (evalSettings {
+      ai.routing.decisions = "big";
+      ai.routing.decisionsEffort = "medium";
+      ai.routing.quick = "small";
+      ai.agent.verify = false;
+      ai.agent.resolve = true;
+      ai.agent.feedback = false;
+      ai.fullAi.reactPerHour = 12;
+    });
+    expected = {
+      ai.routing.decisions = "big";
+      ai.routing.decisionsEffort = "medium";
+      ai.routing.quick = "small";
+      ai.agent.verify = false;
+      ai.agent.resolve = true;
+      ai.agent.feedback = false;
+      ai.fullAi.reactPerHour = 12;
+    };
+  };
+  testConsolidationDefaults = {
+    expr = with shellLib.builtinDefaults.ai; [
+      routing
+      agent.verify
+      agent.resolve
+      agent.feedback
+      fullAi.reactPerHour
+    ];
+    expected = [
+      {
+        decisions = "big";
+        decisionsEffort = "low";
+        quick = "small";
+      }
+      true
+      true
+      true
+      30
+    ];
+  };
+  testWronglyTypedBudgetFails = {
+    expr = fails (evalSettings { ai.fullAi.reactPerHour = "many"; }).ai.fullAi.reactPerHour;
+    expected = true;
+  };
   testMisspeltSettingFails = {
     expr = fails (evalSettings {
       bar.definitelyNotASetting = true;

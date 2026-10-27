@@ -33,7 +33,13 @@
       "bubble": "always"
     },
     "fullAi": {
-      "react": true
+      "react": true,
+      "reactPerHour": 30
+    },
+    "routing": {
+      "decisions": "big",
+      "decisionsEffort": "low",
+      "quick": "small"
     },
     "voice": {
       "enable": true,
@@ -53,9 +59,12 @@
       "commandLine": false,
       "commandLineFolders": true,
       "effort": "low",
+      "feedback": true,
       "mcpServersOff": ["linkedin", "immich"],
       "memoryModel": "small",
-      "model": "main"
+      "model": "main",
+      "resolve": true,
+      "verify": true
     },
     "immich": {
       "apiKeyFile": "",

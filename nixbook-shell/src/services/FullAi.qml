@@ -17,8 +17,8 @@ import QtQuick
  * With ai.quick.bubble "needed" the bubble stays out of sight
  * (Initiative.quiet): the mascot's balloon and its voice answer.
  * The microphone stays open the whole time, also while the agent works: a
- * new order takes over (Quick AI's agent, in Muse's speech bubble, which
- * keeps the conversation).
+ * new order takes over (Muse's agent, in the speech bubble's session, which
+ * keeps the conversation and goes on in the side panel when expanded).
  * It reacts to what happens (ai.fullAi.react): a notification, a download,
  * the battery, a screen or an audio output plugged in, the network lost,
  * the user back: the model (`nixbook-quick-ai` react mode) ignores it,
@@ -26,7 +26,10 @@ import QtQuick
  * yes?") or does it — alone only on what the user told it (this session,
  * a note, a routine) or chose twice before. Every reaction and the user's
  * answer is kept (`nixbook-quick-ai learn`, full-ai-learned.json) and given
- * back the next time: it keeps learning what the user wants.
+ * back the next time: it keeps learning what the user wants. What happens
+ * comes from the one event reactor (services/Reactor.qml), first while the
+ * mode is on (one model decision per event, the initiative gets the rest),
+ * within ai.fullAi.reactPerHour model decisions an hour.
  */
 Singleton {
     id: root
@@ -143,21 +146,22 @@ Singleton {
         root.queue = root.queue.filter(q => !(q.event === ev.event && q.app && q.app === ev.app)).concat([ev]).slice(-6);
         pump.restart();
     }
-    Connections {
-        target: Notifications
-        function onNotify(n) {
-            if (!root.active || !root.reactOn || n.isTransient) return;
-            if (root.ownApps.includes(String(n.appName ?? "").toLowerCase())) return;
-            root.event({ event: "notification", app: n.appName ?? "", title: n.summary ?? "",
-                         text: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 600),
-                         urgency: String(n.urgency ?? ""), id: n.notificationId });
-        }
+    // Registered with the Reactor before the initiative (priority 0).
+    Component.onCompleted: Reactor.register("fullAi", 0, {
+        wants: ev => root._wants(ev),
+        take: ev => root._take(ev),
+    })
+    function _wants(ev) {
+        if (!root.active || !root.reactOn) return false;
+        if (ev.event === "notification")
+            return !ev.transient && !root.ownApps.includes(String(ev.app ?? "").toLowerCase());
+        if (ev.event === "back") return (ev.away ?? 0) >= 10;
+        return root.reactEvents.includes(ev.event);
     }
-    Connections {
-        target: Routines
-        function onHappened(ev) {
-            if (root.reactEvents.includes(ev.event)) root.event(ev);
-        }
+    function _take(ev) {
+        if (ev.event === "notification")
+            root.event({ event: "notification", app: ev.app, title: ev.title, text: ev.text, urgency: ev.urgency, id: ev.id });
+        else root.event(ev);
     }
     // One at a time, a moment after the last (a burst read as one), never
     // over an order of the user's being done or the mascot speaking.
@@ -177,20 +181,25 @@ Singleton {
         return [ev.event.replace(/_/g, " "), ev.name, ev.app, ev.percent !== undefined ? ev.percent + "%" : ""].filter(x => x).join(" · ");
     }
     function react(ev) {
+        Reactor.spend("fullAi");
         root.reacting = true;
         root.reactingLine = "🔔 " + root.describe(ev).slice(0, 160);
         reactor.ev = ev;
         reactor.out = "";
         reactor.requestJson = JSON.stringify({ mode: "react", event: ev, lang: ConfigAssistant.uiLang(),
             facts: QuickAi.facts(), recent: QuickAi.recentText(12),
-            model: Config.options.ai.quick?.model ?? "small" });
+            // A decision on the user's behalf: the routing's decision model.
+            model: Config.options.ai.routing?.decisions ?? "big", effort: Config.options.ai.routing?.decisionsEffort ?? "low" });
         reactor.running = true;
     }
     function decided(ev, d) {
         root.reacting = false;
         if (!d || !root.active) return;
         const said = d.say || "";
-        if (d.learn) Quickshell.execDetached(["nixbook-quick-ai", "learn", JSON.stringify({ pref: d.learn })]);
+        // A lasting preference it heard: kept in the one memory (with the
+        // app and the event's signature, so it comes back for the same kind).
+        if (d.learn) Quickshell.execDetached(["nixbook-quick-ai", "learn",
+            JSON.stringify({ pref: d.learn, app: ev.app ?? "", sig: d.sig ?? "" })]);
         if (d.action === "ignore") {
             pump.restart();
             return;

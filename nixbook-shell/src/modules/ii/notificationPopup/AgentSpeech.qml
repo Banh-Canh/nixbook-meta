@@ -73,6 +73,7 @@ Scope {
     function plain(text) {
         return String(text ?? "")
             .replace(/<think>[\s\S]*?(<\/think>|$)/g, "")
+            .replace(/<report>[\s\S]*?(<\/report>|$)/g, "")
             .replace(/^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*\n?/gm, "")
             .replace(/^[ \t]*\|(.*)\|[ \t]*$/gm, (_, row) => row.split("|").map(c => c.trim()).join(" · "))
             .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
@@ -564,6 +565,41 @@ Scope {
                                 }
                             }
                         }
+                    }
+
+                    // Under Muse's last answer: its own checks (a question back
+                    // instead of a guess, --resolve; what it did looked at again,
+                    // --verify), then 👍 / 👎 (ai.agent.feedback).
+                    RowLayout {
+                        id: checks
+                        readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+                        Layout.fillWidth: true
+                        visible: root.conversing && !threadList.visible && !root.responding && checks.last?.role === "assistant"
+                            && ((checks.last?.clarify ?? false) || !!checks.last?.verify)
+                        spacing: 6
+                        StyledText {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            textFormat: Text.PlainText
+                            text: checks.last?.clarify ? Translation.tr("? Muse needs a detail before doing anything")
+                                : checks.last?.verify?.met ? Translation.tr("✓ Checked: done")
+                                : Translation.tr("⚠ Couldn't confirm it worked%1").arg(checks.last?.verify?.note ? `: ${checks.last.verify.note}` : "")
+                            font.family: root.font
+                            font.pixelSize: Appearance.font.pixelSize.smaller
+                            color: checks.last?.verify && !checks.last?.verify?.met && !checks.last?.clarify ? "#e5484d" : root.fg
+                            opacity: 0.8
+                        }
+                    }
+                    AnswerFeedbackRow {
+                        Layout.fillWidth: true
+                        readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+                        visible: root.conversing && !threadList.visible && !root.responding && AnswerFeedback.rates(last)
+                        chat: root.chat
+                        message: last
+                        surface: "bubble"
+                        fg: root.fg
+                        accent: root.accent
+                        fontFamily: root.font
                     }
 
                     // Quick AI's report after acting, as Kiroshi's brief: what

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Tests for Quick AI's engine (scripts/quick-ai.py), against a fake
 # Messages API (tests/fake-messages.py) and a stub
-# nixbook-desktop-mcp (tools, call, privacy mask, sent note):
-#   - a streamed answer (deltas, then the whole answer);
+# nixbook-desktop-mcp (privacy mask, sent note, the context broker, prefs):
+#   - a streamed answer (deltas, then the whole answer), the broker's
+#     context in the prompt;
 #   - suggested replies (JSON → the replies, no raw JSON shown);
 #   - a server refusing the effort settings: asked again without them;
 #   - the privacy mask: what leaves is masked, the answer unmasked;
-#   - doing things: the model's tool calls run through desktop-mcp as
-#     steps; a destructive one waits for an OK on stdin, refused → not run;
+#   - doing things: handed to nixbook-meta-agent (a stub: its command line);
+#   - Full AI's reactions: the decisions model, the broker, prefs in the
+#     one memory (`prefs add`);
+#   - Kiroshi's scan: the broker asked for the scan surface;
 #   - a missing request, a server error.
 # Needs bash, python3 and jq. Run: bash tests/quick-ai.sh
 set -euo pipefail
@@ -32,34 +35,30 @@ expect_eq() {
   if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "expected: $2"$'\n'"actual:   $3"; fi
 }
 
-# The stub desktop-mcp: two tools (one destructive), calls logged.
-mkdir -p "$tmp/bin"
+# The stub desktop-mcp: the privacy mask, the sent log, the context broker
+# (its arguments in its text), prefs; calls logged.
+mkdir -p "$tmp/bin" "$tmp/run" "$tmp/cfg"
+# Never the user's own desktop-mcp helper (its socket) nor settings.
+export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" NIXBOOK_AI_RETRY_DELAY=0.05
 cat >"$tmp/bin/nixbook-desktop-mcp" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
-tools) cat <<'JSON'
-[{"name": "launch_app", "description": "Start an app", "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "wait_ms": {"type": "integer"}}},
-  "annotations": {"readOnlyHint": false, "destructiveHint": false}, "_meta": {"nixbook/group": "windows"}},
- {"name": "close_window", "description": "Close a window", "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}},
-  "annotations": {"readOnlyHint": false, "destructiveHint": true}, "_meta": {"nixbook/group": "windows"}},
- {"name": "tasks", "description": "The to-do lists: list, add, done", "inputSchema": {"type": "object", "properties": {"action": {"type": "string"}}},
-  "annotations": {"readOnlyHint": false, "destructiveHint": true}, "_meta": {"nixbook/group": "shell"}},
- {"name": "screenshot", "description": "A screenshot", "inputSchema": {"type": "object", "properties": {}},
-  "annotations": {"readOnlyHint": true}, "_meta": {"nixbook/group": "screen"}},
- {"name": "desktop", "description": "Not offered", "inputSchema": {"type": "object"}, "annotations": {}}]
-JSON
-;;
-call) echo "\$2 \$3" >>"$tmp/calls.log"
-  case "\$3" in *BROKEN* | *OTHERFIRST*) echo "error: no such app"; exit 1 ;; esac
-  if [ "\$2" = screenshot ]; then echo '[{"type": "text", "text": "the screen"}, {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}]'
-  else echo "done: \$2"; fi ;;
+call) echo "\$2 \$3" >>"$tmp/calls.log"; echo "done: \$2" ;;
 privacy)
   if [ "\$2" = mask ]; then sed 's/Julien/⟦Person 1⟧/g'; else sed 's/⟦Person 1⟧/Julien/g'; fi ;;
 sent) echo "\$3|\$5" >>"$tmp/sent.log" ;;
-instructions) echo "Tools to see and drive the desktop. Notes: QUERY=\$NIXBOOK_DESKTOP_MCP_QUERY" ;;
-app-tools) cat "$tmp/app-tools.json" 2>/dev/null || echo '{}' ;;
-episode) cat >>"$tmp/episode.log"; echo >>"$tmp/episode.log" ;;
-app-call) echo "app \$2 \$3 \$4" >>"$tmp/calls.log"; echo '{"title": "FIRESTARTER", "isPaused": false}' ;;
+context)
+  [ "\$2" = build ] || exit 1
+  shift 2
+  s="" q="" na=no a=""
+  while [ \$# -gt 0 ]; do
+    case "\$1" in --for) s=\$2; shift ;; --query) q=\$2; shift ;; --app) a=\$2; shift ;; --no-activity) na=yes ;; esac
+    shift
+  done
+  echo "\$s|\$q|\$a|\$na" >>"$tmp/broker.log"
+  [ -e "$tmp/broker-off" ] && exit 1
+  jq -cn --arg t "BROKER for=\$s noact=\$na query=\$q Julien" '{sections: [{name: "facts", text: \$t}], text: \$t}' ;;
+prefs) echo "\$2 \$3" >>"$tmp/prefs.log"; [ -e "$tmp/prefs-off" ] && exit 1; echo '{"ok": true}' ;;
 esac
 EOF
 chmod +x "$tmp/bin/nixbook-desktop-mcp"
@@ -112,68 +111,53 @@ ask private '{"mode": "explain", "text": "PRIVATE Julien wrote this", "lang": "e
 if grep -q 'Julien wrote' "$tmp/requests.log"; then fail "privacy: the name left unmasked"; else pass "privacy: the name masked on the way"; fi
 expect_eq "privacy: the answer unmasked" '"Ask Julien"' "$(event private answer .text)"
 
-# Doing things: a step, then the answer.
-ask act '{"mode": "do", "question": "open firefox", "lang": "en"}'
-expect_eq "do: the step ran" '"run"
-"ok"' "$(event act step .status)"
-expect_eq "do: through desktop-mcp" 'launch_app {"app": "firefox"}' "$(head -n1 "$tmp/calls.log")"
-expect_eq "do: just the answer when it went well, as in a chat" '"Firefox is open."' "$(event act answer .text)"
-expect_eq "do: no report when it went well" "" "$(event act report .summary)"
-expect_eq "do: every tool but the agent desktop's switch, without desktop-mcp's extras" '["launch_app","close_window","tasks","screenshot"]
-[]' "$(jq -c 'select(.body.tools) | [.body.tools[].name], [.body.tools[0].input_schema.properties | keys[] | select(. == "wait_ms")]' "$tmp/requests.log" | head -n2)"
+# The broker's context goes along (masked like the rest), not for an image's
+# text copied out; the text's rewrites without what the user just did.
+expect_contains_ "broker: asked for the text surface" "$(head -n1 "$tmp/broker.log")" "text|error: foo||no"
+expect_contains_ "broker: its text in the prompt" "$(grep -F 'error: foo' "$tmp/requests.log" | head -n1)" "BROKER for=text"
+expect_contains_ "broker: masked on the way" "$(grep -F 'BROKER for=text' "$tmp/requests.log" | head -n1)" "⟦Person 1⟧"
+: >"$tmp/broker.log"
+ask fixit '{"mode": "fix", "text": "teh text", "lang": "en"}'
+expect_eq "broker: a rewrite without the activity" "text|teh text||yes" "$(cat "$tmp/broker.log")"
+: >"$tmp/broker.log"
+# A PNG's header (64x32): what image_size reads.
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x40\x00\x00\x00\x20\x08\x02\x00\x00\x00' >"$tmp/region.png"
+ask extract "{\"mode\": \"extract\", \"image\": \"$tmp/region.png\", \"lang\": \"en\"}"
+expect_eq "broker: not for a text copied out of an image" "" "$(cat "$tmp/broker.log")"
+touch "$tmp/broker-off"
+ask nobroker '{"mode": "ask", "question": "NOBROKER what time is it?", "facts": "Time: 10:42", "lang": "en"}'
+expect_contains_ "broker: without it, the request's own facts" "$(grep NOBROKER "$tmp/requests.log" | tail -n1)" "Time: 10:42"
+rm "$tmp/broker-off"
 
-# What it did goes to the desktop memory's learning pass (as an MCP session's
-# task does); a task that only read, not.
-sleep 0.3
-expect_eq "learn: the episode told" '{"task":"open firefox","actions":[{"tool":"launch_app","do":"app=firefox","error":null}]}' \
-  "$(head -n1 "$tmp/episode.log" | jq -c .)"
-# The side panel's knowledge (Ai.stableSystemPrompt) first, cached.
-: >"$tmp/requests.log"
-ask brain '{"mode": "do", "question": "open firefox", "lang": "en", "panel": "PANELBRAIN: host totoro, theme Momonga"}'
-expect_eq "brain: the panel's prompt, first and cached" '{"type":"ephemeral"} true' \
-  "$(jq -c 'select(.body.tools) | .body.system[0] | "\(.cache_control | tojson) \(.text | contains("PANELBRAIN"))"' -r "$tmp/requests.log" | head -n1)"
-expect_contains_ "brain: the memory for this task after it" "$(jq -c 'select(.body.tools) | .body.system[1].text' "$tmp/requests.log" | head -n1)" "QUERY=open firefox"
+# Doing things: nixbook-meta-agent's now (the shell's only agent loop), the
+# request handed over as Quick AI's own loop ran it.
+cat >"$tmp/bin/nixbook-meta-agent" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >"$tmp/ma-args"
+echo '{"type": "result", "result": "from the agent"}'
+EOF
+chmod +x "$tmp/bin/nixbook-meta-agent"
+ask act '{"mode": "do", "question": "open firefox", "lang": "en", "confirm": "actions", "panel": "PANELBRAIN"}'
+expect_eq "do: the agent's own events" '"from the agent"' "$(jq -c 'select(.type == "result") | .result' "$tmp/act.out")"
+args=$(paste -sd' ' "$tmp/ma-args")
+expect_contains_ "do: the bubble's context, the user's confirm setting" "$args" "--context-for bubble --confirm actions --report --lazy-mcp 12 --learn"
+expect_contains_ "do: the desktop's tools" "$args" '--mcp-config {"mcpServers": {"desktop": {"command": "nixbook-desktop-mcp"'
+expect_contains_ "do: the request read first and checked after (ai.agent defaults)" "$args" "--resolve --verify"
+expect_contains_ "do: the quick model (ai.routing.quick)" "$args" "--model small"
+expect_contains_ "do: the side panel's knowledge" "$args" "--append-system-prompt PANELBRAIN"
+expect_eq "do: the request last, after --" "-- open firefox" "$(tail -n2 "$tmp/ma-args" | paste -sd' ')"
+mkdir -p "$tmp/cfg/nixbook-shell"
+echo '{"ai": {"agent": {"verify": false}, "routing": {"quick": "main"}}}' >"$tmp/cfg/nixbook-shell/config.json"
+ask act2 '{"mode": "do", "question": "open firefox", "lang": "en"}'
+args=$(paste -sd' ' "$tmp/ma-args")
+expect_contains_ "do: risky steps only by default, the settings followed" "$args" "--confirm destructive"
+expect_eq "do: no verification when it is off" "" "$(grep -x -- --verify "$tmp/ma-args" || true)"
+expect_contains_ "do: the routing's quick model" "$args" "--model main"
+rm -f "$tmp/cfg/nixbook-shell/config.json" "$tmp/bin/nixbook-meta-agent"
 
-# The report only when it matters: a step that failed for good (said even
-# when the model leaves it out), or something the user must do.
-ask failed '{"mode": "do", "question": "FAILSTEP open it", "lang": "en"}'
-expect_eq "report: a failed step, from the steps" '["launch app (app=BROKEN): error: no such app"]' "$(event failed report .failed)"
-expect_eq "report: the steps counted" '1 0 1' "$(event failed report ' | "\(.steps) \(.ok) \(.ko)"' | tr -d '"')"
-expect_contains_ "report: in the answer too" "$(event failed answer .text)" "✗ launch app"
-ask retried '{"mode": "do", "question": "RETRY open firefox", "lang": "en"}'
-expect_eq "report: none when a failed step was then done" "" "$(event retried report .summary)"
-ask reported '{"mode": "do", "question": "REPORTME open firefox", "lang": "en"}'
-expect_eq "report: the model's summary" '"Firefox is ready"' "$(event reported report .summary)"
-expect_eq "report: what needs the user" '["Sign in to your account"]' "$(event reported report .needsYou)"
-expect_eq "report: no report tag left in the answer" "" "$(event reported answer .text | grep -o '<report>')"
-expect_eq "report: none for a plain answer" "" "$(event explain report .summary)"
-
-# What the desktop knows goes along (answered without a tool).
-ask facts '{"mode": "do", "question": "FACTS what is the weather?", "lang": "en", "facts": "Weather in Paris: rain, 11°C"}'
-expect_contains_ "facts: sent with the question" "$(grep FACTS "$tmp/requests.log" | tail -n1)" "Weather in Paris: rain"
-# Out of steps: an answer all the same, without tools.
-ask loop '{"mode": "do", "question": "LOOP forever", "lang": "en"}'
-expect_contains_ "out of steps: an answer all the same" "$(event loop answer .text)" "Concluded without more tools."
-expect_eq "out of steps: asked without tools" '{"type":"none"}' "$(jq -c 'select(.body.tool_choice) | .body.tool_choice' "$tmp/requests.log" | tail -n1)"
-
-expect_contains_ "do: the tools' own instructions, for this task" "$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | head -n1)" "QUERY=open firefox"
-# Eyes: a screenshot comes back to the model as an image.
-: >"$tmp/calls.log"
-ask look '{"mode": "do", "question": "LOOKSCREEN what is on my screen?", "lang": "en"}'
-expect_contains_ "eyes: the image in the tool result" "$(jq -c 'select(.body.tools) | .body.messages[-1].content' "$tmp/requests.log" | grep tool_result | tail -n1)" '"type":"image"'
-# The whole assistant: a task handed over to the side panel's agent.
-: >"$tmp/requests.log"
-ask handoff '{"mode": "do", "question": "DELEGATE find the news", "lang": "en", "agent": true}'
-expect_eq "ask_agent: handed over" '"search the web for the news"' "$(event handoff delegate .task)"
-expect_eq "ask_agent: offered when the agent is there" "true" \
-  "$(jq -c 'select(.body.tools) | [.body.tools[].name] | index("ask_agent") != null' "$tmp/requests.log" | head -n1)"
-: >"$tmp/requests.log"
-ask nohandoff '{"mode": "do", "question": "open firefox", "lang": "en"}'
-expect_eq "ask_agent: not offered without it" "false" \
-  "$(jq -c 'select(.body.tools) | [.body.tools[].name] | index("ask_agent") != null' "$tmp/requests.log" | head -n1)"
-# The provider's key never reaches the desktop tools.
+# The provider's key never reaches the tools (nixbook_ai's child_env).
 expect_eq "child env: no NIXBOOK_AI_ variable for the tools" "" \
-  "$(python3 -I -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("q",sys.argv[1]); q=importlib.util.module_from_spec(s); s.loader.exec_module(q); print(" ".join(k for k in q.child_env() if k.startswith("NIXBOOK_AI_")))' "$script")"
+  "$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import nixbook_ai; print(" ".join(k for k in nixbook_ai.child_env() if k.startswith("NIXBOOK_AI_")))' "$root/scripts")"
 # No key: through the provider (a stub that sets it).
 cat >"$tmp/bin/nixbook-model-provider" <<EOF
 #!/usr/bin/env bash
@@ -187,80 +171,34 @@ NIXBOOK_AI_KEY='' python3 -I "$script" ask "$tmp/viaprov.json" >"$tmp/viaprov.ou
 expect_eq "no key: run through nixbook-model-provider" '"Hello world" "Meta"' \
   "$(event viaprov answer .text) $(event viaprov start .provider)"
 rm "$tmp/bin/nixbook-model-provider"
-# What the machine is (system-context.md) and what the user just did.
-mkdir -p "$tmp/cfg/nixbook-shell"
-printf '# About\n## This machine\nHost testhost\n## Packages installed\nhuge list\n' >"$tmp/cfg/nixbook-shell/system-context.md"
-XDG_CONFIG_HOME="$tmp/cfg" ask ctx '{"mode": "do", "question": "open firefox CTX", "lang": "en", "activity": "opened kitty"}'
-sys=$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | grep -F "CTX" -m1 || jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | tail -n1)
-expect_contains_ "context: the machine" "$sys" "Host testhost"
-expect_contains_ "context: not the package lists" "$(echo "$sys" | grep -c 'huge list' | sed 's/^0$/none/')" "none"
-expect_contains_ "context: what the user just did" "$sys" "opened kitty"
 
-# The user's apps' tools (app-tools / app-call): a small server's up front,
-# a big one's on demand (open_app_tools) or when it is named.
-python3 - "$tmp/app-tools.json" <<'PY'
-import json, sys
-tool = lambda n: {"name": n, "description": f"{n} it", "inputSchema": {"$schema": "x", "type": "object", "properties": {"query": {"type": "string"}}}}
-json.dump({"youtube-music": {"instructions": "Plays songs in YouTube Music.", "tools": [tool("play"), tool("now_playing")]},
-           "immich": {"instructions": "Photos.", "tools": [tool(f"search_{i}") for i in range(13)]}}, open(sys.argv[1], "w"))
-PY
-: >"$tmp/calls.log"
-: >"$tmp/requests.log"
-ask music '{"mode": "do", "question": "MUSIC play FIRESTARTER", "lang": "en"}'
-expect_eq "apps: called through app-call" 'app youtube-music play {"query": "FIRESTARTER"}' "$(head -n1 "$tmp/calls.log")"
-tools=$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | head -n1)
-expect_contains_ "apps: a small app's tools up front" "$tools" '"youtube-music__play"'
-expect_contains_ "apps: a big app's on demand only" "$(echo "$tools" | grep -c immich__ | sed 's/^0$/none/')" none
-expect_contains_ "apps: offered to open" "$tools" '"open_app_tools"'
-expect_eq "apps: no schema dialect key sent" "null" "$(jq -c 'select(.body.tools) | .body.tools[] | select(.name == "youtube-music__play") | .input_schema["$schema"]' "$tmp/requests.log" | head -n1)"
-expect_contains_ "apps: their instructions" "$(jq -c 'select(.body.tools) | .body.system' "$tmp/requests.log" | head -n1)" "Plays songs in YouTube Music."
-expect_eq "apps: a step like any other" '"ok"' "$(event music step .status | tail -n1)"
-expect_eq "apps: shown as app: tool" '"youtube-music: play"' "$(event music step .tool | tail -n1)"
-expect_eq "apps: done, just said" "" "$(event music report .summary)"
-: >"$tmp/requests.log"
-ask photos '{"mode": "do", "question": "PHOTOS find my holiday pictures", "lang": "en"}'
-expect_contains_ "apps: opened on demand, for the next steps" "$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | tail -n1)" '"immich__search_12"'
-: >"$tmp/requests.log"
-ask named '{"mode": "do", "question": "open firefox and search immich", "lang": "en"}'
-expect_contains_ "apps: a big app up front when named" "$(jq -c 'select(.body.tools) | [.body.tools[].name]' "$tmp/requests.log" | head -n1)" '"immich__search_0"'
-rm -f "$tmp/app-tools.json"
-
-# A tool that also writes, asked only to read (its action): no OK needed,
-# even when every action is asked about; and no report for it.
-: >"$tmp/calls.log"
-ask reads '{"mode": "do", "question": "TASKS what is on my list?", "lang": "en", "confirm": "actions"}'
-expect_eq "read actions: not asked" "" "$(event reads approve .tool)"
-expect_eq "read actions: run" 'tasks {"action": "list"}' "$(cat "$tmp/calls.log")"
-expect_eq "read actions: no report" "" "$(event reads report .summary)"
-
-# A destructive step: asked, refused, not run.
-: >"$tmp/calls.log"
-ask deny '{"mode": "do", "question": "DELETE the task", "lang": "en"}' $'no\n'
-expect_eq "deny: a risky step asked first" '"tasks"' "$(event deny approve .tool)"
-expect_eq "deny: not run" '"denied"' "$(event deny step .status)"
-expect_eq "deny: nothing called" "" "$(cat "$tmp/calls.log")"
-expect_eq "deny: reported as failed" '["tasks (id=t1, action=delete): you said no"]' "$(event deny report .failed)"
-: >"$tmp/calls.log"
-ask closing '{"mode": "do", "question": "CLOSE the window", "lang": "en"}'
-expect_eq "risky only: closing a window isn't asked" "" "$(event closing approve .tool)"
-expect_eq "risky only: done at once" 'close_window {"id": 7}' "$(cat "$tmp/calls.log")"
-risky() { python3 -I -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("q",sys.argv[1]); q=importlib.util.module_from_spec(s); s.loader.exec_module(q); print(q.is_risky(sys.argv[2], json.loads(sys.argv[3]), {}))' "$script" "$1" "$2"; }
+# What is risky (nixbook_ai, the agent's --confirm): Quick AI's rules.
+risky() { python3 -I -c 'import json,sys; sys.path.insert(0, sys.argv[1]); import nixbook_ai; print(nixbook_ai.is_risky(sys.argv[2], json.loads(sys.argv[3]), {}))' "$root/scripts" "$1" "$2"; }
 expect_eq "risky: a browser click on Send" True "$(risky browser_act '{"ref": 1, "name": "Send", "action": "click"}')"
 expect_eq "risky: a browser form placing an order" True "$(risky browser_act '{"ref": 4, "name": "Place order", "action": "submit"}')"
 expect_eq "risky: a browser click elsewhere isn't" False "$(risky browser_act '{"ref": 2, "name": "Liked Music", "action": "click"}')"
 expect_eq "risky: typing in a page isn't" False "$(risky browser_act '{"ref": 3, "name": "Message", "action": "type", "value": "send it"}')"
-: >"$tmp/calls.log"
-ask allow '{"mode": "do", "question": "DELETE the task", "lang": "en"}' $'yes\n'
-expect_eq "allow: run once allowed" 'tasks {"action": "delete", "id": "t1"}' "$(cat "$tmp/calls.log")"
-: >"$tmp/calls.log"
-ask never '{"mode": "do", "question": "DELETE the task", "lang": "en", "confirm": "never"}'
-expect_eq "confirm never: not asked" "" "$(event never approve .tool)"
+expect_eq "risky: deleting a task, by its MCP name" True "$(risky mcp__desktop__tasks '{"action": "delete"}')"
+expect_eq "risky: closing a window isn't" False "$(risky mcp__desktop__close_window '{"id": 7}')"
+
+# Kiroshi's scan: the broker asked for the scan surface (the answer here has
+# no labels: the fake knows nothing of scans).
+: >"$tmp/broker.log"
+ask scan "{\"mode\": \"scan\", \"image\": \"$tmp/region.png\", \"context\": {\"app\": \"firefox\", \"title\": \"Inbox\"}, \"lang\": \"en\"}"
+expect_eq "scan: the broker, for the scan surface" "scan|Inbox|firefox|no" "$(grep '^scan' "$tmp/broker.log")"
+expect_contains_ "scan: its context in the prompt" "$(grep -F 'Label the 3' "$tmp/requests.log" | tail -n1)" "BROKER for=scan"
 
 # Full AI mode's reactions: ask by default, act alone only when told or
 # after the user agreed twice; their answers kept and given back.
-export XDG_STATE_HOME="$tmp/state"
+export XDG_STATE_HOME="$tmp/state" NIXBOOK_AI_BIG_MODEL=big-model
+: >"$tmp/requests.log"
+: >"$tmp/broker.log"
 ask react1 '{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Ana", "text": "dinner?"}}'
 expect_eq "react: asks by default" '"ask"' "$(event react1 react .action)"
+expect_eq "react: the decisions model (ai.routing: big) with its effort" '"big-model" "low"' \
+  "$(jq -c 'select(.body.messages | tostring | contains("dinner?")) | .body | "\(.model | tojson) \(.output_config.effort | tojson)"' -r "$tmp/requests.log" | head -n1)"
+expect_eq "react: the broker for the event" "react|Chat Ana dinner?|Chat|no" "$(head -n1 "$tmp/broker.log")"
+expect_contains_ "react: its context sent" "$(grep -F 'dinner?' "$tmp/requests.log" | head -n1)" "BROKER for=react"
 ask react2 '{"mode": "react", "event": {"event": "notification", "app": "Chat", "title": "Bo", "text": "TOLDIT ping"}}'
 expect_eq "react: does what it was told" '"do"' "$(event react2 react .action)"
 ask react3 '{"mode": "react", "event": {"event": "notification", "app": "Mail", "title": "x", "text": "GUESSDO spam"}}'
@@ -273,11 +211,17 @@ ask react5 "$ev"
 expect_eq "react: agreed twice: acts alone" '"do"' "$(event react5 react .action)"
 expect_contains_ "react: the past answers go along" "$(grep LEARNED "$tmp/requests.log" | tail -n1)" "the user agreed: yes"
 expect_eq "react: what it learned is said" '"answer yes to Ana"' "$(event react5 react .learn)"
-python3 -I "$script" learn '{"pref": "Ana is my sister"}'
-expect_eq "learn: a preference kept" '"Ana is my sister"' "$(python3 -I "$script" learned | jq -c '.prefs[-1].text')"
+python3 -I "$script" learn '{"pref": "Ana is my sister", "app": "Chat", "sig": "notification|chat|ana"}'
+expect_eq "learn: a preference into the one memory (prefs add)" \
+  'add {"text": "Ana is my sister", "source": "fullai", "app": "Chat", "signature": "notification|chat|ana"}' "$(tail -n1 "$tmp/prefs.log")"
+expect_eq "learn: not kept here too" "null" "$(python3 -I "$script" learned | jq -c '.prefs')"
+touch "$tmp/prefs-off"
+python3 -I "$script" learn '{"pref": "Bo is my brother"}'
+expect_eq "learn: kept here when desktop-mcp can't" '"Bo is my brother"' "$(python3 -I "$script" learned | jq -c '.prefs[-1].text')"
+rm "$tmp/prefs-off"
 python3 -I "$script" learn '{"forget": true}'
 expect_eq "learn: forgotten" '{}' "$(python3 -I "$script" learned)"
-unset XDG_STATE_HOME
+unset XDG_STATE_HOME NIXBOOK_AI_BIG_MODEL
 
 # The answers read out (scripts/voice-speak.py): the text made speakable,
 # the language, and the cute chain run with stub tools (no model).

@@ -722,8 +722,14 @@ out=$(model_provider run agent -p --output-format stream-json 2>/dev/null) && rc
 expect_eq "model-provider: no key, nothing started, a result line instead" \
   "3 true Meta: no API key saved (Settings > Desktop agents > Model provider)" \
   "$rc $(jq -r '"\(.is_error) \(.result)"' <<<"$out")"
+out=$(model_provider env) && rc=0 || rc=$?
+expect_eq "model-provider: env without a key, the error as JSON" \
+  "3 Meta: no API key saved (Settings > Desktop agents > Model provider)" "$rc $(jq -r .error <<<"$out")"
 expect_eq "model-provider: a key saved" true "$(printf 'mk-123\n' | model_provider key set | jq -r .saved)"
 expect_eq "model-provider: the key is in the keyring" true "$(model_provider status | jq -r .keySaved)"
+expect_eq "model-provider: env, the provider's values as one JSON object" \
+  "https://api.meta.ai mk-123 muse-spark-1.3 muse-spark-1.3 muse-wonder-1.0 Meta" \
+  "$(model_provider env | jq -r '"\(.baseUrl) \(.key) \(.model) \(.smallModel) \(.bigModel) \(.label)"')"
 out=$(ANTHROPIC_API_KEY=other-key ANTHROPIC_BASE_URL=https://elsewhere CLAUDE_CODE_OAUTH_TOKEN=oauth \
   model_provider run agent -p --model small --model=big)
 expect_eq "model-provider: the command run unchanged" "args:-p --model small --model=big" "$(head -1 <<<"$out")"
@@ -743,6 +749,7 @@ expect_eq "model-provider: custom models default to the main one" "https://other
   "$(model_provider status | jq -r .baseUrl)$(model_provider run agent -p | grep -E 'SMALL|BIG' | sed 's/.*=/ /' | tr -d '\n')"
 provider '{"kind":"custom","baseUrl":"http://other.example","model":"m"}'
 expect_contains "model-provider: no key sent in clear over the network" "$(model_provider status | jq -r .error)" "must be https://"
+expect_contains "model-provider: nor handed out by env" "$(model_provider env | jq -r .error)" "must be https://"
 expect_contains "model-provider: nor saved for such a server" "$(printf 'k\n' | model_provider key set | jq -r .error)" "must be https://"
 
 # The test request, against a fake Messages API on this computer.

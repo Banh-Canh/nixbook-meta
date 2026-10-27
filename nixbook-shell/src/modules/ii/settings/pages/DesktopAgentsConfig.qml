@@ -111,7 +111,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("One place to talk to the AI: Muse's speech bubble (Mod+C, or Mod+T to talk). What you ask there is answered in a couple of seconds by the model provider's small model called directly (Meta: Muse Spark), without starting an agent: plain commands (music, volume, an app, a layout…) are done at once, anything else by the model with the desktop tools, each step in the bubble, with Allow / No before anything destructive. Expand the bubble to go on in the side panel with the Muse agent. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
+                text: Translation.tr("One place to talk to the AI: Muse's speech bubble (Mod+C, or Mod+T to talk). Plain commands (music, volume, an app, a layout…) are done at once; anything else by Muse's agent, kept running for the bubble on the quick model below, with the desktop tools, each step in the bubble, with Allow / No before anything risky. Expand the bubble to go on in the side panel: the same conversation, the same agent session. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -244,7 +244,7 @@ ContentPage {
             }
             ConfigSelectionArray {
                 configKey: "ai.quick.model"
-                text: Translation.tr("Model")
+                text: Translation.tr("Model for Explain, Summarize, Translate, replies and screen regions")
                 icon: "speed"
                 currentValue: Config.options.ai.quick.model
                 onSelected: newValue => { Config.options.ai.quick.model = newValue }
@@ -286,6 +286,87 @@ ContentPage {
                     enabled: QuickAi.available
                     onClicked: NixOnboarding.openWindow()
                 }
+            }
+        }
+
+        // Accuracy (meta-agent --resolve / --verify, the 👍 / 👎 of
+        // services/AnswerFeedback.qml) and which model does what (ai.routing).
+        ContentSection {
+            icon: "verified"
+            title: Translation.tr("Accuracy and models")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Muse in the bubble and in the side panel is one agent with one memory. Before acting on a request that could mean several things, it asks which one you meant; after acting, it looks again (read-only) to check the result and fixes it once if needed, saying \"Checked\" or \"Couldn't confirm\". Under its answers, 👍 tells it that was right, 👎 asks what you meant: the correction is remembered for similar requests, and you can ask again with it.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.agent.resolve"
+                    buttonIcon: "help"
+                    text: Translation.tr("Ask back when a request is ambiguous")
+                    checked: Config.options.ai.agent.resolve ?? true
+                    onCheckedChanged: Config.options.ai.agent.resolve = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.agent.verify"
+                    buttonIcon: "task_alt"
+                    text: Translation.tr("Check the result after acting")
+                    checked: Config.options.ai.agent.verify ?? true
+                    onCheckedChanged: Config.options.ai.agent.verify = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.agent.feedback"
+                    buttonIcon: "thumbs_up_down"
+                    text: Translation.tr("👍 / 👎 under the answers")
+                    checked: Config.options.ai.agent.feedback ?? true
+                    onCheckedChanged: Config.options.ai.agent.feedback = checked
+                }
+            }
+            ConfigSelectionArray {
+                configKey: "ai.routing.quick"
+                text: Translation.tr("Model for Muse in the bubble")
+                icon: "chat_bubble"
+                currentValue: Config.options.ai.routing.quick
+                onSelected: newValue => { Config.options.ai.routing.quick = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big"), icon: "psychology", value: "big" }
+                ]
+            }
+            ConfigSelectionArray {
+                configKey: "ai.routing.decisions"
+                text: Translation.tr("Model for decisions made for you (notifications, reactions, routines, what you meant)")
+                icon: "gavel"
+                currentValue: Config.options.ai.routing.decisions
+                onSelected: newValue => { Config.options.ai.routing.decisions = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big"), icon: "psychology", value: "big" }
+                ]
+            }
+            ConfigSelectionArray {
+                configKey: "ai.routing.decisionsEffort"
+                text: Translation.tr("Thinking for those decisions")
+                icon: "neurology"
+                currentValue: Config.options.ai.routing.decisionsEffort
+                onSelected: newValue => { Config.options.ai.routing.decisionsEffort = newValue }
+                options: [
+                    { displayName: Translation.tr("Low"), icon: "bolt", value: "low" },
+                    { displayName: Translation.tr("Medium"), icon: "balance", value: "medium" },
+                    { displayName: Translation.tr("High"), icon: "psychology", value: "high" }
+                ]
+            }
+            ConfigSpinBox {
+                configKey: "ai.fullAi.reactPerHour"
+                icon: "notifications_active"
+                text: Translation.tr("Full AI reactions an hour at most (0: no limit)")
+                value: Config.options.ai.fullAi.reactPerHour
+                from: 0; to: 240; stepSize: 5
+                onValueChanged: Config.options.ai.fullAi.reactPerHour = value
             }
         }
 

@@ -11,7 +11,11 @@
 #   - --max-turns, the effort settings refused, the model names;
 #   - Bash (plain, and in bubblewrap when it can run), WebFetch, WebSearch,
 #     images from Read; the provider's key never given to tools;
-#   - no key: through nixbook-model-provider; SIGTERM: saved and resumable.
+#   - no key: through nixbook-model-provider; SIGTERM: saved and resumable;
+#   - what Quick AI's loop did, now here: approvals (--confirm, over stdin),
+#     the report (--report), big MCP servers on demand (--lazy-mcp), the
+#     broker's context (--context-for), the episode learned (--learn); and
+#     the request read first (--resolve), the result checked (--verify).
 # Needs bash, python3 and jq. Run: bash tests/meta-agent.sh
 set -euo pipefail
 
@@ -43,13 +47,32 @@ printf 'line one\nline two\n' >"$tmp/ro/a.txt"
 printf 'foo and more\n' >"$tmp/rw/b.txt"
 printf 'TOPSECRET\n' >"$tmp/home/secret.txt"
 export XDG_STATE_HOME="$tmp/state"
+# Never the user's own desktop-mcp helper (its socket) nor settings.
+mkdir -p "$tmp/run" "$tmp/cfg/nixbook-shell"
+export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" NIXBOOK_AI_RETRY_DELAY=0.05
 
 # The privacy mask (nixbook-desktop-mcp privacy mask|unmask).
+# The context broker (context build: its arguments in its text) and the
+# episodes (episode -) too.
 cat >"$tmp/bin/nixbook-desktop-mcp" <<'EOF'
 #!/usr/bin/env bash
-[ "$1" = privacy ] || exit 1
-echo "$2 $3" >>"${0%/*}/../privacy.log"
-if [ "$2" = mask ]; then sed 's/Julien/⟦Person 1⟧/g'; else sed 's/⟦Person 1⟧/Julien/g'; fi
+log="${0%/*}/.."
+case "$1" in
+privacy)
+  echo "$2 $3" >>"$log/privacy.log"
+  if [ "$2" = mask ]; then sed 's/Julien/⟦Person 1⟧/g'; else sed 's/⟦Person 1⟧/Julien/g'; fi ;;
+context)
+  [ "$2" = build ] || exit 1
+  shift 2
+  s="" q="" na=no a="" t=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --for) s=$2; shift ;; --query) q=$2; shift ;; --app) a=$2; shift ;; --title) t=$2; shift ;; --no-activity) na=yes ;; esac
+    shift
+  done
+  jq -cn --arg t "CTXBLOCK for=$s query=$q noact=$na app=$a title=$t Julien" '{sections: [{name: "facts", text: $t}], text: $t}' ;;
+episode) cat >>"$log/episode.log"; echo >>"$log/episode.log"; echo "learned" ;;
+*) exit 1 ;;
+esac
 EOF
 # A stub MCP server: echo, look (an image), slow; what it was called with logged.
 cat >"$tmp/stub-mcp.py" <<'EOF'
@@ -84,6 +107,48 @@ for line in sys.stdin:
 EOF
 chmod +x "$tmp/bin/"*
 export PATH="$tmp/bin:$PATH"
+# The desktop's server (annotated tools, replies naming the focused window)
+# and a big app's (13 tools: offered on demand with --lazy-mcp 12).
+cat >"$tmp/stub-desktop.py" <<'EOF'
+import json, sys
+log, kind = sys.argv[1], sys.argv[2]
+obj = lambda **p: {"type": "object", "properties": {k: {"type": v} for k, v in p.items()}}
+if kind == "desktop":
+    tools = [{"name": "launch_app", "description": "Start an app", "inputSchema": obj(app="string"),
+              "annotations": {"readOnlyHint": False}},
+             {"name": "close_window", "description": "Close a window", "inputSchema": obj(id="integer"),
+              "annotations": {"readOnlyHint": False, "destructiveHint": True}},
+             {"name": "list_windows", "description": "The windows", "inputSchema": obj(),
+              "annotations": {"readOnlyHint": True}},
+             {"name": "tasks", "description": "The to-do lists: list, add, delete", "inputSchema": obj(action="string", id="string"),
+              "annotations": {"readOnlyHint": False, "destructiveHint": True}}]
+else:
+    tools = [{"name": f"photo_{i}", "description": f"Photos {i}", "inputSchema": obj(query="string")} for i in range(13)]
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    m, p = msg["method"], msg.get("params") or {}
+    if m == "initialize":
+        res = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": kind},
+               "instructions": f"{kind.upper()}INSTRUCTIONS"}
+    elif m == "tools/list":
+        res = {"tools": tools}
+    elif m == "tools/call":
+        with open(log, "a") as f:
+            f.write(json.dumps({"server": kind, **p}, ensure_ascii=False) + "\n")
+        a = p.get("arguments") or {}
+        if a.get("app") == "BROKEN":
+            res = {"content": [{"type": "text", "text": "no such app: BROKEN"}], "isError": True}
+        else:
+            res = {"content": [{"type": "text", "text": f"done: {p['name']}\nFocused: firefox — 'Firefox' (id 3)"}]}
+    else:
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "no"}}), flush=True)
+        continue
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": res}), flush=True)
+EOF
+desk_config=$(jq -cn --arg py "$(command -v python3)" --arg s "$tmp/stub-desktop.py" --arg l "$tmp/desk-calls.log" \
+  '{mcpServers: {desktop: {command: $py, args: ["-I", $s, $l, "desktop"]}, photos: {command: $py, args: ["-I", $s, $l, "photos"]}}}')
 mcp_config=$(jq -cn --arg py "$(command -v python3)" --arg s "$tmp/stub-mcp.py" --arg l "$tmp/mcp-calls.log" \
   '{mcpServers: {stub: {command: $py, args: ["-I", $s, $l]}}}')
 
@@ -324,6 +389,165 @@ expect_lacks "WebSearch: a blocked domain left out" "$found" "blocked.example"
 echo "AGENTTEST:web" | agent -p --tools WebFetch >/dev/null
 expect_contains "WebFetch: this computer's addresses refused" \
   "$(requests web | tail -n1 | jq -c '.messages[-1].content[0]')" "not on the internet"
+
+# -- Approvals (--confirm): a risky step waits for the user ---------------------------------
+# turn TEXT [APPROVAL…]: a stream-json user line, then the approval lines.
+turn() {
+  jq -cn --arg t "$1" '{type: "user", message: {role: "user", content: $t}}'
+  shift
+  for a in "$@"; do printf '%s\n' "$a"; done
+}
+script approve '[[{"type": "tool_use", "id": "d1", "name": "mcp__desktop__tasks", "input": {"action": "delete", "id": "t1"}}],
+  [{"type": "text", "text": "Handled."}]]'
+: >"$tmp/desk-calls.log"
+out=$(turn "AGENTTEST:approve delete the task" '{"type": "approval", "id": "d1", "allow": true}' |
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm destructive)
+expect_eq "confirm: the risky step asked about" '{"type":"approval_request","id":"d1","tool":"tasks","input":{"action":"delete","id":"t1"},"summary":"id=t1, action=delete"}' \
+  "$(jq -c 'select(.type == "approval_request") | del(.session_id)' <<<"$out")"
+expect_eq "confirm: allowed, run" '"tasks" {"action":"delete","id":"t1"}' "$(jq -c '.name, .arguments' "$tmp/desk-calls.log" | paste -sd' ')"
+: >"$tmp/desk-calls.log"
+: >"$tmp/requests.log"
+out=$(turn "AGENTTEST:approve delete the task" '{"type": "approval", "id": "d1", "allow": false}' |
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm destructive)
+expect_eq "confirm: denied, not run" "" "$(cat "$tmp/desk-calls.log")"
+expect_eq "confirm: the model told" '"The user said no."' "$(requests approve | tail -n1 | jq -c '.messages[-1].content[0].content')"
+: >"$tmp/requests.log"
+out=$(turn "AGENTTEST:approve delete the task" | NIXBOOK_AGENT_APPROVAL_TIMEOUT=1 \
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm destructive)
+expect_eq "confirm: no answer (the input ended) is a no" '"The user said no."' "$(requests approve | tail -n1 | jq -c '.messages[-1].content[0].content')"
+: >"$tmp/requests.log"
+echo "AGENTTEST:approve delete the task" | agent -p --mcp-config "$desk_config" --confirm destructive >/dev/null
+expect_contains "confirm: with -p text input, no one to ask: refused" "$(requests approve | tail -n1 | jq -c '.messages[-1].content[0]')" "no one to ask"
+expect_eq "confirm: nothing run then" "" "$(cat "$tmp/desk-calls.log")"
+script closing '[[{"type": "tool_use", "id": "c1", "name": "mcp__desktop__close_window", "input": {"id": 3}},
+  {"type": "tool_use", "id": "c2", "name": "mcp__desktop__list_windows", "input": {}}], [{"type": "text", "text": "ok"}]]'
+out=$(turn "AGENTTEST:closing" | agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm destructive)
+expect_eq "confirm destructive: closing a window isn't asked" "" "$(jq -c 'select(.type == "approval_request")' <<<"$out")"
+: >"$tmp/desk-calls.log"
+out=$(turn "AGENTTEST:closing" '{"type": "approval", "id": "c1", "allow": true}' |
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm actions)
+expect_eq "confirm actions: every acting step asked, never one that reads" '"c1"' "$(jq -c 'select(.type == "approval_request") | .id' <<<"$out")"
+expect_eq "confirm actions: both run" "close_window list_windows" "$(jq -r .name "$tmp/desk-calls.log" | sort | paste -sd' ')"
+
+# -- The report (--report) ---------------------------------------------------------------------
+script reported '[[{"type": "tool_use", "id": "r1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "Opened it.<report>{\"summary\": \"Firefox is ready\", \"done\": [\"Opened Firefox\"], \"failed\": [], \"needs_you\": [\"Sign in to your account\"]}</report>"}]]'
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:reported open firefox" | agent -p --output-format json --mcp-config "$desk_config" --report)
+expect_eq "report: the model's, in the result" '{"summary":"Firefox is ready","done":["Opened Firefox"],"failed":[],"needsYou":["Sign in to your account"]}' \
+  "$(jq -c .report <<<"$out")"
+expect_eq "report: the result without the block" "Opened it." "$(jq -r .result <<<"$out")"
+expect_contains "report: asked for in the system prompt" "$(requests reported | sed -n 1p | jq -r '.system[0].text')" "<report>"
+script failing '[[{"type": "tool_use", "id": "f1", "name": "mcp__desktop__launch_app", "input": {"app": "BROKEN"}}], [{"type": "text", "text": "Hmm."}]]'
+out=$(echo "AGENTTEST:failing open it" | agent -p --output-format json --mcp-config "$desk_config" --report)
+expect_eq "report: a failed step said, from the real calls" '["launch app (app=BROKEN): no such app: BROKEN"]' "$(jq -c .report.failed <<<"$out")"
+script fine '[[{"type": "tool_use", "id": "g1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}], [{"type": "text", "text": "Firefox is open."}]]'
+out=$(echo "AGENTTEST:fine open firefox" | agent -p --output-format json --mcp-config "$desk_config" --report)
+expect_eq "report: none when it went well" "null Firefox is open." "$(jq -r '"\(.report) \(.result)"' <<<"$out")"
+
+# -- Big MCP servers on demand (--lazy-mcp) ------------------------------------------------------
+script lazy '[[{"type": "tool_use", "id": "o1", "name": "open_tools__photos", "input": {}}],
+  [{"type": "tool_use", "id": "o2", "name": "mcp__photos__photo_12", "input": {"query": "beach"}}], [{"type": "text", "text": "Found."}]]'
+: >"$tmp/requests.log"
+: >"$tmp/desk-calls.log"
+out=$(echo "AGENTTEST:lazy find my beach photos" | agent -p --output-format json --mcp-config "$desk_config" --lazy-mcp 12)
+first=$(requests lazy | sed -n 1p | jq -c '[.tools[].name]')
+expect_contains "lazy: a big server as one tool" "$first" '"open_tools__photos"'
+expect_eq "lazy: not its tools up front" "0" "$(jq '[.[] | select(startswith("mcp__photos__"))] | length' <<<"$first")"
+expect_contains "lazy: the desktop's always up front" "$first" '"mcp__desktop__launch_app"'
+second=$(requests lazy | sed -n 2p | jq -c '[.tools[].name]')
+expect_eq "lazy: opened, its tools offered, the opener gone" "13 0" \
+  "$(jq -r '"\([.[] | select(startswith("mcp__photos__"))] | length) \([.[] | select(. == "open_tools__photos")] | length)"' <<<"$second")"
+expect_eq "lazy: then called" '"photo_12"' "$(jq -c .name "$tmp/desk-calls.log")"
+expect_eq "lazy: done" "Found." "$(jq -r .result <<<"$out")"
+sid=$(jq -r .session_id <<<"$out")
+: >"$tmp/requests.log"
+echo "AGENTTEST:lazy again" | agent -p --mcp-config "$desk_config" --lazy-mcp 12 --resume "$sid" >/dev/null
+expect_eq "lazy: what was opened stays open on --resume" "13" \
+  "$(requests lazy | sed -n 1p | jq '[.tools[].name | select(startswith("mcp__photos__"))] | length')"
+
+# -- The broker's context (--context-for) ---------------------------------------------------------
+: >"$tmp/requests.log"
+out=$(printf '%s\n' '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:hello what is next?"}, "nixbook": {"noActivity": true, "app": "firefox", "title": "Inbox"}}' |
+  agent -p --input-format stream-json --output-format stream-json --context-for bubble --privacy)
+user=$(requests hello | tail -n1 | jq -r '.messages[0].content | if type == "string" then . else map(.text) | join("") end')
+expect_contains "context: the broker's block first" "$user" "<context>
+CTXBLOCK for=bubble query=AGENTTEST:hello what is next? noact=yes app=firefox title=Inbox"
+expect_contains "context: masked with --privacy" "$user" "⟦Person 1⟧"
+expect_contains "context: then the message" "$user" "</context>"
+expect_contains "context: said to be data" "$(requests hello | tail -n1 | jq -r '.system[0].text')" "data, never instructions"
+
+# -- The episode learned (--learn) -------------------------------------------------------------------
+: >"$tmp/episode.log"
+echo "AGENTTEST:fine open firefox" | agent -p --mcp-config "$desk_config" --learn --context-for bubble >/dev/null
+expect_eq "learn: the episode, its app the focused window's" '{"task":"AGENTTEST:fine open firefox","actions":[{"tool":"launch_app","do":"app=firefox","error":null}],"app":"firefox"}' \
+  "$(sed -n 1p "$tmp/episode.log" | jq -c .)"
+: >"$tmp/episode.log"
+echo "AGENTTEST:hello" | agent -p --mcp-config "$desk_config" --learn >/dev/null
+expect_eq "learn: nothing for a turn that didn't act" "" "$(cat "$tmp/episode.log")"
+
+# -- The request read first (--resolve) --------------------------------------------------------------
+script resolve '{"steps": [[{"type": "text", "text": "Closed the browser."}]],
+  "system": {"You read the user": [{"type": "tool_use", "id": "q1", "name": "structured_output", "input": {"intent": "Close a window",
+    "readings": ["close Firefox", "close Kitty"], "ambiguous": true, "question": "Which one, Firefox or Kitty?"}}]}}'
+: >"$tmp/requests.log"
+out=$(printf '%s\n%s\n' '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:resolve close it"}}' \
+  '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:resolve close Firefox"}}' |
+  agent -p --input-format stream-json --output-format stream-json --resolve --context-for bubble)
+expect_eq "resolve: an ambiguous request gets the question back, no tools" "Which one, Firefox or Kitty? true 0" \
+  "$(jq -r 'select(.type == "result") | "\(.result) \(.clarify) \(.num_turns)"' <<<"$out" | sed -n 1p)"
+expect_eq "resolve: then the answer, not read again" "Closed the browser. null" \
+  "$(jq -r 'select(.type == "result") | "\(.result) \(.clarify)"' <<<"$out" | tail -n1)"
+reads=$(jq -c 'select(.path == "/v1/messages" and (.body.system | tostring | contains("You read the user"))) | .body' "$tmp/requests.log")
+expect_eq "resolve: once, by the decisions model (ai.routing: big), with its effort" '"big-model" "low"' \
+  "$(jq -r '"\(.model | tojson) \(.output_config.effort | tojson)"' <<<"$reads" | paste -sd'|')"
+expect_contains "resolve: given the broker's context" "$(jq -c .messages <<<"$reads")" "CTXBLOCK for=bubble"
+expect_eq "resolve: the question kept in the conversation" '["user","assistant","user"]' \
+  "$(requests resolve | grep -v 'You read the user' | tail -n1 | jq -c '[.messages[].role]')"
+script resolved '{"steps": [[{"type": "text", "text": "Done."}]],
+  "system": {"You read the user": [{"type": "tool_use", "id": "q1", "name": "structured_output", "input": {"intent": "Close the Firefox window",
+    "readings": ["close Firefox"], "ambiguous": false, "question": ""}}]}}'
+echo '{"ai": {"routing": {"decisions": "small", "decisionsEffort": "medium"}}}' >"$tmp/cfg/nixbook-shell/config.json"
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:resolved close it" | agent -p --output-format json --resolve)
+expect_contains "resolve: a clear request goes on with its intent" \
+  "$(requests resolved | grep -v 'You read the user' | tail -n1 | jq -c '.messages[0].content')" "<intent>Close the Firefox window</intent>"
+expect_eq "resolve: the routing's model and effort" '"small-model" "medium"' \
+  "$(jq -c 'select(.path == "/v1/messages" and (.body.system | tostring | contains("You read the user"))) | .body | "\(.model | tojson) \(.output_config.effort | tojson)"' -r "$tmp/requests.log")"
+rm "$tmp/cfg/nixbook-shell/config.json"
+: >"$tmp/requests.log"
+echo "AGENTTEST:resolved how are you" | agent -p --resolve >/dev/null
+expect_eq "resolve: not for a plain question" "0" \
+  "$(jq -c 'select(.body.system | tostring | contains("You read the user"))' "$tmp/requests.log" | wc -l | tr -d ' ')"
+
+# -- The result checked (--verify) --------------------------------------------------------------------
+script verify '[[{"type": "tool_use", "id": "v1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "Opened."}],
+  [{"type": "tool_use", "id": "v2", "name": "mcp__desktop__close_window", "input": {"id": 3}},
+   {"type": "tool_use", "id": "v3", "name": "mcp__desktop__list_windows", "input": {}}],
+  [{"type": "tool_use", "id": "v4", "name": "verification", "input": {"met": false, "note": "no Firefox window"}}],
+  [{"type": "tool_use", "id": "v5", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "Fixed: Firefox is open now."}]]'
+: >"$tmp/requests.log"
+: >"$tmp/desk-calls.log"
+out=$(echo "AGENTTEST:verify open firefox" | agent -p --output-format stream-json --mcp-config "$desk_config" --verify)
+expect_eq "verify: the verdict" '{"type":"verify","met":false,"note":"no Firefox window"}' "$(jq -c 'select(.type == "verify") | del(.session_id)' <<<"$out")"
+expect_eq "verify: only reading tools in the check, then the fix" "launch_app list_windows launch_app" "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ')"
+expect_contains "verify: an acting tool refused in it" "$(requests verify | sed -n 4p | jq -c '.messages[-1].content')" "this round only checks"
+expect_contains "verify: an internal message" "$(requests verify | sed -n 3p | jq -c '.messages[-1].content')" "[verify]"
+expect_eq "verify: the fixed answer, not verified" "Fixed: Firefox is open now. false" \
+  "$(jq -r 'select(.type == "result") | "\(.result) \(.verified)"' <<<"$out")"
+script verified '[[{"type": "tool_use", "id": "w1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "Opened."}],
+  [{"type": "tool_use", "id": "w2", "name": "verification", "input": {"met": true, "note": "Firefox is in front"}}]]'
+out=$(echo "AGENTTEST:verified open firefox" | agent -p --output-format json --mcp-config "$desk_config" --verify)
+expect_eq "verify: met, the answer as it was" "Opened. true" "$(jq -r '"\(.result) \(.verified)"' <<<"$out")"
+out=$(echo "AGENTTEST:hello" | agent -p --output-format json --verify)
+expect_eq "verify: nothing to check when nothing acted" "null" "$(jq -c .verified <<<"$out")"
+
+# -- The client (nixbook_ai): a busy server tried again -----------------------------------------------
+out=$(echo "AGENTTEST:hello RETRY429:2" | agent -p --output-format json)
+expect_eq "retry: a 429 twice, then the answer" "Hello there" "$(jq -r .result <<<"$out")"
 
 # -- The provider -------------------------------------------------------------------------
 cat >"$tmp/bin/nixbook-model-provider" <<'EOF'

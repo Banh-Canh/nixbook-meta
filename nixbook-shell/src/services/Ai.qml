@@ -445,7 +445,7 @@ Singleton {
     function agentPrompt(messages, attached, sessionId) {
         const turns = messages.filter(m => (m.role === "user" || m.role === "assistant") && !m.functionName);
         const last = turns[turns.length - 1];
-        let prompt = last?.role === "user" ? last.rawContent : "";
+        let prompt = last?.role === "user" ? (last.agentText || last.rawContent) : "";
         // What Muse said on its own since (Initiative), unknown to its session.
         const unsent = sessionId.length > 0 ? turns.filter(m => m.role === "assistant" && m.unsent) : [];
         // Framed as information: it comes from what happens on the computer
@@ -456,6 +456,15 @@ Singleton {
             + "asked for, and act only on what the user asks now, in their own words";
         if (unsent.length > 0)
             prompt = `(Meanwhile the user was shown this, ${onItsOwn}:\n<<<\n${unsent.map(m => m.rawContent).join("\n\n")}\n>>>)\n\nThe user now says:\n\n${prompt}`;
+        // What the bubble's quick one-shot modes (Explain, Summarize, a
+        // screen region…) answered in this conversation meanwhile, outside
+        // the session: the user saw it, so the session hears of it.
+        const off = sessionId.length > 0 ? turns.slice(0, -1).filter(m => m.offSession) : [];
+        if (off.length > 0) {
+            let quick = off.map(m => `${m.role === "user" ? "User" : "Quick answer"}: ${m.rawContent}`).join("\n\n");
+            if (quick.length > 6000) quick = "…" + quick.slice(-6000);
+            prompt = `(Meanwhile in this conversation, answered by the quick model outside your session:\n${quick})\n\nThe user now says:\n\n${prompt}`;
+        }
         if (sessionId.length === 0 && turns.length > 1) {
             // A new session for a chat that already has turns (another model,
             // a loaded chat, a regenerated answer): the chat so far, as context.
@@ -595,8 +604,13 @@ Singleton {
         // Muse with placeholders (AiChatSession.qml, --privacy), its tool
         // calls and answers get the real values back here.
         const privacy = Config.options.ai.privacy.mask;
+        // The bubble (Muse's speech bubble, QuickAi) or the side panel: the
+        // same session either way (AiChatSession.surface).
+        const bubble = chat.surface === "bubble";
         const system = root.stableSystemPrompt
-            + "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short."
+            + (bubble
+                ? "\n\nYou are Muse, answering in your speech bubble on the user's desktop (they may be talking to you out loud): answer like a chat, in one to three short sentences, plain words, no headings or tables."
+                : "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short.")
             + (privacy ? " " + root.privacyPrompt : "")
             + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
             + (desktop ? " You can see and drive the user's desktop with the desktop tools." : "")
@@ -649,7 +663,8 @@ Singleton {
         // with its next reply.
         const mcpServers = Object.assign({}, extraServers, desktop ? { desktop: {
             command: root.desktopMcpCommand,
-            // The personal memory about each message: sent with it (AiChatSession.qml).
+            // The personal memory about each message: in the context broker's
+            // block the agent puts before it (--context-for), not again here.
             // The chat's own agent desktop (NIXBOOK_AGENT_DESKTOP), when
             // agents work on theirs.
             env: { NIXBOOK_DESKTOP_MCP_QUERY_FILE: chat.desktopTaskFilePath, NIXBOOK_DESKTOP_MCP_PERSONAL: "shell",
@@ -658,10 +673,28 @@ Singleton {
         if (Object.keys(mcpServers).length > 0)
             args.push("--mcp-config", JSON.stringify({ mcpServers }));
         if (allowed.length > 0) args.push("--allowedTools", allowed.join(","));
-        const agentModel = Config.options.ai.agent.model ?? "";
+        // The bubble on the quick model (ai.routing.quick), the panel on
+        // ai.agent.model.
+        const agentModel = bubble ? (Config.options.ai.routing?.quick ?? "small") : (Config.options.ai.agent.model ?? "");
         if (agentModel.length > 0) args.push("--model", agentModel);
-        const agentEffort = Config.options.ai.agent.effort ?? "";
+        const agentEffort = bubble ? (Config.options.ai.quick?.effort ?? "low") : (Config.options.ai.agent.effort ?? "");
         if (/^[a-z]+$/.test(agentEffort)) args.push("--effort", agentEffort);
+        // One core for both (meta-agent): before each turn the context
+        // broker's block for this surface (what the user is doing, the
+        // facts, their memory, their corrections); a big MCP server as one
+        // tool until it is needed; what a task that acted taught it, learned
+        // (`nixbook-desktop-mcp episode`); an ambiguous request answered with
+        // a question (ai.agent.resolve); what it did checked again with
+        // read-only tools (ai.agent.verify). The bubble also asks before
+        // risky steps (ai.quick.confirm: Allow / No chips) and ends a turn
+        // that acted with a report (its REPORT brief).
+        args.push("--context-for", bubble ? "bubble" : "chat", "--lazy-mcp", "12", "--learn");
+        if (Config.options.ai.agent.resolve ?? true) args.push("--resolve");
+        if (Config.options.ai.agent.verify ?? true) args.push("--verify");
+        if (bubble) {
+            const confirm = Config.options.ai.quick?.confirm ?? "destructive";
+            args.push("--confirm", ["destructive", "actions", "never"].includes(confirm) ? confirm : "destructive", "--report");
+        }
         if (resume.length > 0) args.push("--resume", resume);
         return `workdir="\${XDG_DATA_HOME:-$HOME/.local/share}/nixbook-shell/assistant"\n`
             + `mkdir -p "$workdir" && cd "$workdir" || exit 1\n`
@@ -748,14 +781,21 @@ Singleton {
     Timer {
         id: prewarm
         interval: 300
-        onTriggered: if (root.agentWanted) root.current?.prewarm()
+        onTriggered: {
+            if (!root.agentWanted || !root.current) return;
+            // The panel's command line, unless the bubble is talking in this tab.
+            if (!Initiative.holds(root.current)) root.current.surface = "chat";
+            root.current.prewarm();
+        }
     }
 
     function stopResponse() {
         root.current?.stopResponse();
     }
     function sendUserMessage(message) {
-        root.current?.sendUserMessage(message);
+        if (!root.current) return;
+        root.current.surface = "chat";
+        root.current.sendUserMessage(message);
     }
     function attachFile(filePath: string) {
         root.current?.attachFile(filePath);

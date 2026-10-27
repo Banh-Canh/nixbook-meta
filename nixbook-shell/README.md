@@ -651,7 +651,10 @@ screens on again or unlocked after a while, or the first start of the day:
 today's events and tasks, personal-memory events within 3 days or 2 days
 past, the usual session when not set up), `focus` (a new app in front, at
 most every 3 minutes: a broken recipe of it) with
-`ai.initiative.readNotifications`, `notifications` (batched for 45 s), and
+`ai.initiative.readNotifications`, `notifications` (batched for 45 s;
+they and Routines' `happened` events reach it through `services/Reactor.qml`,
+the one event queue, which gives each event to at most one model decision:
+Full AI mode first while it is on, priority 0, the initiative at 10), and
 `moment` (asked every 5 min; due at random 40 to 120 minutes apart, kept as `momentAt` in initiative.json with `activeSince`, the last break, so shell restarts don't reset them; while active: a light word,
 skipped 40% of the time, at most `initiativeChatPerDay`, 3 h apart and 45 min
 after anything else, only in the bar: a long stretch, music on repeat, tasks
@@ -677,8 +680,10 @@ the bubble, saying what it is doing meanwhile (thinking, the tool it used:
 `Initiative.chat`, the thread made by `Initiative.prepare()` as soon as the
 field gets the focus, so its `nixbook-meta-agent` is warm when the message goes; the
 robot nods meanwhile). Only
-notifications go to the small model (`INITIATIVE_SYSTEM`, at most
-`initiativeCallsPerDay`), which also names kinds never worth a word. The
+notifications go to a model (`INITIATIVE_SYSTEM`, at most
+`initiativeCallsPerDay`; the decisions model, `ai.routing.decisions`, big,
+with `ai.routing.decisionsEffort`, low; their context from the broker,
+`context build --for triage`), which also names kinds never worth a word. The
 memory pass offers what it learned (`initiative_offer`). While the bubble
 is taken, a new word goes to `Initiative.stack` (`_say`; 3 at most, newest
 last), small bubbles under it (`AgentSpeech.qml`, `stacked`): a click opens
@@ -697,10 +702,13 @@ no minute idle, `breakIdle`), then together. Pairing words come that way
 `RecentContext.qml` (`ai.initiative.recentContext`) keeps the last
 windows, failed commands (the zsh/bash hook in hm-module.nix writes
 `$XDG_RUNTIME_DIR/nixbook-shell/terminal-failed` only while
-`terminal-on` exists) and errors copied, in memory; `nixbook-desktop-mcp
-context` filters it (`pair_private`, `pair_redact`) for a question asked
-in the bubble (`AiChatSession.pendingContext`, shown there, × is
-`Initiative.skipContext`) and for `where_were_we` in the brief.
+`terminal-on` exists) and errors copied, in memory, written for the context broker to
+`$XDG_RUNTIME_DIR/nixbook-shell/recent.txt` (empty while off), which filters
+it (`pair_private`, `pair_redact`) as the `activity` section of every turn of
+the bubble and the side panel (the bubble's × is `Initiative.skipContext`,
+the panel's history indicator `AiChatSession.noActivity`: a stream-json
+`"nixbook": {"noActivity": true}` for the next turn) and for `where_were_we`
+in the brief.
 `ai.initiative.terminal` / `clipboardErrors` turn those into `happened`
 events (`command_failed`, `copied_error`): an "Explain it" chip, no model
 call until clicked. Watches (the `watch` tool, `initiative.json`
@@ -718,7 +726,9 @@ only) for pairing and notifications. Left alone (25 s,
 or answering) the bubble goes to the bar, a conversation with it
 (`Initiative.parked`): the bar's bubble brings it back, and so does
 Muse's next answer in it (not when busy). Its expand button moves the
-talk to the side panel's "From Muse" tab: what it said is Muse's
+talk to the side panel's "From Muse" tab, the same `AiChatSession` and
+agent session (`surface` "bubble" → "chat": the panel's command line,
+`--resume`, nothing replayed): what it said is Muse's
 message in a thread of its own (`Ai.agentThread()`, not selected in the
 panel while the talk is in the bubble: the thread before saved to the
 history, `fromAgent: true`, listed under the tabs by
@@ -797,7 +807,8 @@ between looks, `PAIR_AFTER_SAID` (20 min) after a word, `pairCallsPerDay`
 OCRs the focused monitor (`read_screen_now`, local tesseract), none when a
 private window is on the workspace, `pair_redact` (keys, tokens, passwords,
 card/IBAN numbers, e-mail addresses, phone numbers, URL queries, one-time
-codes) and `PAIR_TEXT_MAX`. The small model (`PAIR_SYSTEM`, WebSearch and
+codes) and `PAIR_TEXT_MAX`. The decisions model (`ai.routing.decisions`;
+`PAIR_SYSTEM`, the broker's `pair` context, WebSearch and
 WebFetch, generic queries only) says a word only when it truly helps: a
 `pair` item, a badge with `pop` and up to 2 links as buttons
 (`PAIR_TTL` 20 min); the shell pops it (`Initiative._pairWaiting`) once an
@@ -806,9 +817,14 @@ types in the bubble or is busy, and drops the pop when another app comes
 in front.
 Each decision is logged (`log`, 30 kept; Settings shows the last ones, and
 **Say something now** sends a `moment` with `force`: no chance or gap, out
-loud, a hello when nothing is on its mind). The small model runs through
-`nixbook-meta-agent` (`meta_agent()`: `NIXBOOK_META_AGENT`, PATH, or the
-script beside desktop-mcp.py). State in `~/.local/state/nixbook-shell/initiative.json`.
+loud, a hello when nothing is on its mind). The passes without tools (consider,
+pairing without the web, curiosity, ideas, notices, the memory passes) call
+the provider in-process through `nixbook_ai` (`ai_lib()`; the helper process
+gets the provider from `nixbook-model-provider env`); those with tools (web
+search and fetch, `routine_agent`) run `nixbook-meta-agent` (`meta_agent()`:
+`NIXBOOK_META_AGENT`, PATH, or the script beside desktop-mcp.py), and so does
+everything when `nixbook_ai` can't be imported or with
+`NIXBOOK_DESKTOP_MCP_INPROCESS=0` (the tests). State in `~/.local/state/nixbook-shell/initiative.json`.
 
 **Routines**: "whenever X happens, do Y", asked of Muse (`routine` tool:
 `when` {event + filters: app, words, at, days, percent, name, ext, minutes,
@@ -909,6 +925,20 @@ deletes any or all; `nixbook-desktop-mcp personal` shows, forgets, clears or
 prints the digest; the `personal` tool group turns it off;
 `personalMaxEntries` (200) caps it (the least used go first, never the
 profile).
+
+Two more kinds hold how the user wants things, for every AI surface, at
+importance 4 (they don't fade): `preference` ("answers in French"; from
+Full AI's reactions, the chat, `prefs add JSON` {text, keys?, app?,
+signature?, source: fullai|feedback|chat|initiative}; the `prefs` of Full
+AI's `full-ai-learned.json` were moved here once, its reaction counters stay
+there) and `correction` (a 👎 with what the user meant, from `feedback
+add`). `prefs list [QUERY]`; `prefs keys` gives the entries without them
+keywords in English, French, German and Vietnamese (a small model; the learn
+passes' schemas ask for the same four-language `keys`). One ranker serves
+the personal, desktop and preference entries (note_score, any key, accents,
+case, đ and ß folded). The initiative's muted and boring kinds stay its
+gating state but reach models as preference lines ("doesn't want to hear
+about X").
 
 **Usage habits** (off by default; on from **Settings → Desktop agents**,
 `nixbook-desktop-mcp habits on|off`: the `habits-enabled` flag the unit's
@@ -1019,6 +1049,9 @@ from a file descriptor) back the Settings controls. The panel's script
 carries `ModelProvider.signature`, so a provider, model or key change
 restarts its agent; a provider change also clears every chat's agent
 session. desktop-mcp's sent log names the provider (`meta:small`).
+`nixbook-model-provider env` prints the same values as one JSON object
+(`{baseUrl, key, model, smallModel, bigModel, label}`, or `{error}`), for
+long-lived processes that call the API in-process (desktop-mcp's helper).
 
 **The agent engine** (`scripts/meta-agent.py`, `nixbook-meta-agent`,
 `passthru.metaAgent`, stdlib Python): every agent the shell starts runs on
@@ -1051,7 +1084,28 @@ timeout); `--max-turns` (30); `--resume ID` / `--session-id` /
 `$XDG_STATE_HOME/nixbook-shell/agent-sessions/<id>.json`, 0600, pruned after
 7 days); `--privacy` (MCP tool inputs of servers other than `desktop`
 unmasked and their results masked with `nixbook-desktop-mcp privacy
-unmask|mask --json`, which replaced Claude Code's privacy hooks). Other
+unmask|mask --json`, which replaced Claude Code's privacy hooks). Its own
+flags, off by default and turned on by the shell's bubble and side panel:
+`--context-for SURFACE` (before each user turn, `nixbook-desktop-mcp context
+build --for SURFACE --query TEXT` in a `<context>` block, masked with
+`--privacy`; a stream-json user line may carry `"nixbook": {noActivity, app,
+title}`), `--confirm destructive|actions|never` (stream-json input: a risky
+step, `nixbook_ai.is_risky`, or with `actions` any that doesn't only read,
+emits `approval_request` {id, tool, input, summary} and waits for
+`{"type":"approval", id, allow}`, 120 s = no; with `-p` such a step is
+refused unless `never`), `--report` (the `<report>` block asked for; the
+result's `report` {summary, done, failed, needsYou} from the turn's real tool
+calls, `result` without it), `--lazy-mcp N` (a server other than the
+desktop's with more than N tools offered as one `open_tools__<server>` tool;
+the shell passes 12), `--learn` (a turn that acted: its episode {task, app
+from the desktop tools' replies, actions} to `nixbook-desktop-mcp episode
+-`), `--resolve` (an action or an unclear request read first by the
+decisions model, schema {intent, readings, ambiguous, question}: ambiguous
+with two readings or more, the turn's answer is the question, result
+`clarify: true`, no tool run; else an `<intent>` line; not right after a
+question of its own) and `--verify` (after a turn that acted, a `[verify]`
+round with read-only tools only, schema {met, note}, one fix round of 4
+turns at most when not met; a `verify` event, result `verified`). Other
 Claude Code flags are accepted and ignored. Events are stream-json lines of
 the usual shapes: `system`/`init` (session id, model, tools),
 `stream_event` deltas, `assistant`, `user` (tool results) and `result`
@@ -1062,6 +1116,79 @@ HTML results, WebFetch http(s) pages as text (100 kB at most); paths outside
 the allowed folders are refused, and the provider's key never reaches a
 tool. `tests/meta-agent.sh` runs it against `tests/fake-messages.py` and a
 stub MCP server.
+
+**The AI core**: one client, one agent loop, one context, one memory, one
+event queue, for every AI feature.
+
+- `scripts/nixbook_ai.py` is the one Messages API client (stdlib, next to
+  the scripts in the package; meta-agent, quick-ai, nix-onboard and
+  desktop-mcp import it): `Provider.from_env()` (the `NIXBOOK_AI_*`
+  environment, else `nixbook-model-provider env`, cached 10 minutes),
+  `call()` (retries 429/5xx/529 and network errors with backoff and
+  `retry-after`, drops thinking/effort on a 400 naming them, halves
+  `max_tokens` on one naming it, SSE streaming; `fast` without tools tries
+  Meta's `/v1/chat/completions` with `reasoning_effort: minimal` first),
+  `answer()` (text, or an object for a schema through a forced
+  `structured_output` tool, then `tool_choice: any`, then JSON as text),
+  `dm()` (a `nixbook-desktop-mcp` command through the helper socket, else a
+  process), the mask helpers, `sent_note`, `is_risky` / `reads_only` /
+  `build_report`. `tests/nixbook-ai.sh`.
+- `nixbook-desktop-mcp helper` also listens on
+  `$XDG_RUNTIME_DIR/nixbook-desktop-mcp/helper.sock` (dir 0700, socket 0600,
+  same uid by `SO_PEERCRED`): JSON lines `{id, argv, stdin}` →
+  `{id, code, stdout}`, several per connection, each on a thread, the helper commands
+  only (127 for others), so a request no longer starts cold desktop-mcp
+  processes.
+- The context broker, `nixbook-desktop-mcp context build --for SURFACE`
+  (`chat`, `bubble`, `react`, `triage`, `scan`, `text`, `routine`, `pair`;
+  `--query Q`, `--app A`, `--title T`, `--budget N`, `--no-activity`) →
+  `{sections, text, ids}`:
+  `facts` (`$XDG_RUNTIME_DIR/nixbook-shell/facts.json`, `QuickAi.facts()`
+  written by the shell every 60 s and on changes: time, weather, battery,
+  events, music), `corrections`, `preferences`, `personal`, `desktop` (as
+  `memory_digest`), `activity` (`recent.txt`), `habits`, in that order, each
+  with its share of the budget (6000 chat/bubble, 2500 react/triage, 1500
+  scan/text, 2000 routine/pair), whole lines dropped from the bottom; not
+  masked (callers mask). The notes it gave are kept 30 minutes
+  (`context-given.json`) for feedback to credit. desktop-mcp's own passes
+  build theirs with it too.
+- `nixbook-desktop-mcp feedback add JSON` ({verdict up|down, request,
+  answer, correction?, app?, surface chat|bubble|fullai|quick, notes?}): up
+  counts `ok` on the notes the answer used and keeps it as a good example,
+  down `fail`, down with a correction a `correction` entry the broker gives
+  back for similar requests; `feedback list [N]` (`feedback.json`). The
+  shell's 👍 / 👎 (`ai.agent.feedback`; `services/AnswerFeedback.qml`,
+  `modules/common/widgets/AnswerFeedbackRow.qml`, in `AiMessage` and the
+  bubble) send it; 👎 opens "What did you mean?" and offers to ask again.
+- The bubble is a meta-agent session: `QuickAi` hands the bubble's own
+  conversations (after `QuickIntent`), Full AI orders, Kiroshi's Do it and
+  the launcher's `!` to the bubble's `AiChatSession` (`surface: "bubble"`,
+  prewarmed by `Initiative.prepare()`; `Ai.agentScript` adds
+  `--context-for bubble`, `--confirm <ai.quick.confirm>`, `--report`,
+  `--lazy-mcp 12`, `--learn`, `--resolve` / `--verify` per
+  `ai.agent.resolve` / `ai.agent.verify`, and `--model <ai.routing.quick>`;
+  the side panel the same with `--context-for chat`, its own model and no
+  confirm/report). `approval_request` events are
+  the bubble's Allow / No chips, the report its REPORT brief, `clarify` /
+  `verify` its "? needs a detail" / "✓ Checked" / "⚠ Couldn't confirm" lines
+  (the panel's messages show them too). `scripts/quick-ai.py` keeps the
+  one-shot modes (explain, summarize, translate, rewrite, fix, extract, ask,
+  reply, screen, scan) and Full AI's `react`, their context from the broker
+  (`text`, `scan`, `react`); its own tool loop is gone (`do` execs
+  `nixbook-meta-agent -p`), and the "Allow desktop control and retry" chip is
+  for one-shots only. The bubble's hand-off to the panel's agent
+  (`ask_agent`) went with it: the bubble is the agent.
+- `services/Reactor.qml`: the one queue for notifications and Routines'
+  events (Routines' fixed actions first, then at most one model decision:
+  `register(name, priority, {wants, take})`, the first that wants it within
+  its budget takes it; Full AI's `ai.fullAi.reactPerHour`, 30, 0 no limit);
+  IPC `reactor status|simulate`.
+- Routing (`ai.routing`, Settings → Desktop agents → Accuracy and models):
+  `quick` (the bubble's agent, `small`), `decisions` (`big`) with
+  `decisionsEffort` (`low`) for what decides on the user's behalf: the
+  initiative's consider and notification triage, pairing, a routine's
+  judgment (`routine_agent`, unless `routineModel` is set), Full AI's react
+  and `--resolve`. The memory passes keep `memoryModel`.
 
 **Muse in the side panel**: when `nixbook-meta-agent` is on the PATH (the
 package puts it there), the AI chat offers a **Muse** model (`/model muse`,

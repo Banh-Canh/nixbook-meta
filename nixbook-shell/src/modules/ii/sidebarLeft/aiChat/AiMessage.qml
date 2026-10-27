@@ -334,6 +334,29 @@ Rectangle {
                 ButtonGroup {
                     spacing: 5
 
+                    // 👍 / 👎 (services/AnswerFeedback.qml; ai.agent.feedback):
+                    // the correction field, for a 👎, under the answer.
+                    AiMessageControlButton {
+                        id: thumbUpButton
+                        visible: AnswerFeedback.rates(root.messageData)
+                        activated: root.messageData?.feedback === "up"
+                        buttonIcon: "thumb_up"
+                        onClicked: AnswerFeedback.up(Ai.current, root.messageData, "chat")
+                        StyledToolTip {
+                            text: Translation.tr("Good answer")
+                        }
+                    }
+                    AiMessageControlButton {
+                        id: thumbDownButton
+                        visible: AnswerFeedback.rates(root.messageData)
+                        activated: ["down", "corrected", "downSent", "retried"].includes(root.messageData?.feedback ?? "")
+                        buttonIcon: "thumb_down"
+                        onClicked: AnswerFeedback.down(Ai.current, root.messageData)
+                        StyledToolTip {
+                            text: Translation.tr("Not what I meant")
+                        }
+                    }
+
                     AiMessageControlButton {
                         id: regenButton
                         buttonIcon: "refresh"
@@ -486,6 +509,39 @@ Rectangle {
                     } }
                 }
             }
+        }
+
+        // The agent's own checks (meta-agent --resolve / --verify): a
+        // question back instead of a guess, and what it did looked at again.
+        RowLayout {
+            Layout.fillWidth: true
+            visible: (root.messageData?.done ?? false) && ((root.messageData?.clarify ?? false) || root.messageData?.verify)
+            spacing: 6
+            MaterialSymbol {
+                text: root.messageData?.clarify ? "help" : root.messageData?.verify?.met ? "task_alt" : "error"
+                iconSize: Appearance.font.pixelSize.normal
+                color: root.messageData?.verify && !root.messageData?.verify?.met && !root.messageData?.clarify
+                    ? Appearance.m3colors.m3error : Appearance.colors.colSubtext
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font.pixelSize: Appearance.font.pixelSize.smaller
+                color: Appearance.colors.colSubtext
+                text: root.messageData?.clarify ? Translation.tr("Muse asks before doing anything: your request could mean several things")
+                    : root.messageData?.verify?.met ? Translation.tr("Checked: done")
+                    : Translation.tr("Couldn't confirm it worked%1").arg(root.messageData?.verify?.note ? `: ${root.messageData.verify.note}` : "")
+            }
+        }
+
+        AnswerFeedbackRow {
+            Layout.fillWidth: true
+            chat: Ai.current
+            message: root.messageData
+            surface: "chat"
+            showThumbs: false
+            fg: root.persona ? "white" : Appearance.colors.colOnLayer1
+            accent: Appearance.colors.colPrimary
         }
 
         Flow { // Annotations

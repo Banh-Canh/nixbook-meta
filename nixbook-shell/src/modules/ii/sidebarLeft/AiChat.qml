@@ -819,6 +819,23 @@ Inline w/ backslash and round brackets \\(e^{i\\pi} + 1 = 0\\)
                 }
 
                 ApiInputBoxIndicator {
+                    // What the user was just doing (RecentContext) goes with
+                    // the message through the context broker; a click leaves
+                    // it out of the next one (its "nixbook" noActivity).
+                    visible: !Ai.usingConfigAssistant && RecentContext.enabled
+                    opacity: (Ai.current?.noActivity ?? false) ? 0.5 : 1
+                    icon: (Ai.current?.noActivity ?? false) ? "visibility_off" : "history"
+                    tooltipText: (Ai.current?.noActivity ?? false)
+                        ? Translation.tr("Not sending what you were just doing with the next message (click to send it)")
+                        : Translation.tr("Knows what you were just doing (click to leave it out of the next message)")
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (Ai.current) Ai.current.noActivity = !Ai.current.noActivity
+                    }
+                }
+
+                ApiInputBoxIndicator {
                     // What the configuration assistant answers without the model
                     visible: ConfigAssistant.ready && Ai.usingConfigAssistant
                     icon: "help"

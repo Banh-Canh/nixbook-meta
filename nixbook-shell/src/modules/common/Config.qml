@@ -277,6 +277,22 @@ Singleton {
                 // from the user's answers.
                 property JsonObject fullAi: JsonObject {
                     property bool react: true
+                    // Its model decisions an hour at most (services/Reactor.qml;
+                    // 0: no limit): past it, what happens goes to the
+                    // initiative's rules, or nowhere.
+                    property int reactPerHour: 30
+                }
+                // Which of the provider's models does what (small, main or big):
+                // `decisions`, every pass that decides on the user's behalf
+                // (the initiative's notifications and words, pairing, a
+                // routine's judgment, Full AI's reactions, what an ambiguous
+                // request means), at `decisionsEffort`; `quick`, Muse in the
+                // speech bubble. The memory passes keep ai.agent.memoryModel,
+                // the side panel ai.agent.model.
+                property JsonObject routing: JsonObject {
+                    property string decisions: "big"
+                    property string decisionsEffort: "low" // low, medium, high
+                    property string quick: "small"
                 }
                 property JsonObject voice: JsonObject {
                     property bool enable: true
@@ -335,6 +351,15 @@ Singleton {
                     // (personal memory), without being asked.
                     property bool autoMemory: true
                     property string memoryModel: "small"
+                    // Accuracy (meta-agent, the bubble and the side panel): a
+                    // request that could mean several things answered with a
+                    // question first (resolve); after acting, what it did
+                    // checked again with read-only tools, fixed once if not
+                    // (verify); 👍 / 👎 under its answers, a 👎 asking what
+                    // was meant, remembered for next time (feedback).
+                    property bool resolve: true
+                    property bool verify: true
+                    property bool feedback: true
                 }
                 // The Immich photo library the side panel's Muse can use
                 // (immich-photo-manager, in assistant.mcpServers): its server,

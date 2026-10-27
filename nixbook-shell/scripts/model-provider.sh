@@ -17,6 +17,11 @@
 #                       NIXBOOK_AI_BASE_URL, NIXBOOK_AI_KEY, NIXBOOK_AI_MODEL,
 #                       NIXBOOK_AI_SMALL_MODEL, NIXBOOK_AI_BIG_MODEL,
 #                       NIXBOOK_AI_PROVIDED=1
+#   env                 the same values as one JSON object, for a process
+#                       that wasn't started through `run` (desktop-mcp's
+#                       helper and its passes, calling the API in-process):
+#                       {baseUrl, key, model, smallModel, bigModel, label}
+#                       or {error} (exit 3)
 #   status              {kind, label, baseUrl, host, model, smallModel,
 #                        bigModel, keySaved, error}
 #   key set             the key on stdin → {saved} or {error}
@@ -117,6 +122,24 @@ cmd_run() {
   exec "$cmd" "$@"
 }
 
+cmd_env() {
+  local err key
+  err=$(url_error)
+  [ -z "$err" ] || {
+    jq -cn --arg e "$label: $err (Settings > Desktop agents > Model provider)" '{error: $e}'
+    exit 3
+  }
+  key=$(lookup_key)
+  [ -n "$key" ] || {
+    jq -cn --arg e "$label: no API key saved (Settings > Desktop agents > Model provider)" '{error: $e}'
+    exit 3
+  }
+  # The key from stdin, never on a command line (ps shows those).
+  printf '%s' "$key" | jq -cR --arg base "$base" --arg model "$model" --arg small "${small:-$model}" \
+    --arg big "${big:-$model}" --arg label "$label" \
+    '{baseUrl: $base, key: ., model: $model, smallModel: $small, bigModel: $big, label: $label}'
+}
+
 cmd_status() {
   local saved=false err
   err=$(url_error)
@@ -193,13 +216,14 @@ run)
   cmd_run "$@"
   ;;
 status) cmd_status ;;
+env) cmd_env ;;
 key)
   shift
   cmd_key "$@"
   ;;
 test) cmd_test ;;
 *)
-  echo "usage: nixbook-model-provider run CMD [ARGS…] | status | key set|forget | test" >&2
+  echo "usage: nixbook-model-provider run CMD [ARGS…] | env | status | key set|forget | test" >&2
   exit 2
   ;;
 esac

@@ -29,7 +29,9 @@ import QtQuick
  * until it expires. The bubble is a small chat: the user answers in it and
  * Muse answers there (`chat`, a thread of its own, the side panel's "From
  * Muse" tab, opened there only on expand()); the answer teaches it what
- * the user values. Mod+C calls the bubble up to ask anything.
+ * the user values. Mod+C calls the bubble up to ask anything. Notifications
+ * and what the user just did come from the one event reactor
+ * (services/Reactor.qml), after Full AI mode: one model decision per event.
  */
 Singleton {
     id: root
@@ -240,6 +242,9 @@ Singleton {
     }
 
     function back(awayMinutes) {
+        // Full AI mode reacts to the user coming back itself (the Reactor
+        // gives it Routines' "back"): not a second decision here.
+        if (Reactor.takenElsewhere({ event: "back", away: awayMinutes }, "initiative")) return
         const t = new Date()
         const fmt = Config.options?.time.format ?? "hh:mm"
         const events = CalendarEvents.upcoming(4, t).filter(e => e.allDay || e.start.toDateString() === t.toDateString())
@@ -469,8 +474,10 @@ Singleton {
         if (!root.isAsk(item))
             thread.addMessage(item.chat || item.text, "assistant", true, root._hint(item))
         root.chat = thread
-        if ((Ai.models[Ai.currentModelId]?.api_format ?? "") === "meta-agent" && Ai.agentReady)
-            thread.prewarm()
+        // Muse's agent started ahead on the bubble's command line (whatever
+        // model the side panel shows): warm by the time they send.
+        thread.surface = "bubble"
+        if (Ai.agentReady) thread.prewarm()
     }
     function _hint(item) {
         return item.curious ? root.learnHint : item.kind === "news" ? root.newsHint : ""
@@ -497,9 +504,11 @@ Singleton {
                 return
             }
         }
-        // Quick AI (ai.quick): the user's own conversations answered by the
-        // provider's model directly, in a few seconds (the desktop tools
-        // included); Muse's agent takes them on once expanded to the panel.
+        // Everything else (services/QuickAi.qml): Muse's agent in the
+        // bubble's session (its own threads too: the bubble's command line,
+        // Allow / No before risky steps), or the small model for a question
+        // about an image. What the user was just doing goes along through
+        // the context broker (unless its × took it out: skipContext).
         if (QuickAi.handle(said, attach ?? "")) {
             root._taken(item)
             return
@@ -508,11 +517,8 @@ Singleton {
         if (!root.chat) return
         root._taken(item)
         if (attach) root.chat.attachFile(attach)
-        if (root.isAsk(item) && !root.conversing && !root.skipContext && RecentContext.enabled && RecentContext.text.length > 0) {
-            root.chat.pendingContext = RecentContext.text
-            DesktopHelper.run(["sent", "note", "context", RecentContext.text])
-        }
-        root.chat.sendUserMessage(said)
+        if (DesktopControl.refuseIfAgentInput(Translation.tr("a message to Muse in the speech bubble"))) return
+        root.chat.sendFromBubble(said, root.skipContext ? { noActivity: true } : {}, said)
     }
     // A routine it offered: "Yes, do it" turns it on.
     function accept(from) {
@@ -611,7 +617,14 @@ Singleton {
                 thread.addMessage(item.chat || item.text, "assistant", true, root._hint(item))
             root.chat = thread
         }
-        if (root.chat) Ai.selectChat(root.chat)
+        // The same conversation and the same agent session, now on the side
+        // panel's command line (Ai.agentScript): started again with --resume
+        // on the panel's next message (or at once, the panel prewarming it),
+        // nothing replayed.
+        if (root.chat) {
+            root.chat.surface = "chat"
+            Ai.selectChat(root.chat)
+        }
         root._taken(item)
         root.speaking = null
         root.chat = null
@@ -712,12 +725,6 @@ Singleton {
         DesktopHelper.run(["initiative", "answer", id, outcome])
     }
 
-    function _urgency(n) {
-        const u = n.urgency
-        return (u == NotificationUrgency.Critical || u === "critical") ? "critical"
-            : (u == NotificationUrgency.Low || u === "low") ? "low" : "normal"
-    }
-
     FileView {
         id: stateFile
         path: root.statePath
@@ -773,14 +780,30 @@ Singleton {
         }
     }
 
-    // What the user just did, to lend a hand with (reactions): not what an
-    // agent did (its downloads, its screenshots).
-    Connections {
-        target: Routines
-        function onHappened(ev) {
-            if (!root.enabled || !root.reactions || !root.reactTo.includes(ev.event) || !ev.path || DesktopControl.active) return
-            root.consider({ event: "happened", what: ev.event, name: ev.name ?? "", path: ev.path })
+    // What happens (notifications, what the user just did) comes from the
+    // one event reactor (services/Reactor.qml), after Full AI mode, which
+    // takes it first while it is on: one model decision per event.
+    Component.onCompleted: Reactor.register("initiative", 10, {
+        wants: ev => root._wants(ev),
+        take: ev => root._take(ev),
+    })
+    function _wants(ev) {
+        if (!root.enabled) return false
+        if (ev.event === "notification")
+            // Not while away (locked) or on Do Not Disturb: nobody to tell,
+            // and what comes then isn't read by the model either.
+            return root.readNotifications && !GlobalStates.screenLocked && !Notifications.silent
+        // What the user just did, to lend a hand with (reactions): not what
+        // an agent did (its downloads, its screenshots).
+        return root.reactions && root.reactTo.includes(ev.event) && !!ev.path && !DesktopControl.active
+    }
+    function _take(ev) {
+        if (ev.event === "notification") {
+            root._batch = [...root._batch, { app: ev.app, summary: ev.title, body: ev.body, urgency: ev.urgency }].slice(-12)
+            if (!batchTimer.running) batchTimer.start()
+            return
         }
+        root.consider({ event: "happened", what: ev.event, name: ev.name ?? "", path: ev.path })
     }
 
     // The conversations, for desktop agents (nixbook-desktop-mcp's
@@ -846,18 +869,7 @@ Singleton {
         }
     }
 
-    // Notifications, in batches: a burst is read once.
-    Connections {
-        target: Notifications
-        function onNotify(n) {
-            if (!root.enabled || !root.readNotifications) return
-            // Not while away (locked) or on Do Not Disturb: nobody to tell,
-            // and what comes then isn't read by the model either.
-            if (GlobalStates.screenLocked || Notifications.silent) return
-            root._batch = [...root._batch, { app: n.appName, summary: n.summary, body: n.body, urgency: root._urgency(n) }].slice(-12)
-            if (!batchTimer.running) batchTimer.start()
-        }
-    }
+    // Notifications (from the Reactor, _take), in batches: a burst is read once.
     Timer {
         id: batchTimer
         interval: 45000
