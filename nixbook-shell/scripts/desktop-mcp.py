@@ -5856,6 +5856,28 @@ def finish_episode(ctx):
         start_learning(ctx.cfg, None)
 
 
+def learn_from_episode(cfg, client, data):
+    """An episode told by a client without an MCP session (`episode`):
+    judged and learned from as finish_episode does. What happened, in a word."""
+    ctx = Context(cfg, "episode", client, notify=False)
+    task = short(str(data.get("task") or ""), 500)
+    ctx.task_told = task
+    acts = []
+    for a in (data.get("actions") or [])[:EPISODE_ACTIONS]:
+        if isinstance(a, dict) and a.get("tool"):
+            err = a.get("error")
+            acts.append({"tool": short(str(a["tool"]), 80), "app": "", "do": short(str(a.get("do") or ""), 200),
+                         "error": short(str(err).splitlines()[0], 160) if err else None})
+    if not acts:
+        return "nothing to learn"
+    ctx.episode["actions"] = acts
+    # The notes it was given for this task (the memory digest's, ranked by it).
+    if task and "memory" in cfg["tools"]:
+        ctx.episode["notes"] = {n["id"] for n in rank_desktop(read_memory()["notes"], task)[:4]}
+    finish_episode(ctx)
+    return f"learned from {len(acts)} actions"
+
+
 def episodes_dir():
     path = os.path.join(xdg("XDG_STATE_HOME", "~/.local/state"), "nixbook-shell", "episodes")
     os.makedirs(path, mode=0o700, exist_ok=True)
@@ -14632,6 +14654,8 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
                           the privacy hooks over HTTP on 127.0.0.1
   tools                   the enabled tools, as MCP JSON
   call NAME [JSON]        run one tool; prints its text, exit 1 on refusal
+  episode JSON|-          a task done by a client without MCP ({task, actions: [{tool,
+                          do, error}]}): to the memory's learning pass
   app-tools [--refresh]   the user's apps' MCP tools (the side panel's servers:
                           YouTube Music, Spotify…), as {server: {tools, instructions}}
   app-call SERVER TOOL [JSON]  run one of them; prints its text, exit 1 on failure
@@ -14809,6 +14833,20 @@ def main(argv):
         return desktop_command(argv[1:])
     if cmd == "layout":
         return layout_command(cfg, argv[1:])
+    if cmd == "episode":
+        # A task done by an agent calling the tools without MCP (nixbook-quick-ai:
+        # each call its own process): its actions to the memory's learning
+        # pass, as when a task ends in an MCP session. {task, actions: [{tool,
+        # do, error}]} as an argument or on stdin ("-").
+        try:
+            data = json.loads(sys.stdin.read() if len(argv) < 2 or argv[1] == "-" else argv[1])
+            if not isinstance(data, dict):
+                raise ValueError
+        except ValueError:
+            print("an episode is a JSON object: {task, actions}", file=sys.stderr)
+            return 2
+        print(learn_from_episode(cfg, os.environ.get("NIXBOOK_DESKTOP_MCP_CLIENT", "command line"), data))
+        return 0
     if cmd == "app-tools":
         # The apps' MCP tools, for agents calling tools without MCP.
         print(json.dumps({} if ai_policy() == 0 else app_tools("--refresh" in argv), ensure_ascii=False))

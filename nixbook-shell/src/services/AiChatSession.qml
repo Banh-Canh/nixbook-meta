@@ -293,6 +293,11 @@ Scope {
         interval: 2 * 60 * 1000
         onTriggered: requester.turnActive ? restart() : chat.runMemoryPass()
     }
+    // Quick AI answered in this chat (the speech bubble's): the pass once
+    // it goes quiet, as after Claude.
+    function queueMemoryPass() {
+        memoryPassTimer.restart();
+    }
     function runMemoryPass() {
         memoryPassTimer.stop();
         const messages = chat.messageIDs.map(id => chat.messageByID[id]);
@@ -301,8 +306,10 @@ Scope {
         if (!(Config.options?.ai?.claudeCode?.autoMemory ?? true) || Ai.claudeCodePath.length === 0) return;
         const isTurn = m => m && (m.role === "user" || m.role === "assistant") && !m.functionName && (m.rawContent ?? "").length > 0;
         const fresh = messages.slice(from).filter(isTurn);
-        // Only what the user said to Claude (not the config assistant).
-        if (!fresh.some(m => m.role === "user") || !fresh.some(m => m.role === "assistant" && m.model === "claude")) return;
+        // Only what the user said to an AI (Claude, Quick AI's model; not the
+        // config assistant, which answers from the configuration).
+        if (!fresh.some(m => m.role === "user") || !fresh.some(m => m.role === "assistant" && (m.model ?? "").length > 0
+            && m.model !== Ai.configAssistantId)) return;
         const line = m => m.role === "user" ? `User: ${m.rawContent}`
             : `Assistant: ${m.rawContent.length > 1200 ? m.rawContent.slice(0, 1200) + "…" : m.rawContent}`;
         const earlier = messages.slice(0, from).filter(isTurn).slice(-2);

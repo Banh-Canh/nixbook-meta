@@ -351,6 +351,10 @@ Singleton {
             // What the user did just before (RecentContext, when its setting is on).
             activity: RecentContext.enabled ? RecentContext.text : "",
             facts: root.facts(),
+            // What the side panel's Claude knows (its system prompt: the
+            // configured one, this machine and the live settings): the same
+            // brain, also in Full AI mode.
+            panel: Ai.stableSystemPrompt,
         };
         // Modes about a text or an image ask nothing themselves.
         if (!c.question && c.mode !== "do" && !followUp) req.question = "";
@@ -400,6 +404,9 @@ Singleton {
         m.thinking = false;
         m.done = true;
         m.model = root.model;
+        // What the conversation showed about the user: the same memory pass
+        // as the side panel's chats, once it goes quiet.
+        if (root.chat) root.chat.queueMemoryPass();
         // It acted: the user hears of it, the bubble put away meanwhile
         // coming back (the bar's bubble lit when they are busy).
         if (root.report && root.chat) Initiative.chatAnswered(root.chat);
