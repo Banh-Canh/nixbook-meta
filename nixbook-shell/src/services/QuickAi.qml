@@ -256,6 +256,10 @@ Singleton {
         ignoreUnknownSignals: true
         function onTrackChanged() { factsSoon.restart(); }
         function onActivePlayerChanged() { factsSoon.restart(); }
+        // Paused or playing again: without it the facts said "playing" for
+        // up to a minute after a pause (Kiroshi: "with YouTube Music
+        // playing" on a paused player).
+        function onIsPlayingChanged() { factsSoon.restart(); }
     }
 
     function focusedApp() {

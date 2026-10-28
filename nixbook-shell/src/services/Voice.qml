@@ -189,13 +189,42 @@ Singleton {
     // (ai.voice.speak "never", no text).
     function speak(text) {
         if (root.speakMode === "never" || !String(text ?? "").trim()) return false;
+        // Never the same thing twice: what was said in the last two minutes
+        // (streamed or not) is left out — the end of a turn, Full AI's
+        // outcome line and a revised answer each used to say it again.
+        const rest = root._unsaid(text);
+        if (!rest.trim()) return false;
+        root._remember(rest);
         root.stopSpeaking(false);
-        speaker.text = String(text);
+        speaker.text = rest;
         speaker.wanted = true;
         speaker.reopen = root._holdMic();
         speaker.running = true;
         return true;
     }
+    // What was said lately ({n: normalised sentence, t: ms}), sentences of
+    // 16 characters or more: a short "Done." may come again.
+    property var _said: []
+    function _norm(s) {
+        return String(s ?? "").toLowerCase().replace(/[\s.,;:!?…"'«»“”()\-–—*_`#]+/g, " ").trim();
+    }
+    function _sentencesOf(t) {
+        return String(t ?? "").match(/[^.!?…\n]+[.!?…]*\s*|\n+/g) ?? [];
+    }
+    function _unsaid(t) {
+        const now = Date.now();
+        root._said = root._said.filter(x => now - x.t < 120000);
+        return root._sentencesOf(t).filter(x => {
+            const n = root._norm(x);
+            return n.length < 16 || !root._said.some(y => y.n === n);
+        }).join("").trim();
+    }
+    function _remember(t) {
+        const now = Date.now();
+        const add = root._sentencesOf(t).map(x => root._norm(x)).filter(n => n.length >= 16).map(n => ({ n: n, t: now }));
+        root._said = root._said.concat(add).slice(-200);
+    }
+
     // The microphone never hears it: the continuous stream held, a turn's
     // recording closed (true: to open again once it has spoken).
     function _holdMic() {
@@ -225,6 +254,7 @@ Singleton {
             root.streamTarget = null;
             root.streamTurn = false;
         }
+        root.revealAll = true;
         if (root.speaking && stream.running && stream.continuous) stream.write("resume\n");
         root.speaking = false;
     }
@@ -256,6 +286,24 @@ Singleton {
     property int streamFed: 0
     // An older nixbook-voice-speak without --stream: read out at the end.
     property bool streamUnsupported: false
+    // The answer shown as it is said (the bubble, AgentSpeech): up to where
+    // the voice is (`revealUpto`, characters of the plain text fed, from the
+    // speaker's {"upto"} lines plus where its process started), everything
+    // once it ends, is cut short, or stalls (revealGuard).
+    property string streamFedText: ""
+    property int revealUpto: 0
+    property bool revealAll: true
+    readonly property bool revealing: root.streamTurn && root.streamedTurn && !root.revealAll && root.streamTarget !== null
+    // The text of `m` to show now, or null to show it all.
+    function shownText(m) {
+        if (!root.revealing || m !== root.streamTarget) return null;
+        return root._plain(m).slice(0, root.revealUpto);
+    }
+    Timer {
+        id: revealGuard
+        interval: 6000
+        onTriggered: root.revealAll = true
+    }
     function _lastAssistant() {
         const chat = Initiative.chat;
         if (!chat) return null;
@@ -266,6 +314,9 @@ Singleton {
     function _streamBegin() {
         root.streamedTurn = false;
         root.streamFed = 0;
+        root.streamFedText = "";
+        root.revealUpto = 0;
+        root.revealAll = false;
         root.streamTurn = !root.streamUnsupported && root.speakMode !== "never"
             && (FullAi.active || root.speakMode === "always" || (root.speakMode === "voice" && root.voiceTurn));
         // The turn's own message (not the last one, already done).
@@ -284,11 +335,33 @@ Singleton {
         // Not while something else is said (a question for an OK), nor into
         // a speaker whose input is closed: on when it is done (onExited).
         if (speaker.running || streamSpeaker.closing) return;
+        // Rewritten (a fix after the checks, the report taken out): only
+        // what wasn't said yet, and the whole text shown (the positions no
+        // longer match).
+        if (root.streamFed > 0 && !plain.startsWith(root.streamFedText)) {
+            const rest = root._unsaid(plain);
+            root.revealAll = true;
+            root.streamFed = plain.length;
+            root.streamFedText = plain;
+            if (!rest.trim()) {
+                if (complete) root._streamClose();
+                return;
+            }
+            root._remember(rest);
+            if (streamSpeaker.running && streamSpeaker.started) streamSpeaker.write(" " + rest);
+            else if (streamSpeaker.running) streamSpeaker.pending += " " + rest;
+            else root.speak(rest);
+            if (complete) root._streamClose();
+            return;
+        }
         if (plain.length > root.streamFed) {
             const fresh = plain.slice(root.streamFed);
+            root._remember(fresh);
             if (!streamSpeaker.running) {
                 if (fresh.trim().length === 0) return;
+                streamSpeaker.base = root.streamFed;
                 root.streamFed = plain.length;
+                root.streamFedText = plain;
                 root.streamedTurn = true;
                 streamSpeaker.pending = fresh;
                 streamSpeaker.closeAfter = false;
@@ -298,6 +371,7 @@ Singleton {
                 streamSpeaker.running = true;
             } else {
                 root.streamFed = plain.length;
+                root.streamFedText = plain;
                 if (streamSpeaker.started) streamSpeaker.write(fresh);
                 else streamSpeaker.pending += fresh;
             }
@@ -344,16 +418,36 @@ Singleton {
         property bool closeAfter: false
         property bool wanted: true
         property bool reopen: false
+        // Where this process's text starts in the answer (a turn can need a
+        // second one): its {"upto"} counts from there.
+        property int base: 0
         command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" --stream', "_", root.voiceStyle]
+        stdout: SplitParser {
+            onRead: data => {
+                let o = null;
+                try {
+                    o = JSON.parse(data);
+                } catch (e) {
+                    return;
+                }
+                if (typeof o?.upto !== "number") return;
+                root.revealUpto = Math.max(root.revealUpto, streamSpeaker.base + o.upto);
+                revealGuard.restart();
+            }
+        }
         stderr: StdioCollector { id: streamSpeakerErr }
         onStarted: {
             streamSpeaker.started = true;
+            revealGuard.restart();
             if (streamSpeaker.pending.length > 0) streamSpeaker.write(streamSpeaker.pending);
             streamSpeaker.pending = "";
             if (streamSpeaker.closeAfter) root._streamClose();
         }
         onExited: (code) => {
             const err = streamSpeakerErr.text;
+            // Said, cut short or failed: the whole answer shown.
+            root.revealAll = true;
+            revealGuard.stop();
             streamSpeaker.started = false;
             streamSpeaker.closing = false;
             streamSpeaker.closeAfter = false;

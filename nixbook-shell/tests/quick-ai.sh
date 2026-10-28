@@ -310,7 +310,7 @@ expect_eq "speak: no voice installed" 2 "$(
   printf 'Firefox is open on workspace three. And'
   sleep 1.5
   printf ' anything else for you?'
-) | sp --stream --style natural &
+) | sp --stream --style natural >"$tmp/upto.log" &
 speaker=$!
 sleep 1
 expect_eq "speak --stream: the first sentence spoken before the text ended" "tts en Firefox is open on workspace three.|play raw1.wav" \
@@ -318,6 +318,9 @@ expect_eq "speak --stream: the first sentence spoken before the text ended" "tts
 wait "$speaker"
 expect_eq "speak --stream: then the rest, at the end" "tts en Firefox is open on workspace three.|play raw1.wav|tts en And anything else for you?|play raw2.wav" \
   "$(grep -E '^(tts|play)' "$tmp/speak.log" | paste -sd'|')"
+# Where each sentence ends in the text, said as it starts playing: the shell
+# shows the answer up to there (text and voice together).
+expect_eq "speak --stream: each sentence's end told as it plays" "35 62" "$(jq -r .upto "$tmp/upto.log" | paste -sd' ')"
 : >"$tmp/speak.log"
 # shellcheck disable=SC2016 # Markdown backticks, not an expansion
 printf 'Bonjour, voici la commande. ```\nrm -rf /\n``` Elle est prête.' | sp --stream --style natural

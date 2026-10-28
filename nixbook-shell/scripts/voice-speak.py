@@ -20,6 +20,7 @@ once (the key, Escape). --file writes one WAV instead of playing (tests).
 NIXBOOK_MMS_VOICES: a folder with en/ and fr/ (model.onnx, tokens.txt).
 """
 
+import json
 import os
 import queue
 import re
@@ -280,14 +281,30 @@ def stream_main(lang, style):
         signal.signal(signal.SIGINT, lambda *_: (sp.stop(), os._exit(0)))
         chosen = {"lang": lang if lang in ("en", "fr") else None, "said": 0}
 
+        # Where each sentence ends in the text received (characters), told on
+        # stdout as it starts playing ({"upto": N}): the shell shows the
+        # answer as it is said instead of ahead of the voice.
+        got = {"text": "", "cursor": 0}
+
+        def located(s):
+            key = s.strip()
+            i = got["text"].find(key[:40], got["cursor"]) if key else -1
+            end = i + len(key) if i >= 0 else len(got["text"])
+            got["cursor"] = max(got["cursor"], end)
+            return s, end
+
         def reader():
             split = Streamed()
             try:
                 for chunk in read_pieces(sys.stdin):
-                    for s in split.feed(decoder.decode(chunk)):
-                        pending.put(s)
-                for s in split.feed(decoder.decode(b"", final=True), last=True):
-                    pending.put(s)
+                    text = decoder.decode(chunk)
+                    got["text"] += text
+                    for s in split.feed(text):
+                        pending.put(located(s))
+                rest = decoder.decode(b"", final=True)
+                got["text"] += rest
+                for s in split.feed(rest, last=True):
+                    pending.put(located(s))
             finally:
                 pending.put(None)
 
@@ -296,9 +313,10 @@ def stream_main(lang, style):
         def maker():
             try:
                 while True:
-                    s = pending.get()
-                    if s is None or sp.stopped:
+                    item = pending.get()
+                    if item is None or sp.stopped:
                         break
+                    s, upto = item
                     if chosen["lang"] is None:
                         # The voice: from the first sentence (then kept).
                         chosen["lang"] = language(s)
@@ -309,10 +327,12 @@ def stream_main(lang, style):
                             break
                     text = speakable(s, chosen["lang"])
                     if not text or chosen["said"] >= MAX_CHARS:
+                        # Nothing to say (code, a link): shown at once.
+                        ready.put((None, upto))
                         continue
                     chosen["said"] += len(text)
-                    for piece in sentences(text) or [text]:
-                        ready.put(sp.make(piece))
+                    for n, piece in enumerate(sentences(text) or [text]):
+                        ready.put((sp.make(piece), upto if n == 0 else None))
             except RuntimeError as e:
                 if not sp.stopped:
                     failed.append(str(e))
@@ -320,10 +340,18 @@ def stream_main(lang, style):
 
         threading.Thread(target=reader, daemon=True).start()
         threading.Thread(target=maker, daemon=True).start()
+        def told(upto):
+            if upto is not None:
+                print(json.dumps({"upto": upto}), flush=True)
+
         while True:
-            wav = ready.get()
-            if wav is None or sp.stopped:
+            item = ready.get()
+            if item is None or sp.stopped:
                 break
+            wav, upto = item
+            told(upto)
+            if wav is None:
+                continue
             try:
                 sp.run(["pw-play", "--media-role=Assistant", wav])
             except RuntimeError as e:

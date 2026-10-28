@@ -558,8 +558,11 @@ Scope {
                                         wrapMode: Text.Wrap
                                         textFormat: Text.PlainText
                                         // Quick AI's report: its summary here, the brief below.
+                                        // Read out: shown as it is said (Voice.shownText), not
+                                        // ahead of the voice.
                                         text: QuickAi.report && QuickAi.reportMsg === line.modelData ? QuickAi.report.summary
-                                            : root.plain(line.modelData.rawContent || line.modelData.content)
+                                            : (said => said === null ? root.plain(line.modelData.rawContent || line.modelData.content)
+                                                : root.plain(said))(Voice.shownText(line.modelData))
                                         font.family: root.font
                                         font.pixelSize: line.mine ? Appearance.font.pixelSize.small : Appearance.font.pixelSize.normal
                                         color: root.fg
@@ -568,7 +571,8 @@ Scope {
                             }
                             // Thinking: three dots.
                             Row {
-                                visible: root.responding && root.plain((m => m?.rawContent || m?.content)(root.lines[root.lines.length - 1])).length === 0
+                                visible: root.responding && ((m => root.plain(m?.rawContent || m?.content).length === 0
+                                    || Voice.shownText(m) === "")(root.lines[root.lines.length - 1]))
                                 spacing: 4
                                 Repeater {
                                     model: 3

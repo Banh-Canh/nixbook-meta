@@ -1105,12 +1105,44 @@ WS = {
 }
 
 
+# Music players' windows (desktop/app ids, lower-case substrings): acting in
+# one is checked against what the player reports (get_status's `music`),
+# not a screenshot — "Playing X now" while nothing had started got through.
+MUSIC_APP_IDS = ("youtube-music", "youtube_music", "pear-desktop", "spotify", "mpv", "vlc", "rhythmbox", "elisa",
+                 "amberol", "strawberry", "clementine", "lollypop", "tidal", "deezer", "cider", "feishin",
+                 "supersonic", "plexamp", "jellyfin", "moonfin", "audacious", "quodlibet", "gapless")
+
+
+def is_music_app(app_id):
+    a = str(app_id or "").lower()
+    return bool(a) and any(m in a for m in MUSIC_APP_IDS)
+
+
+def music_state():
+    """Every MPRIS player as playerctl sees it: [{player, status, title,
+    artist}] (empty without playerctl or players)."""
+    try:
+        proc = run(["playerctl", "--all-players", "metadata", "--format",
+                    "{{playerName}}|{{status}}|{{title}}|{{artist}}"], check=False, timeout=2)
+    except ToolError:
+        return []
+    out = []
+    for line in (proc.stdout or "").splitlines() if proc.returncode == 0 else []:
+        parts = line.split("|")
+        if len(parts) == 3:
+            parts = [""] + parts
+        if len(parts) >= 4:
+            out.append({"player": parts[0], "status": parts[1], "title": parts[2], "artist": "|".join(parts[3:])})
+    return out
+
+
 @tool(
     "get_status",
     "observe",
     "Desktop control status: paused or not, the tool groups enabled, the "
-    "focused window, the pointer backend, which helpers are installed. Only "
-    "needed when something doesn't work.",
+    "focused window, the pointer backend, which helpers are installed, and what each "
+    "music player plays (Playing/Paused and its track): the check after "
+    "acting in a player.",
     read_only=True,
 )
 def t_get_status(ctx, args):
@@ -1143,6 +1175,9 @@ def t_get_status(ctx, args):
                 "pointer": pointer,
                 "enabled_groups": ctx.cfg["tools"],
                 "focused_window": focused and slim_window(focused),
+                # What each music player is doing (Playing / Paused /
+                # Stopped and its track): the check after acting in one.
+                "music": music_state(),
                 "helpers": {h: bool(shutil.which(h)) for h in ["niri", "grim", "wtype", "ydotool", "wl-copy"]},
                 "niri_socket": bool(os.environ.get("NIRI_SOCKET")),
             }
@@ -17109,8 +17144,20 @@ def observe_hint(ctx, name, args):
         # Media keys: nothing on screen to look at (the player's state is
         # read back when it can be).
         return None
-    if name in ("type_text", "press_keys", "click", "drag", "scroll", "move_pointer", "run_steps", "run_recipe",
-                "clipboard_set"):
+    target = args.get("window_id") if isinstance(args.get("window_id"), int) else wid
+    target_app = ""
+    if target is not None:
+        if target == wid:
+            target_app = (ctx.focused_after or {}).get("app_id") or ""
+        else:
+            with contextlib.suppress(ToolError):
+                target_app = (window_by_id(target) or {}).get("app_id") or ""
+    if is_music_app(target_app) and name in ("type_text", "press_keys", "click", "drag", "scroll", "run_steps",
+                                             "run_recipe", "ui_act"):
+        # In a music player: what it plays says whether it worked.
+        hint = ("get_status", {})
+    elif name in ("type_text", "press_keys", "click", "drag", "scroll", "move_pointer", "run_steps", "run_recipe",
+                  "clipboard_set"):
         hint = ("screenshot", {"window_id": wid} if wid is not None else {})
     elif name == "ui_act":
         w = args.get("window_id") if isinstance(args.get("window_id"), int) else wid

@@ -129,6 +129,7 @@ if [ "$1 $2" = "msg --json" ]; then
         {id: 5, app_id: "org.gnome.Calculator", title: "Calculator", workspace_id: 10, is_focused: false, is_floating: true,
          layout: {window_size: [400, 300], tile_pos_in_workspace_view: [10, 20], window_offset_in_tile: [2, 3]}}
       ] + (if $launched and (env.STUB_LAUNCH_NO_WINDOW | not) then [{id: $launched_id, app_id: $launched_app, title: "New Tab", workspace_id: 10, is_focused: false, is_floating: false}] else [] end)
+      + (if env.STUB_MUSIC_WINDOW then [{id: 8, app_id: "com.github.th-ch.youtube-music", title: "YouTube Music", workspace_id: 10, is_focused: ($f == "music"), is_floating: false}] else [] end)
       + (if env.STUB_NESTED_WINDOW or ($launched and env.STUB_LAUNCH_NO_WINDOW) then [{id: 9, app_id: "niri", title: "niri", pid: 1, workspace_id: 10, is_focused: false, is_floating: false}] else [] end)
       | map(select(.id as $i | $hidden | index($i) | not))' ;;
     workspaces)
@@ -695,6 +696,16 @@ out=$(PATH="$tmp/mediabin:$PATH" timed press_keys '{"keys":["XF86AudioPause"]}' 
 expect_eq "media keys: the pause read back" true "$(sed -n 1p <<<"$out" | jq '.result._meta.verified')"
 expect_eq "media keys: no change shown, not verified, no hint" '{}' "$(sed -n 2p <<<"$out" | jq -c '.result._meta // {}')"
 expect_eq "media keys: within 300 ms either way" "" "$(jq -r 'select(.ms >= 300) | .ms' <<<"$out")"
+# Acting in a music player's window: checked against what the player plays
+# (get_status's `music`), not a screenshot.
+prev_focus=$(cat "$STUB_FOCUS")
+echo music >"$STUB_FOCUS"
+out=$(PATH="$tmp/mediabin:$PATH" STUB_MUSIC_WINDOW=1 timed press_keys '{"keys":["space"]}' get_status '{}')
+expect_eq "music app: the check reads the player" '{"tool":"get_status","args":{}}' \
+  "$(sed -n 1p <<<"$out" | jq -c '.result._meta.observe')"
+expect_eq "get_status: what the player plays" '[{"player":"","status":"Playing","title":"Song","artist":"Artist"}]' \
+  "$(sed -n 2p <<<"$out" | jq -c '.result.content[0].text | fromjson | .music')"
+echo "$prev_focus" >"$STUB_FOCUS"
 
 # Core tools (offered up front) and the guides behind short descriptions.
 tools=$(python3 "$mcp" tools)
