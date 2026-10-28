@@ -418,6 +418,11 @@ Singleton {
     function _feed() {
         const m = root.streamTarget;
         if (!m || !root.streamTurn) return;
+        // Another conversation's answer (a new one is in front): let go.
+        if (!root._inChat(m)) {
+            root.streamTarget = null;
+            return;
+        }
         // Read out before (an earlier turn), now only changed: not again.
         if (root.streamFed === 0 && (() => { const chat = Initiative.chat;
                 for (const id of (chat?.messageIDs ?? [])) if (chat.messageByID[id] === m) return !!root._readIds[id];
@@ -493,15 +498,25 @@ Singleton {
     Connections {
         target: Initiative.chat
         ignoreUnknownSignals: true
+        // A new answer in the conversation in front: read this one. Also when
+        // "thinking" was already on (an older conversation still finishing
+        // its checks): the turn never began then, the reader kept the old
+        // answer, the new conversation's first answer had no voice and the
+        // old one was read again.
         function onMessageIDsChanged() {
-            if (!root.streamTurn || !Initiative.thinking) return;
             const m = root._lastAssistant();
-            if (m && !m.done && !root.streamTarget) {
-                root.streamTarget = m;
-                root.streamFed = 0;
-                root._feed();
-            }
+            if (!m || m.done || root.streamTarget === m) return;
+            const t = root.streamTarget;
+            if (t && !t.done && root._inChat(t)) return;
+            root._streamBegin();
         }
+    }
+    // Whether `m` is a message of the conversation in front.
+    function _inChat(m) {
+        const chat = Initiative.chat;
+        if (!chat || !m) return false;
+        for (const id of chat.messageIDs) if (chat.messageByID[id] === m) return true;
+        return false;
     }
     Process {
         id: streamSpeaker
@@ -740,7 +755,10 @@ Singleton {
     function deliver(text) {
         root.lastText = text;
         root.delivered();
-        if (!Initiative.thinking && !root.speaking) {
+        // Nothing old attached when the user talks: a finished answer, or
+        // one of another conversation.
+        const t = root.streamTarget;
+        if (!root.speaking && (!t || t.done || !root._inChat(t))) {
             root.streamTarget = null;
             root.streamTurn = false;
         }
