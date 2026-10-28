@@ -146,26 +146,16 @@ Singleton {
         target: Initiative
         function onThinkingChanged() {
             if (Initiative.thinking) {
+                // Still the same turn (it only looked over a moment): go on
+                // reading it, don't start again.
+                const t = root.streamTarget;
+                if (t && !t.done && root._inChat(t) && root.streamedTurn) return;
                 root._streamBegin();
                 return;
             }
-            // Read out as it streamed: what is left said, then the user's turn
-            // again (the stream speaker's end reopens the microphone).
-            if (root.streamedTurn) {
-                root.voiceTurn = false;
-                root._feed();
-                root._streamClose();
-                if (!streamSpeaker.running && !speaker.running && !FullAi.active) {
-                    if (root.session) relisten.restart();
-                    else if (Initiative.quiet) Initiative.hush("wait");
-                }
-                return;
-            }
-            root.streamTarget = null;
-            // The answer is there: read out (Full AI mode reads its own,
-            // FullAi.qml), then the user's turn again (a conversation).
-            if (!FullAi.active && root.wantsSpeech()) root.speakLastAnswer();
-            else if (root.session) relisten.restart();
+            // Decided a moment later (the session marks the answer done just
+            // after it stops thinking): see _turnEnded.
+            Qt.callLater(root._turnEnded);
         }
         function onSpeakingChanged() {
             if (!Initiative.speaking && !FullAi.active) {
@@ -234,6 +224,9 @@ Singleton {
     // Reads the last answer out unless it was already (else `fallback`, if
     // given and not said); true when something is said.
     function speakLastAnswer(fallback) {
+        // An answer still being written is read as it streams, never here
+        // (nor the fallback in its place: that was the previous answer).
+        if (root._unfinished()) return false;
         const id = root._lastAnswerId();
         if (id && root._readIds[id]) return false;
         const text = root.lastAnswer() || String(fallback ?? "");
@@ -510,6 +503,36 @@ Singleton {
             if (t && !t.done && root._inChat(t)) return;
             root._streamBegin();
         }
+    }
+    // The turn over (Qt.callLater after "thinking" turned off): only once its
+    // answer is done — between preparing the message and the agent taking
+    // it, a turn shows as not thinking for a moment while its answer is
+    // already there, empty: reading out "the last answer" then marked that
+    // new answer read (it never got a voice) and fell back to the previous.
+    function _turnEnded() {
+        if (Initiative.thinking || root._unfinished()) return;
+        // Read out as it streamed: what is left said, then the user's turn
+        // again (the stream speaker's end reopens the microphone).
+        if (root.streamedTurn) {
+            root.voiceTurn = false;
+            root._feed();
+            root._streamClose();
+            if (!streamSpeaker.running && !speaker.running && !FullAi.active) {
+                if (root.session) relisten.restart();
+                else if (Initiative.quiet) Initiative.hush("wait");
+            }
+            return;
+        }
+        root.streamTarget = null;
+        // The answer is there: read out (Full AI mode reads its own,
+        // FullAi.qml), then the user's turn again (a conversation).
+        if (!FullAi.active && root.wantsSpeech()) root.speakLastAnswer();
+        else if (root.session) relisten.restart();
+    }
+    // The last answer of the conversation in front is still being written.
+    function _unfinished() {
+        const m = root._lastAssistant();
+        return !!m && !m.done;
     }
     // Whether `m` is a message of the conversation in front.
     function _inChat(m) {

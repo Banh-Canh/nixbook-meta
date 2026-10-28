@@ -331,19 +331,27 @@ Singleton {
         target: QuickAi
         function onBusyChanged() {
             if (!root.active || QuickAi.busy) return;
-            const r = QuickAi.report;
-            const failed = QuickAi.error.length > 0 || (r && r.ko > 0 && r.ok === 0);
-            root.flash = failed ? "sad" : (r || QuickAi.answer.length > 0 ? "happy" : "");
-            const text = r?.summary || QuickAi.answer || QuickAi.error;
-            // How it ended (the answer's last sentences), not its opening line.
-            root.said = root.tailOf(text);
-            flashOff.restart();
-            saidOff.restart();
-            talk.restart();
-            // Said out loud: the report's outcome (and what needs the user),
-            // unless the answer was read out as it streamed.
-            if (!Voice.streamedTurn) Voice.speakLastAnswer(root.said);
+            // Decided a moment later: the session marks the answer done just
+            // after it stops; a turn that only looked over (before the agent
+            // took it, its answer there, still empty) has no outcome yet.
+            Qt.callLater(root._taskEnded);
         }
+    }
+    // A task over (Qt.callLater after QuickAi.busy turned off).
+    function _taskEnded() {
+        if (!root.active || QuickAi.busy || Voice._unfinished()) return;
+        const r = QuickAi.report;
+        const failed = QuickAi.error.length > 0 || (r && r.ko > 0 && r.ok === 0);
+        root.flash = failed ? "sad" : (r || QuickAi.answer.length > 0 ? "happy" : "");
+        const text = r?.summary || QuickAi.answer || QuickAi.error;
+        // How it ended (the answer's last sentences), not its opening line.
+        root.said = root.tailOf(text);
+        flashOff.restart();
+        saidOff.restart();
+        talk.restart();
+        // Said out loud: the report's outcome (and what needs the user),
+        // unless the answer was read out as it streamed.
+        if (!Voice.streamedTurn) Voice.speakLastAnswer(root.said);
     }
     Timer {
         id: flashOff
