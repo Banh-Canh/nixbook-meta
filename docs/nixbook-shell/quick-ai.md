@@ -182,12 +182,37 @@ it can be undone, and Muse hears of it with your next message.
 | Screen             | take a screenshot, lock the screen                                          |
 | Timers             | timer 10 min, pomodoro                                                      |
 | Layouts and others | work layout (a saved layout), task: buy milk, settings                      |
+| Films and episodes | play Edgerunners season 1 episode 2, watch Dune (Jellyfin)                  |
 
 Starting a conversation, the short forms work too ("pause", "next", "louder",
 "lock"). In a conversation, only commands that name what they act on go this way:
 "pause it", "open the file I just downloaded" or "the other one" go to Muse,
 who knows what you were talking about. An app is opened only when its name is
 certain; anything unsure goes to Muse as before.
+
+**Films and episodes (Jellyfin).** Once [Jellyfin is set up](/nixbook-shell/desktop-agents#jellyfin)
+and on for Muse, a request that starts with a watching verb — play, watch,
+put on, stream; lance, mets, regarde, joue; spiel, schau; xem, mở, phát, bật,
+cho tôi xem — and names a title goes to `jellyfin-mcp play-query`: one search,
+no model, about a second, then **Done: Playing …**, fullscreen in mpv on this
+computer, from where you stopped (the player goes on to the next episodes).
+"play Edgerunners season 1 episode 2", "lance Arcane saison 2", "schau Dark
+Staffel 1 Folge 3", "xem Edgerunners mùa 1 tập 2", "play The Expanse S2E1" (or
+`2x1`); a season without an episode starts its first one not yet watched, a
+series alone its next episode.
+
+- **Never the music**: a request naming music, a song, an album, a playlist,
+  an artist, a track, the radio, a podcast, Spotify or YouTube (musique,
+  chanson, Musik, Lied, nhạc, bài hát…) is left to the music commands and
+  Muse.
+- **A title alone** (no season or episode) plays only when it matches well;
+  with a season or an episode a looser match is enough.
+- **Ambiguous**: when several titles match about as well, the bubble asks
+  which ("Which one: Dune (1984) or Dune (2021)?") and plays nothing.
+- **Missing**: a season or an episode the series doesn't have is said
+  ("Edgerunners has only 1 season."), out loud too when you spoke.
+- A title it doesn't find, "play it" in a conversation, or another player
+  ("… on Moonfin", "… on the TV") goes to Muse, who can play it there.
 
 ## Full AI mode
 

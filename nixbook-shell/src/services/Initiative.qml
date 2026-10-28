@@ -515,7 +515,29 @@ Singleton {
                 root._quickDone(item, said, did)
                 return
             }
+            // A film or an episode from Jellyfin ("play edgerunners season 1
+            // episode 2"): played at once by jellyfin-mcp (no model, about a
+            // second); what it doesn't recognise goes on to Muse below.
+            if (QuickIntent.video(said, root.conversing, r => root._videoDone(item, said, r)))
+                return
         }
+        root._toMuse(item, said, attach)
+    }
+    // What jellyfin-mcp play-query answered: played ("Done: Playing …"), or
+    // its question / why not ("Which one: …?", "… has only 1 season"),
+    // said out loud too when the request was; not a video it knows: Muse's.
+    function _videoDone(item, said, r) {
+        if (!r || !(r.ok || r.matched) || !r.said) {
+            root._toMuse(item, said, "")
+            return
+        }
+        root._quickDone(item, said, { text: r.said, plain: !r.ok })
+        if (Voice.voiceTurn || Voice.speakMode === "always") {
+            Voice.voiceTurn = false
+            Voice.speak(r.said)
+        }
+    }
+    function _toMuse(item, said, attach) {
         // Everything else (services/QuickAi.qml): Muse's agent in the
         // bubble's session (its own threads too: the bubble's command line,
         // Allow / No before risky steps), or the small model for a question
@@ -536,7 +558,8 @@ Singleton {
     property string lastQuickText: ""
     function _quickDone(item, said, did) {
         root.lastQuickText = did.text
-        const line = Translation.tr("Done: %1").arg(did.text)
+        // A question or a refusal (did.plain: "Which one: …?") isn't "Done".
+        const line = did.plain ? did.text : Translation.tr("Done: %1").arg(did.text)
         if (!root.chat) root.prepare()
         const chat = root.chat
         if (!chat) {

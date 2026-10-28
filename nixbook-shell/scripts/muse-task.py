@@ -378,6 +378,13 @@ def mcp_servers(conf, query_file):
         if immich.get("apiKeyFile"):
             env["IMMICH_API_KEY_FILE"] = str(immich["apiKeyFile"])
         servers["immich"] = {**servers["immich"], "env": env}
+    jellyfin = ai.get("jellyfin") if isinstance(ai.get("jellyfin"), dict) else {}
+    if "jellyfin" in servers:
+        env = dict(servers["jellyfin"].get("env") or {})
+        for key, var in (("url", "JELLYFIN_URL"), ("user", "JELLYFIN_USER"), ("apiKeyFile", "JELLYFIN_API_KEY_FILE")):
+            if jellyfin.get(key):
+                env[var] = str(jellyfin[key])
+        servers["jellyfin"] = {**servers["jellyfin"], "env": env}
     if "phone" in servers:
         phone = ai.get("phone") if isinstance(ai.get("phone"), dict) else {}
         servers["phone"] = {**servers["phone"], "env": {**(servers["phone"].get("env") or {}),

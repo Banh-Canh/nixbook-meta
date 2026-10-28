@@ -1,6 +1,6 @@
 """nixbook-zen-bridge: the native messaging host of nixbook's Zen extension
 (zen/), between it and the desktop agents' tools (nixbook-desktop-mcp's
-browser_*).
+page_*).
 
 Zen starts it when the extension connects (native messaging: one JSON
 message per frame, a 4-byte native-endian length first, on stdin/stdout)

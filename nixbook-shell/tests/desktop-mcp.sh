@@ -2078,11 +2078,14 @@ expect_eq "undone twice: off" '{"off": true}' "$(python3 "$mcp" routine undone "
 expect_contains "undone: says why" "$(python3 "$mcp" initiative pending | jq -r '.[].text')" "twice, so I turned it off"
 call routine "{\"action\":\"remove\",\"id\":\"$agent\"}" >/dev/null
 expect_eq "routine remove" 2 "$(jq '.routines | length' "$mem")"
-# The browser (Zen through nixbook's extension): the real native host
-# (scripts/zen-bridge.py), started by a stand-in for Zen and the extension
-# (tests/fake-zen.py) the way Zen starts it.
+# The pages: Zen's tabs (through nixbook's extension: the real native host
+# scripts/zen-bridge.py, started by a stand-in for Zen and the extension,
+# tests/fake-zen.py, the way Zen starts it) and the Electron apps' (the real
+# launcher scripts/electron-bridge.py, with a stand-in app speaking the
+# DevTools protocol on its pipe, tests/fake-cdp.py).
 zsock="$XDG_RUNTIME_DIR/nixbook-zen/bridge.sock"
-expect_contains "browser: Zen not running" "$(call browser_tabs '{}')" "Zen isn't running"
+expect_contains "pages: Zen not running" "$(call page_list '{"target":"zen"}')" "Zen isn't running"
+expect_contains "pages: nothing bridged said" "$(call page_list '{}')" "apps: none bridged now"
 : >"$tmp/zen.log"
 python3 "$root/tests/fake-zen.py" "$root/scripts/zen-bridge.py" "$tmp/zen.log" &
 zen_pid=$!
@@ -2091,26 +2094,40 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 expect_eq "browser bridge: a private socket" "600 700" "$(stat -c %a "$zsock") $(stat -c %a "$(dirname "$zsock")")"
-out=$(call browser_tabs '{}')
-expect_contains "browser_tabs: a tab" "$out" "[3] (shown) 'Inbox' https://mail.example.org/ · container Work"
-expect_contains "browser_tabs: a blocked one, private" "$out" "[7] private: the Banking container"
-expect_contains "browser_tabs: another workspace" "$out" "'News' https://news.example.org/ · other workspace"
-expect_eq "browser: the guard sent along" '["Banking"]' "$(head -n1 "$tmp/zen.log" | jq -c .guard.containers)"
-out=$(call browser_read '{"query":"send"}')
-expect_contains "browser_read: the elements" "$out" "[2] text field 'To' = 'ana@example.org'"
-expect_contains "browser_read: no password value" "$out" "[3] password field 'Password' (password: off limits)"
-expect_contains "browser_read: the text" "$out" "Hello"
-expect_eq "browser_read: the query passed" '"send"' "$(tail -n1 "$tmp/zen.log" | jq -c .query)"
-out=$(call browser_act '{"ref":2,"name":"To","action":"type","value":"bob@example.org"}')
-expect_contains "browser_act: done" "$out" "done (type): text field 'To' = 'bob@example.org'"
-expect_eq "browser_act: ref, name, action, value" '[2,"To","type","bob@example.org"]' "$(tail -n1 "$tmp/zen.log" | jq -c '[.ref,.name,.action,.value]')"
-expect_contains "browser_act: what was typed not logged" "$(grep '"browser_act"' "$XDG_STATE_HOME/nixbook-shell/desktop-mcp.log" | tail -n1)" '"value": "<15 chars>"'
-expect_contains "browser_act: the page's refusal said" "$(call browser_act '{"ref":3,"name":"Password","action":"type","value":"x"}')" "password fields are off limits"
-expect_contains "browser_open: in the background" "$(call browser_open '{"url":"https://example.org/"}')" "[12] 'Example' https://example.org/"
-expect_eq "browser_open: not shown" "false" "$(tail -n1 "$tmp/zen.log" | jq -c .active)"
-expect_contains "browser_screenshot: a tab, saved" "$(python3 "$mcp" call browser_screenshot '{}' 2>&1)" "Tab 3: 'Inbox'"
+out=$(call page_list '{}')
+expect_contains "page_list: a tab" "$out" "zen:3 (shown) 'Inbox' https://mail.example.org/ · container Work"
+expect_contains "page_list: a blocked one, private" "$out" "zen:7 private: the Banking container"
+expect_contains "page_list: another workspace" "$out" "'News' https://news.example.org/ · other workspace"
+expect_eq "pages: the guard sent along" '["Banking"]' "$(head -n1 "$tmp/zen.log" | jq -c .guard.containers)"
+out=$(call page_read '{"query":"send"}')
+expect_contains "page_read: the elements" "$out" "[2] text field 'To' = 'ana@example.org'"
+expect_contains "page_read: no password value" "$out" "[3] password field 'Password' (password: off limits)"
+expect_contains "page_read: the text" "$out" "Hello"
+expect_contains "page_read: the target said" "$out" "zen:3: 'Inbox'"
+expect_eq "page_read: the query passed" '"send"' "$(tail -n1 "$tmp/zen.log" | jq -c .query)"
+call page_read '{"target":"zen:9","text":false}' >/dev/null
+expect_eq "page_read: a tab by its target" 9 "$(tail -n1 "$tmp/zen.log" | jq -c .tab)"
+out=$(call page_act '{"ref":2,"name":"To","action":"type","value":"bob@example.org"}')
+expect_contains "page_act: done" "$out" "done (type): text field 'To' = 'bob@example.org'"
+expect_eq "page_act: ref, name, action, value" '[2,"To","type","bob@example.org"]' "$(tail -n1 "$tmp/zen.log" | jq -c '[.ref,.name,.action,.value]')"
+expect_contains "page_act: what was typed not logged" "$(grep '"page_act"' "$XDG_STATE_HOME/nixbook-shell/desktop-mcp.log" | tail -n1)" '"value": "<15 chars>"'
+expect_contains "page_act: the page's refusal said" "$(call page_act '{"ref":3,"name":"Password","action":"type","value":"x"}')" "password fields are off limits"
+expect_contains "page_go open: in the background" "$(call page_go '{"action":"open","url":"https://example.org/"}')" "zen:12 'Example' https://example.org/"
+expect_eq "page_go open: not shown" "false" "$(tail -n1 "$tmp/zen.log" | jq -c .active)"
+expect_contains "page_screenshot: a tab, saved" "$(python3 "$mcp" call page_screenshot '{}' 2>&1)" "zen:3: 'Inbox'"
+expect_contains "page tools: a bad target" "$(call page_read '{"target":"zen:x"}')" "zen:<tab id>"
+# The browser_* tools of before: callable, not offered.
+expect_contains "browser_tabs: still callable" "$(call browser_tabs '{}')" "zen:3 (shown) 'Inbox'"
+call browser_read '{"tab":9,"text":false}' >/dev/null
+expect_eq "browser_read: its tab, through page_read" 9 "$(tail -n1 "$tmp/zen.log" | jq -c .tab)"
+expect_contains "browser_open: still callable" "$(call browser_open '{"url":"https://example.org/"}')" "zen:12 'Example'"
+expect_eq "browser_*: not offered" "" "$(python3 "$mcp" tools | jq -r '.[] | .name | select(startswith("browser_"))')"
+# A desktop-mcp.json of before: the group "browser" is now "pages".
+echo '{"tools":["observe","browser"]}' >"$tmp/old-groups.json"
+expect_eq "settings: the browser group of before means pages" '["observe","pages"]' \
+  "$(NIXBOOK_DESKTOP_MCP_CONFIG="$tmp/old-groups.json" python3 "$mcp" config | jq -c .tools)"
 python3 "$mcp" pause >/dev/null
-expect_contains "browser: paused like the rest" "$(call browser_tabs '{}')" "paused"
+expect_contains "pages: paused like the rest" "$(call page_list '{}')" "paused"
 python3 "$mcp" resume >/dev/null
 kill "$zen_pid" 2>/dev/null
 wait "$zen_pid" 2>/dev/null || true
@@ -2119,6 +2136,71 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 expect_eq "browser bridge: gone with Zen" "no" "$([ -S "$zsock" ] && echo yes || echo no)"
+
+# An Electron app (Discord in Vesktop) through its bridge.
+esock="$XDG_RUNTIME_DIR/nixbook-electron/discord.sock"
+expect_contains "discord: not bridged, said how" "$(call discord '{"action":"status"}')" "started before nixbook's bridge"
+# Running without its bridge (the watcher, nixbook-electron-app watch, says so):
+# listed with the hint; a call asks the watcher to tell the user, never restarts it.
+mkdir -p "$XDG_RUNTIME_DIR/nixbook-electron"
+echo '{"discord": {"pid": 4242, "label": "Vesktop", "age": 900, "inCall": false}}' >"$XDG_RUNTIME_DIR/nixbook-electron/unbridged.json"
+expect_contains "page_list: an unbridged app" "$(call page_list '{}')" "discord: unbridged · Vesktop runs without nixbook's bridge"
+out=$(call discord '{"action":"read"}')
+expect_contains "discord: unbridged, the hint" "$out" "never close or restart it yourself"
+expect_eq "discord: unbridged, the watcher asked to tell the user" yes \
+  "$([ -e "$XDG_RUNTIME_DIR/nixbook-electron/discord.ask" ] && echo yes || echo no)"
+touch -d '-2 minutes' "$XDG_RUNTIME_DIR/nixbook-electron/unbridged.json"
+expect_contains "unbridged.json: stale (no watcher), not believed" "$(call discord '{"action":"status"}')" "started before nixbook's bridge"
+rm -f "$XDG_RUNTIME_DIR/nixbook-electron/unbridged.json" "$XDG_RUNTIME_DIR/nixbook-electron/discord.ask"
+: >"$tmp/cdp.log"
+FAKE_CDP_LOG="$tmp/cdp.log" python3 "$root/scripts/electron-bridge.py" --page-js "$root/zen/page.js" \
+  --adapters "$root/electron" discord -- python3 "$root/tests/fake-cdp.py" --dmcp-test &
+electron_pid=$!
+for _ in $(seq 1 100); do
+  [ -S "$esock" ] && break
+  sleep 0.05
+done
+out=$(call page_list '{}')
+expect_contains "page_list: the app's main window" "$out" "discord 'Discord | #general' https://discord.com/channels/111/222 · Discord (Vesktop)"
+expect_contains "page_list: its other page" "$out" "discord:1 'Vesktop'"
+expect_contains "page_list: Zen gone, said" "$out" "zen: Zen isn't running"
+out=$(call page_read '{"target":"discord","query":"message"}')
+expect_contains "page_read: an app's page" "$out" "discord:2: 'Discord | #general'"
+expect_contains "page_read: its editor" "$out" "[1] text editor 'Message #general'"
+out=$(call page_act '{"target":"discord","ref":1,"name":"Message #general","action":"type","value":"on my way"}')
+expect_contains "page_act: typed in an app's editor" "$out" "done (type): text editor 'Message #general' = 'on my way'"
+expect_eq "page_act: through the pipe's Input.insertText" '"on my way"' "$(grep 'Input.insertText' "$tmp/cdp.log" | tail -n1 | jq -c .params.text)"
+expect_contains "page_go: an app's back" "$(call page_go '{"target":"discord","action":"back"}')" "discord:2 now"
+expect_contains "page_go: no open in an app" "$(call page_go '{"target":"discord","action":"open","url":"https://example.org/"}')" "Zen's"
+expect_contains "page_screenshot: an app's window" "$(python3 "$mcp" call page_screenshot '{"target":"discord"}' 2>&1)" "discord:2:"
+echo '{"pages":{"blockedApps":["^disc"]}}' >"$tmp/blocked-apps.json"
+expect_contains "pages: a blocked app refused" \
+  "$(NIXBOOK_DESKTOP_MCP_CONFIG="$tmp/blocked-apps.json" python3 "$mcp" call page_read '{"target":"discord"}' 2>&1 || true)" "off limits"
+expect_contains "pages: a password manager never" "$(call page_read '{"target":"bitwarden"}')" "off limits"
+out=$(call discord '{"action":"status"}')
+expect_contains "discord status: logged in, the open channel" "$out" "logged in as Me; open: #general (Friends) = 222222222222222222"
+expect_contains "discord find" "$(call discord '{"action":"find","query":"gen"}')" "- channel #general (Friends) = 222222222222222222"
+out=$(call discord '{"action":"read","channel":"general","limit":2}')
+expect_contains "discord read: who, when, what, its id" "$out" "- 10-28 09:15 ana: lunch? my token is [hidden] ⟨id 555, mentions you⟩"
+expect_contains "discord read: mine, a reply, reactions" "$out" "Me (you): sure ⟨id 556, reply to 555, 👍1⟩"
+expect_contains "discord channels: servers and DMs" "$(call discord '{"action":"channels"}')" "- @ana = 444444444444444444"
+out=$(python3 "$mcp" call --meta discord '{"action":"send","channel":"222222222222222222","content":"see you at noon"}' 2>&1)
+expect_contains "discord send: sent, its id" "$out" "sent to #general (Friends) = 222222222222222222 (message id 999999999999999999)"
+expect_eq "discord send: verified by its id" true "$(jq '._meta.verified' <<<"$out")"
+expect_contains "discord send: the message not in the audit log" \
+  "$(grep '"discord"' "$XDG_STATE_HOME/nixbook-shell/desktop-mcp.log" | tail -n1)" '"content": "<15 chars>"'
+expect_contains "discord send: needs a channel" "$(call discord '{"action":"send","content":"hi"}')" "channel"
+expect_contains "discord react" "$(call discord '{"action":"react","channel":"222222222222222222","message":"555","emoji":"👍"}')" "reacted 👍 to message 555"
+expect_eq "discord: a send is risky" True "$(python3 -c "import importlib.util as u; s=u.spec_from_file_location('m','$mcp'); m=u.module_from_spec(s); s.loader.exec_module(m); print(m.local_is_risky('discord', {'action': 'send'}), end='')")"
+expect_contains "discord: a send never past ask" "$(python3 "$mcp" trust set 'discord:send' tell 2>&1 || true)" "always asked"
+expect_contains "discord: a reaction never past ask" "$(python3 "$mcp" trust set 'discord:react' silent 2>&1 || true)" "always asked"
+kill "$electron_pid" 2>/dev/null
+wait "$electron_pid" 2>/dev/null || true
+for _ in $(seq 1 50); do
+  [ -S "$esock" ] || break
+  sleep 0.1
+done
+expect_eq "electron bridge: gone with the app" "no" "$([ -S "$esock" ] && echo yes || echo no)"
 
 # The apps' tools for agents without MCP (nixbook-quick-ai): listed (and
 # cached), called, audited, refused while AI is off.

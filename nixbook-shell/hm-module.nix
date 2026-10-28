@@ -471,6 +471,18 @@ let
       de = "Die Desktop-Agenten können arbeiten, während du arbeitest, ohne Maus oder Tastatur zu übernehmen: in Zen handeln sie in der Seite selbst (lesen, klicken, tippen, Formulare ausfüllen) in jedem Tab, im Hintergrund oder in einem anderen Arbeitsbereich, über nixbooks Zen-Erweiterung; in anderen Apps über deren eigene Bedienelemente per Barrierefreiheitsbaum, auf jedem Arbeitsbereich; und sie sehen ein Fenster auf einem anderen Arbeitsbereich, ohne deine Ansicht zu bewegen (lautlos mit nixbooks niri, ab der nächsten Anmeldung). In Zen tabu: private Fenster, Passwortfelder, der Banking-Container, Passwortmanager, dein Google-Konto, PayPal und Banken. Ein Klick auf Senden, Bezahlen oder Bestellen wird vorher erfragt.";
       vi = "Các tác nhân màn hình có thể làm việc cùng lúc với bạn mà không chiếm chuột hay bàn phím: trong Zen chúng thao tác ngay trong trang (đọc, bấm, gõ, điền biểu mẫu) ở bất kỳ thẻ nào, chạy nền hoặc ở không gian làm việc khác, nhờ tiện ích Zen của nixbook; trong ứng dụng khác chúng dùng chính các điều khiển của ứng dụng qua cây trợ năng, ở bất kỳ không gian nào; và chúng xem được cửa sổ ở không gian khác mà không làm đổi màn hình của bạn (im lặng với niri của nixbook, từ lần đăng nhập sau). Trong Zen không được đụng: cửa sổ riêng tư, ô mật khẩu, container Banking, trình quản lý mật khẩu, tài khoản Google, PayPal và ngân hàng. Bấm Gửi, Thanh toán hay Đặt hàng thì sẽ hỏi trước.";
     };
+    appsThroughThePage = {
+      en = "The desktop agents also work inside Electron apps nixbook starts through its bridge (nixbook-electron-app: Discord in Vesktop, Slack, YouTube Music, Actual Budget), like Zen's tabs: they read the app's page, click, type (even in Discord's message box) and press keys in the page itself, its window in the background or on another workspace, without your mouse or keyboard (page_list, page_read, page_act). Discord also has its own tool: find a channel or a person, read the last messages, send or reply, react; every message or reaction sent is asked first, in your name. YouTube Music: playing and the queue go through its own MCP server, the page for the rest (lyrics, the library). An app that runs without the bridge (it restarted itself to update, an autostart entry or another launcher started it) is put back on it: one that has just started is restarted through it at once, otherwise (or during a call) you get a notification with Restart with bridge; it is never closed unasked. Password managers are never bridged; customHomeManagerModules.nixbookShellConfig.electronBridge turns it off or picks the apps. Automating your own account may break Discord's or Slack's terms.";
+      fr = "Les agents du bureau travaillent aussi dans les applications Electron que nixbook lance par son pont (nixbook-electron-app : Discord dans Vesktop, Slack, YouTube Music, Actual Budget), comme dans les onglets de Zen : ils lisent la page de l'application, cliquent, écrivent (même dans la zone de message de Discord) et appuient sur des touches dans la page elle-même, sa fenêtre en arrière-plan ou dans un autre espace, sans votre souris ni votre clavier (page_list, page_read, page_act). Discord a aussi son propre outil : trouver un salon ou une personne, lire les derniers messages, envoyer ou répondre, réagir ; chaque message ou réaction envoyé en votre nom est demandé avant. YouTube Music : la lecture et la file passent par son propre serveur MCP, la page pour le reste (paroles, bibliothèque). Une application lancée sans le pont (elle s'est relancée pour une mise à jour, une entrée de démarrage automatique ou un autre lanceur l'a ouverte) y est remise : si elle vient de démarrer, elle est relancée par le pont aussitôt, sinon (ou pendant un appel) une notification propose Redémarrer avec le pont ; elle n'est jamais fermée sans vous demander. Les gestionnaires de mots de passe ne passent jamais par le pont ; customHomeManagerModules.nixbookShellConfig.electronBridge le désactive ou choisit les applications. Automatiser votre propre compte peut enfreindre les conditions de Discord ou de Slack.";
+      de = "Die Desktop-Agenten arbeiten auch in Electron-Apps, die nixbook über seine Brücke startet (nixbook-electron-app: Discord in Vesktop, Slack, YouTube Music, Actual Budget), wie in Zens Tabs: Sie lesen die Seite der App, klicken, tippen (sogar in Discords Nachrichtenfeld) und drücken Tasten in der Seite selbst, ihr Fenster im Hintergrund oder auf einem anderen Arbeitsbereich, ohne deine Maus oder Tastatur (page_list, page_read, page_act). Discord hat auch ein eigenes Werkzeug: einen Kanal oder eine Person finden, die letzten Nachrichten lesen, senden oder antworten, reagieren; jede in deinem Namen gesendete Nachricht oder Reaktion wird vorher erfragt. YouTube Music: Wiedergabe und Warteschlange über seinen eigenen MCP-Server, die Seite für den Rest (Songtexte, Bibliothek). Eine App, die ohne die Brücke läuft (sie hat sich für ein Update neu gestartet, ein Autostart-Eintrag oder ein anderer Starter hat sie geöffnet), kommt wieder auf sie: gerade gestartet wird sie sofort über die Brücke neu gestartet, sonst (oder während eines Anrufs) fragt eine Benachrichtigung mit Mit Brücke neu starten; sie wird nie ungefragt geschlossen. Passwortmanager laufen nie über die Brücke; customHomeManagerModules.nixbookShellConfig.electronBridge schaltet sie ab oder wählt die Apps. Das eigene Konto zu automatisieren kann gegen Discords oder Slacks Bedingungen verstoßen.";
+      vi = "Các tác nhân màn hình cũng làm việc trong các ứng dụng Electron mà nixbook mở qua cầu nối của nó (nixbook-electron-app: Discord trong Vesktop, Slack, YouTube Music, Actual Budget), giống như các thẻ của Zen: chúng đọc trang của ứng dụng, bấm, gõ (cả trong ô tin nhắn của Discord) và nhấn phím ngay trong trang, cửa sổ chạy nền hoặc ở không gian khác, không cần chuột hay bàn phím của bạn (page_list, page_read, page_act). Discord còn có công cụ riêng: tìm kênh hoặc người, đọc các tin nhắn mới nhất, gửi hoặc trả lời, thả cảm xúc; mỗi tin nhắn hay cảm xúc gửi đi dưới tên bạn đều được hỏi trước. YouTube Music: phát nhạc và hàng chờ qua máy chủ MCP riêng của nó, trang cho phần còn lại (lời bài hát, thư viện). Ứng dụng chạy mà không có cầu nối (nó tự khởi động lại để cập nhật, do mục tự khởi động hoặc trình mở khác mở) sẽ được đưa lại vào cầu nối: nếu vừa mới mở thì được khởi động lại qua cầu nối ngay, nếu không (hoặc đang trong cuộc gọi) bạn nhận một thông báo với nút Khởi động lại với cầu nối; nó không bao giờ bị đóng mà không hỏi bạn. Trình quản lý mật khẩu không bao giờ qua cầu nối; customHomeManagerModules.nixbookShellConfig.electronBridge để tắt hoặc chọn ứng dụng. Tự động hóa tài khoản của chính bạn có thể vi phạm điều khoản của Discord hoặc Slack.";
+    };
+    jellyfin = {
+      en = "Jellyfin: in Settings > Desktop agents > Apps it can use, turn Jellyfin on, enter your server and an API key (Jellyfin: Dashboard > API Keys), then Save and check. Click Connect the player once with your Jellyfin username and password: films and episodes then play fullscreen in mpv on this computer. Say or type \"play Edgerunners season 1 episode 2\" in Muse's bubble to start one at once; ask Muse to play on Moonfin or the TV to use those instead.";
+      fr = "Jellyfin : dans Paramètres > Agents du bureau > Applications utilisables, activez Jellyfin, saisissez votre serveur et une clé d'API (Jellyfin : Tableau de bord > Clés API), puis Enregistrer et vérifier. Cliquez une fois sur Connecter le lecteur avec votre nom d'utilisateur et votre mot de passe Jellyfin : films et épisodes se lancent alors en plein écran dans mpv sur cet ordinateur. Dites ou tapez « lance Edgerunners saison 1 épisode 2 » dans la bulle de Muse pour en lancer un tout de suite ; demandez à Muse de le lire sur Moonfin ou la télé pour les utiliser à la place.";
+      de = "Jellyfin: Unter Einstellungen > Desktop-Agenten > Nutzbare Apps Jellyfin einschalten, Server und einen API-Schlüssel eingeben (Jellyfin: Dashboard > API-Schlüssel), dann Speichern und prüfen. Einmal mit Jellyfin-Benutzername und Passwort auf Player verbinden klicken: Filme und Folgen laufen dann im Vollbild in mpv auf diesem Computer. Sag oder tippe „spiel Edgerunners Staffel 1 Folge 2“ in Muses Sprechblase, um sofort eine zu starten; bitte Muse, auf Moonfin oder dem Fernseher abzuspielen, um diese zu nutzen.";
+      vi = "Jellyfin: trong Cài đặt > Tác nhân màn hình > Ứng dụng có thể dùng, bật Jellyfin, nhập máy chủ và một khóa API (Jellyfin: Bảng điều khiển > Khóa API), rồi Lưu và kiểm tra. Nhấn Kết nối trình phát một lần với tên người dùng và mật khẩu Jellyfin: phim và tập phim sẽ phát toàn màn hình trong mpv trên máy này. Nói hoặc gõ \"xem Edgerunners mùa 1 tập 2\" trong bong bóng của Muse để phát ngay; nhờ Muse phát trên Moonfin hoặc TV để dùng chúng.";
+    };
     nixOnboarding = {
       en = "To set up your desktop by talking: Settings > Desktop agents > Talk to your desktop > Set up my desktop by talking. Say how you work (\"I'm a developer, I hate notifications at night, I like a minimal bar\"); it asks a few questions, writes the Nix for the shell's settings, checks it with Nix itself (a misspelt or wrong setting is fixed by the AI until Nix accepts it) and shows it with Copy, Build it for me (the desktop agent's fixer puts it in nixbook) and Apply now (live, not in your Nix files; settings set in Nix are left alone).";
       fr = "Pour configurer votre bureau en parlant : Paramètres > Agents du bureau > Parler à son bureau > Configurer mon bureau en parlant. Dites comment vous travaillez (« je suis développeur, je déteste les notifications le soir, j'aime une barre minimale ») ; il pose quelques questions, écrit le Nix des réglages du shell, le vérifie avec Nix lui-même (un réglage mal écrit ou faux est corrigé par l'IA jusqu'à ce que Nix l'accepte) et l'affiche avec Copier, Le faire pour moi (le correcteur de l'agent du bureau l'ajoute à nixbook) et Appliquer maintenant (en direct, pas dans vos fichiers Nix ; les réglages fixés dans Nix ne sont pas touchés).";
@@ -909,6 +921,44 @@ in
       '';
     };
 
+    electronBridge.apps = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule {
+          options = {
+            app = lib.mkOption {
+              type = lib.types.strMatching "[a-z0-9][a-z0-9-]{0,31}";
+              description = "The name agents know it by (`discord`).";
+            };
+            command = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              description = "The app's own command (not the bridged wrapper).";
+            };
+            markers = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              description = "Its store paths: a process naming one is the app.";
+            };
+            a11y = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "With its accessibility tree on.";
+            };
+          };
+        }
+      );
+      default = [ ];
+      description = ''
+        The Electron apps started through `nixbook-electron-app`
+        (`package.passthru.electronBridge`) on this machine. When it lists
+        any, the `nixbook-electron-watch` user service watches them: one
+        that runs without the bridge (it restarted itself, an autostart
+        entry or another launcher started it) is restarted through it when
+        it has just started and isn't in a call, otherwise you get a
+        notification with "Restart with bridge" (never stopped unasked).
+        Written to `~/.config/nixbook-shell/electron-bridge.json`. nixbook
+        fills it from the apps lib/electronA11y.nix bridges.
+      '';
+    };
+
     desktopMcp = {
       settings = lib.mkOption {
         type = lib.types.submodule {
@@ -924,6 +974,8 @@ in
                 "memory"
                 "personal"
                 "ui"
+                "pages"
+                # The name of `pages` before: read as it.
                 "browser"
                 "terminal"
               ]
@@ -937,7 +989,7 @@ in
               "memory"
               "personal"
               "ui"
-              "browser"
+              "pages"
               "terminal"
             ];
             description = ''
@@ -955,12 +1007,17 @@ in
               Firefox-based and Chromium/Electron apps through
               `desktopMcp.browserAccessibility`, on by default; Electron apps
               also need `--force-renderer-accessibility`: nixbook wraps its own,
-              nixbookShellConfig.electronAccessibility), `browser` (Zen's tabs
-              through the page itself, with nixbook's extension: read, click,
-              type, forms, in background tabs, without the pointer or keys;
-              `browser.blockedSites` / `browser.blockedContainers` are off
-              limits, by default password managers, Google account and payment
-              sites, banks and the Banking container), `terminal` (kitty's
+              nixbookShellConfig.electronAccessibility), `pages` (web pages
+              through the page itself: Zen's tabs, with nixbook's extension, and
+              the Electron apps started through `nixbook-electron-app`, e.g.
+              Vesktop, Slack, YouTube Music; read, click, type, forms, in the
+              background, without the pointer or keys; Discord's messages
+              through its own client too (find, read, send, react: sends always
+              asked); `browser.blockedSites` / `browser.blockedContainers` and
+              `pages.blockedApps` are off limits, by default password managers,
+              Google account and payment sites, banks and the Banking container,
+              and password manager apps are never bridged; `browser`, its name
+              before, means the same), `terminal` (kitty's
               windows and nvim through their own remote control: reading the
               last command's output or the screen, putting a command on the
               prompt for you to run, running a command in Muse's own kitty tab
@@ -1542,6 +1599,28 @@ in
             ExecStartPre = "${pkgs.coreutils}/bin/rm -f %t/nixbook-shell/boot-splash-shown";
             ExecStart = "${lib.getExe cfg.package} splash";
             Restart = "no";
+            Slice = "app.slice";
+          };
+          Install.WantedBy = [ "graphical-session.target" ];
+        };
+
+        # The Electron apps' bridge watcher (electronBridge.apps): an app
+        # running without its bridge, restarted through it while it is young
+        # and not in a call, otherwise the user asked (notification).
+        xdg.configFile."nixbook-shell/electron-bridge.json" = lib.mkIf (cfg.electronBridge.apps != [ ]) {
+          text = builtins.toJSON { inherit (cfg.electronBridge) apps; };
+        };
+        systemd.user.services.nixbook-electron-watch = lib.mkIf (cfg.electronBridge.apps != [ ]) {
+          Unit = {
+            Description = "nixbook-shell: Electron apps running without their bridge";
+            PartOf = [ "graphical-session.target" ];
+            After = [ "graphical-session.target" ];
+            X-Restart-Triggers = [ (builtins.toJSON cfg.electronBridge.apps) ];
+          };
+          Service = {
+            ExecStart = "${cfg.package.passthru.electronBridge}/bin/nixbook-electron-app watch";
+            Restart = "on-failure";
+            RestartSec = 5;
             Slice = "app.slice";
           };
           Install.WantedBy = [ "graphical-session.target" ];

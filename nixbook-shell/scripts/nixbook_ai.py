@@ -1058,11 +1058,28 @@ READ_ACTIONS = {"list", "lists", "upcoming", "get", "search", "find", "show", "s
 # around or playing music just happen.
 RISKY_TOOL = re.compile(r"(^|_)(delete|remove|empty_trash|purge|wipe|clear|merge|resolve_duplicates|credentials|"
                         r"send|sms|reply|connect_with|partner|uninstall|format|buy|pay|purchase|order)", re.I)
-RISKY_ACTION = re.compile(r"^(delete|remove|clear|purge|empty|reply|send)", re.I)
+RISKY_ACTION = re.compile(r"^(delete|remove|clear|purge|empty|reply|send|react)", re.I)
 # A click on such a button (ui_act/click on an element named so).
 RISKY_TARGET = re.compile(r"\b(delete|remove|send|reply|pay|buy|purchase|order|checkout|unsubscribe|empty trash|"
                           r"erase|format|uninstall|supprimer|envoyer|payer|acheter|l(ö|oe)schen|senden|x(ó|o)a|g(ử|u)i)\b", re.I)
 HARMLESS_TOOL = re.compile(r"(queue|playlist|playback|volume|seek|repeat|shuffle)", re.I)
+# Chat apps through their page (desktop-mcp's page_act): Enter, or a form
+# submitted, in the message box sends the message.
+CHAT_TARGETS = re.compile(r"^(discord|slack)(:|$)", re.I)
+
+
+def page_act_risky(args):
+    """A page click/submit/key on a "Send", "Pay"… element, or Enter in a chat app."""
+    args = args if isinstance(args, dict) else {}
+    action = str(args.get("action") or "")
+    if action not in ("click", "submit", "press"):
+        return False
+    if RISKY_TARGET.search(str(args.get("name") or "")):
+        return True
+    key = str(args.get("value") or "Enter")
+    return bool(CHAT_TARGETS.match(str(args.get("target") or ""))) and (
+        action == "submit" or (action == "press" and re.search(r"(^|\+)\s*(enter|return)$", key, re.I) is not None
+                               and not re.search(r"shift", key, re.I)))
 
 
 def _bare(name, meta):
@@ -1102,10 +1119,9 @@ def is_risky(name, args, meta=None):
     action = str((args or {}).get("action") or "")
     if RISKY_ACTION.match(action):
         return True
-    if tool == "browser_act":
-        # A click (or a form sent) on a "Send", "Pay", "Order"… button.
-        return str((args or {}).get("action") or "") in ("click", "submit", "press") and bool(
-            RISKY_TARGET.search(str((args or {}).get("name") or "")))
+    if tool in ("browser_act", "page_act"):
+        # A click (or a form sent) on a "Send", "Pay", "Order"… button; Enter in a chat.
+        return page_act_risky(args)
     if tool in ("ui_act", "click", "notification_action"):
         said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
         return bool(RISKY_TARGET.search(said))

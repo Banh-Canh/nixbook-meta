@@ -6,13 +6,10 @@
 }:
 let
   cfg = config.customHomeManagerModules;
-  # Readable by the desktop agents where nixbook-shell runs (lib/electronA11y.nix).
-  a11y =
-    pkg: bin:
-    if cfg.nixbookShellConfig.enable && cfg.nixbookShellConfig.electronAccessibility then
-      import ../lib/electronA11y.nix { inherit pkgs; } pkg bin
-    else
-      pkg;
+  # Readable and usable by the desktop agents where nixbook-shell runs
+  # (lib/electronA11y.nix: its accessibility tree, and its pages through
+  # nixbook-electron-app when nixbookShellConfig.electronBridge lists it).
+  a11y = import ../lib/electronA11y.nix { inherit pkgs config; };
 in
 {
   options.customHomeManagerModules.desktopApps = {
@@ -52,26 +49,36 @@ in
       '';
     };
   };
-  config = lib.mkIf cfg.desktopApps.enable {
-    programs = {
-      zathura.enable = true;
-      imv.enable = true;
-    };
-    home.packages =
-      with pkgs;
-      [
-        # apps
-        darktable
-        ansel
-        spotify
-        obs-studio
-        wdisplays # display manager
-        (a11y vesktop "vesktop") # discord
-        pinta # paint
-        wifi-qr
-      ]
-      ++ lib.optionals (!cfg.zenBrowserConfig.enable) [
-        firefox
-      ];
-  };
+  config = lib.mkMerge [
+    # The bridged Electron apps installed (lib/electronA11y.nix, here or in
+    # a profile), watched by nixbook-shell's nixbook-electron-watch: one
+    # running without its bridge is restarted through it or you are asked.
+    (lib.mkIf cfg.nixbookShellConfig.enable {
+      programs.nixbook-shell.electronBridge.apps = map (p: p.nixbookElectronBridge) (
+        lib.filter (p: p ? nixbookElectronBridge) config.home.packages
+      );
+    })
+    (lib.mkIf cfg.desktopApps.enable {
+      programs = {
+        zathura.enable = true;
+        imv.enable = true;
+      };
+      home.packages =
+        with pkgs;
+        [
+          # apps
+          darktable
+          ansel
+          spotify
+          obs-studio
+          wdisplays # display manager
+          (a11y vesktop "vesktop") # discord
+          pinta # paint
+          wifi-qr
+        ]
+        ++ lib.optionals (!cfg.zenBrowserConfig.enable) [
+          firefox
+        ];
+    })
+  ];
 }

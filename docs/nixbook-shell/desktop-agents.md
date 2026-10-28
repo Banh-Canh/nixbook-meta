@@ -22,7 +22,7 @@ Desktop control **starts paused**. Allow it with the bar's Desktop Control widge
 | `windows`  | Focus, move, resize, close windows; launch apps (waits for the window); [window layouts](./window-layouts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `input`    | Type, press keys, click, drag, scroll — exact to the pixel on any monitor and scale; up to 20 steps in one call (`run_steps`), a saved recipe in one call (`run_recipe`)                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `ui`       | Read any app's window through its **accessibility tree** (buttons, fields, labels as numbered text lines) and press, toggle or fill elements without coordinates; wait for an element to appear or disappear                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `browser`  | **Zen through the page itself** (nixbook's extension): list tabs, open, navigate, read a page (its text and the elements to act on, numbered), click, type, pick, check, submit, wait, a picture of a tab — in background tabs and other workspaces, **without the mouse or keyboard**                                                                                                                                                                                                                                                                                                                              |
+| `pages`    | [**Web pages and apps through the page itself**](#apps-and-browser-through-the-page): Zen's tabs (nixbook's extension) and Electron apps nixbook starts through its bridge (Discord in Vesktop, Slack, YouTube Music, Actual Budget): list them, open, navigate, read a page (its text and the elements to act on, numbered), click, type, pick, check, submit, press keys, wait, a picture — in the background and other workspaces, **without the mouse or keyboard**; **Discord's messages** through its own client (find, read, send, reply, react)                                                             |
 | `shell`    | Themes and variants, the wallpaper, **desktop widgets** (notes, to-do, timers, alarms, images, music recognition), the **equalizer**, the **calendar** (read-only), the **to-do lists**, **[contacts](./accounts)** (every account's: search, edit, label, photos), the **notification centre** (list with ids, dismiss by id, app, text or all, click a notification's button or send its inline reply, snooze, Do Not Disturb, clear the history), the **conversation** in the speech bubble (start a fresh one, put it away, list and delete saved ones, make Full AI mode forget what it learned), shell panels |
 | `terminal` | [kitty and Neovim](#terminal-coding): read a terminal (the last command's output, the screen, your selection), put a command on your prompt for you to run, run one in Muse's own kitty tab after asking; read the file, selection and diagnostics of the Neovim in front, open a file at a line                                                                                                                                                                                                                                                                                                                    |
 | `memory`   | [Desktop memory](#desktop-memory): remember, recall, forget; remind (reminders on a cue); [routine](#routines)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -30,23 +30,16 @@ Desktop control **starts paused**. Allow it with the bar's Desktop Control widge
 
 The `memory` group also has `habits`: what you usually do, from [usage habits](#usage-habits) when you turned them on.
 
-**Built for speed and few tokens.** About 30 tools are marked _core_ (`_meta["nixbook/core"]`: windows, apps, workspaces, keys, clicks, screenshots, the accessibility tree, notifications, memory, Zen's tabs and pages…), so a client can offer those first and load the others by bundle (`_meta["nixbook/bundle"]`) when a task needs them — Muse does. Descriptions are short; a tool's whole guide comes back with `help: true`, or from `tool_help`. `machine_help {query}` searches this machine's reference (how-tos, key bindings, Neovim keymaps, modules, packages) and returns the part about the question. Replies are compact JSON. Acting tools that check their own effect (an app's window appeared, a window closed, the music paused, the theme switched, an event created) say so in their reply (`_meta.verified`), so a client needs no second look; the others name the read-only call that would show the result (`_meta.observe`). `launch_app` returns as soon as the app's window is there (it waits for a splash screen only when one shows), and pasting text no longer waits a fixed half second.
+**Built for speed and few tokens.** About 30 tools are marked _core_ (`_meta["nixbook/core"]`: windows, apps, workspaces, keys, clicks, screenshots, the accessibility tree, notifications, memory, the pages of Zen and the bridged apps…), so a client can offer those first and load the others by bundle (`_meta["nixbook/bundle"]`) when a task needs them — Muse does. Descriptions are short; a tool's whole guide comes back with `help: true`, or from `tool_help`. `machine_help {query}` searches this machine's reference (how-tos, key bindings, Neovim keymaps, modules, packages) and returns the part about the question. Replies are compact JSON. Acting tools that check their own effect (an app's window appeared, a window closed, the music paused, the theme switched, an event created) say so in their reply (`_meta.verified`), so a client needs no second look; the others name the read-only call that would show the result (`_meta.observe`). `launch_app` returns as soon as the app's window is there (it waits for a splash screen only when one shows), and pasting text no longer waits a fixed half second.
 
 ## Working alongside you
 
 Agents can work while you do, on the same desktop, without taking your mouse
 or keyboard:
 
-- **The web, in Zen**: the `browser` tools act in the page itself, in any tab,
-  shown or not, in another workspace too. Tabs open in the background unless
-  asked. Off limits: private windows, password fields, the **Banking**
-  container, and password managers, your Google account, PayPal and bank sites
-  (`browser.blockedSites`, `browser.blockedContainers`). A click on "Send",
-  "Pay", "Order"… is asked first (Talk to your desktop > _Ask me before_). Needs
-  `zenBrowserConfig` with `nixbookShellConfig.zenAgent.enable` (on by default):
-  the extension shows in Zen's add-ons as unverified (nixbook builds it).
-  Limits: what a browser keeps for a real person (choosing a file to upload,
-  some clipboard actions, anti-bot checks) and canvas editors (Google Docs).
+- **The web and Electron apps, in the page**: the `page_*` tools act in Zen's
+  tabs and in the windows of the apps nixbook bridges, shown or not, in another
+  workspace too: see [Apps and browser through the page](#apps-and-browser-through-the-page).
 - **Any app's controls**: the `ui` tools read and use a window through its
   accessibility tree by its id, on any workspace, focused or not. Electron apps
   (Vesktop, Slack, YouTube Music) need `--force-renderer-accessibility`:
@@ -60,8 +53,133 @@ or keyboard:
   the clipboard (put back afterwards) and notifies. Hidden windows redraw about
   once a second, so a capture is at most that old; the text tools are live.
 
+## Apps and browser through the page
+
+The `pages` tools work **in the page itself**, never through the compositor:
+no pointer, no keys, no focus taken, the window in the background or on
+another workspace, while you keep working. `page_list` lists what they reach,
+each with its target: `zen:<tab>` for Zen's tabs, and an app's name for its
+window (`discord`, `slack`, `youtube-music`, `actual`; `discord:2` for another
+of its windows). `page_read` gives a page's text and its elements, numbered
+(`[ref] role 'name' = value`); `page_act` clicks, types, picks, checks,
+submits, presses a key (Enter, Escape, Shift+Enter, Ctrl+A…) or scrolls,
+given the `ref` **and** the `name` it read (a page that changed is said, never
+acted on); `page_wait` waits for a load, a text or an address; `page_go`
+opens and moves tabs (Zen) or goes back, forward, reloads (apps);
+`page_screenshot` is a picture of a page without showing it. The
+`browser_*` tools of before still answer (saved routines and notes use them)
+but aren't offered.
+
+- **Zen**: through nixbook's extension and its native host
+  (`$XDG_RUNTIME_DIR/nixbook-zen/bridge.sock`). Tabs open in the background
+  unless asked. Off limits: private windows, password fields, the **Banking**
+  container, and password managers, your Google account, PayPal and bank sites
+  (`browser.blockedSites`, `browser.blockedContainers`). Needs
+  `zenBrowserConfig` with `nixbookShellConfig.zenAgent.enable` (on by default):
+  the extension shows in Zen's add-ons as unverified (nixbook builds it).
+  Limits: what a browser keeps for a real person (choosing a file to upload,
+  some clipboard actions, anti-bot checks) and canvas editors (Google Docs).
+- **Electron apps**: the apps of `nixbookShellConfig.electronBridge.apps`
+  (Vesktop, Slack, YouTube Music, Actual Budget; on by default) start through
+  `nixbook-electron-app`: the app runs with Chromium's DevTools protocol on a
+  **private pipe** (`--remote-debugging-pipe`, no network port: no other
+  program can connect to it), held by the launcher alone, which answers a
+  fixed list of operations on a socket only you can reach
+  (`$XDG_RUNTIME_DIR/nixbook-electron/<app>.sock`, 0600 in a 0700 directory,
+  the caller's uid checked). Nothing sent to it is run as code: it runs
+  nixbook's own page code (the same as Zen's) in an isolated world the app's
+  scripts can't see, types with DevTools' `Input.insertText` (rich editors
+  such as Discord's message box accept it), presses keys with
+  `Input.dispatchKeyEvent`, and never returns a cookie, a token or a header.
+  Password fields are refused, password managers are never bridged (also
+  `pages.blockedApps`), at most 60 actions a minute per app.
+- **Staying bridged**: an app can end up running without its bridge — it
+  restarted itself (`app.relaunch()`, an update applied, "restart to apply"),
+  its own **autostart entry** (`~/.config/autostart/<app>.desktop`, written by
+  its "start with the system" setting, runs the app directly), another
+  launcher, or it was running before the bridge was installed. Two things put
+  it back:
+  - the launcher, after its app quits, watches 15 s for a new instance of it
+    (a process of yours naming the app's store paths, not under a launcher):
+    it stops it (SIGTERM, SIGKILL after 5 s) and starts the app again through
+    the bridge with the same arguments, at most once in 30 s; should it
+    restart itself unbridged again at once, it is left alone and you are told;
+  - the `nixbook-electron-watch` user service (`nixbook-electron-app watch`,
+    from `/proc` alone every 10 s, the apps of
+    `~/.config/nixbook-shell/electron-bridge.json`): an unbridged instance
+    started less than a minute ago (the autostart entry, another launcher) is
+    restarted through the bridge at once — unless it is **in a call** (a
+    PipeWire recording stream of its own, `pactl`); an older one, or one in a
+    call, is **never stopped**: you get one notification, _Restart with
+    bridge_, which restarts it (also `nixbook-electron-app restart <app>`).
+    `page_list` shows such an app as `unbridged`; an agent calling it gets the
+    hint (and you the notification again, at most every 10 minutes), and
+    never restarts or closes it itself.
+- **Discord**: the `discord` tool reads and writes messages through Discord's
+  own client in Vesktop (Vencord's modules), not its window: `find` a channel,
+  a person or a DM (→ ids), `channels` (the servers and DMs, or a server's
+  channels), `read` the last messages (≤ 50: author, time, text, id, replies,
+  reactions, your mentions), `send` (≤ 2000 characters, `reply_to` a message)
+  and `react`. **Every send and reaction is asked first** (they speak in your
+  name: never past _ask_ on the [trust ladder](#trust-ladder)), at most 10 a
+  minute, logged with their length only
+  (`~/.local/state/nixbook-shell/electron-bridge.log`). Reading doesn't mark a
+  channel read. In a chat app's message box, `page_act` with Enter sends too,
+  so it is asked as well.
+- **YouTube Music**: playing, the queue, likes and the volume go through its
+  own MCP server (`youtube-music`, the app's API Server) when the agent has
+  it; the page tools for the rest (lyrics, the library, playlists, the UI).
+- **Jellyfin**: films, series and music through its own MCP server
+  (`jellyfin`), never Moonfin's window: see [Jellyfin](#jellyfin).
+
+::: warning Your account, your responsibility
+Discord's and Slack's terms forbid automating a user account ("self-bots").
+These tools act on your own account in your own app, one asked message at a
+time, but Discord or Slack may still restrict an account they find
+automated. Turn it off with `nixbookShellConfig.electronBridge.enable = false`
+or drop an app from `electronBridge.apps`.
+:::
+
 Agents are told to read through OCR or the accessibility tree before taking a screenshot, and screenshots are JPEG and **incremental** — only what changed since the agent's last one — to keep each call cheap. Action tools can return a screenshot of the result in the same call, once the screen stops changing.
 **The shell gets out of the way.** When the side panel, Muse's speech bubble, notification popups or a theme's cut-in are over the apps while an agent works on your desktop, they become click-through, let go of the keyboard and are hidden from its screenshots for that instant. You still see them, slightly faded, with _Muse is working under this panel_ on the side panel, so you can follow the chat while it works underneath. This lasts only while each of its actions or screenshots goes on, and 1.5 s after: between its steps, while it thinks, you can use them again, exactly as they were; nothing is dismissed or put away, but a cut-in. A theme's cut-in (an important notification taking over the screen) is dismissed when an agent clicks, types or presses keys, as Escape would, along with those queued behind it: it fought the agent for the keyboard and focus. The notification stays in the notification centre, and the agent is told. Its screenshots alone dismiss nothing. The agent is told what was on screen and can hide popups, a cut-in or the bubble while it works with `set_aside` (they come back the same way), but never the side panel, the lock screen or a password prompt. When nothing of the shell is on screen this costs nothing: it is one small file read per action.
+
+### Jellyfin
+
+Muse (the side panel's and the bubble's) reaches your Jellyfin library and its
+players through `jellyfin-mcp` ([its package](/packages/#jellyfin-mcp)),
+offered where Moonfin is installed (`nixbookShellConfig.jellyfinMcp.enable`)
+and off until set up:
+
+1. **Settings → Desktop agents → Apps it can use**: turn **Jellyfin** on,
+   enter your server (`ai.jellyfin.url`), the user whose library and progress
+   to use (`ai.jellyfin.user`, empty: the first administrator) and an API key
+   (Jellyfin: **Dashboard → API Keys**), then **Save and check**, which tries
+   them on the server first. The key goes to your keyring
+   (`service=jellyfin-mcp`), never a file or a command line; or set
+   `ai.jellyfin.apiKeyFile` in Nix. **Test** checks it again, **Forget the
+   key** removes it.
+2. **Connect the player**, once, with your Jellyfin username and password:
+   it signs this computer's player in. The password isn't kept: the player
+   keeps its own login (`~/.config/jellyfin-mpv-shim/users.json`).
+   **Disconnect the player** signs it out.
+
+**Where it plays.** By default fullscreen on this computer, in your own mpv
+(its `mpv.conf`, scripts and keys): the `jellyfin-mpv-shim` user service
+(`jellyfinMcp.player.enable`), started once signed in, which Jellyfin's own
+apps can cast to as well. It saves where you stopped, marks watched and goes
+on to the next episode itself; nixbook's settings for it are merged into its
+`conf.json` on each switch, the rest of the file kept. Asked to play on
+**Moonfin**, the **TV** or a browser, Muse plays there instead, when that
+player takes remote control (the `sessions` tool says which do; other
+people's screens only when named). A series starts at its next episode, an
+episode or film where you stopped.
+
+**Its tools**: `search`, `item`, `continue_watching`, `next_up`,
+`recently_added`, `sessions` (read only); `play` (now, next or last in the
+queue), `control` (pause, stop, next, previous, seek, forward, back, volume,
+mute, fullscreen), `mark_played`, `favorite`, `playlists`, `playlist_add`.
+In the bubble, "play Edgerunners season 1 episode 2" starts at once, without
+the model: see [Fast commands](/nixbook-shell/quick-ai#fast-commands).
 
 ## Terminal & coding
 
@@ -151,7 +269,7 @@ How it reaches you:
 
 - **Its own speech bubble**, for what is time-critical: not a notification but Muse itself, on the left under the bar (your notifications stay where they are), in the theme's look: a Material card, a slanted Persona frame, a round pastel Chiikawa bubble, a notched neon Cyberpunk panel or a paper Ghibli card. It is a small chat: type your answer in it (Enter sends, Shift+Enter for a new line, Escape puts it away; the new-chat button, or typing `/new` or `/clear`, starts a new conversation, the one before staying in the side panel's history; paste an image with Ctrl+V, drop a file on the reply box or click its clip to pick an image: it shows above the box, × removes it, and it goes with your answer as in the side panel, or to the side panel with the expand button) or pick a quick answer (**Yes, please** / **No thanks** under a question, **Not now**, **Don't tell me this**), and Muse answers right there, saying what it is doing meanwhile (thinking, the tool it used). Left alone (25 seconds before you answer, 90 seconds after its answer; it waits while you hover it or type), it moves to the bar with the conversation; Muse's next answer brings it back, unless the side panel is open on that conversation. Its other words pile up as small bubbles under it (3 at most, the oldest going to the bar), like notifications: what it says while the bubble is taken, a word that left unread, and its quiet words (pairing, what it learned, a routine's report), which slide in only once you pause. Click one to open it in the bubble (a conversation there goes to the bar, and comes back from it or with Mod+C: only the conversation does), or use its button right there (Yes, a link, Reply). One that waits for your answer (a question, a Yes, buttons) stays until it expires; the others go to the bar a minute after you read them, or after 10 minutes. Its × is **Not now**. At most 8 a day, 20 minutes apart, and none at night (22:00–8:00), in a meeting, fullscreen or on Do Not Disturb.
 - **The expand button** moves the conversation to the side panel, on its own **From Muse** tab, always the same one (made when missing, even with every tab in use). It is the same conversation and the same agent session: Muse goes on there, nothing replayed, and knows what it said, even when that tab already has a conversation going. Left alone for 30 minutes (`ai.threadIdleMinutes`, Settings > Services; 0 keeps it), the tab closes and its thread stays in the conversation history, marked **From Muse**, when it has more than 5 messages (shorter ones aren't kept).
-- **Ask it anything**: **Mod+C**, or a click on the robot in the bar, opens the bubble to type in; pressing it again puts the bubble away. A plain command is done at once, without the model (which can think for a while), and the bubble says what it did: **open** an app (when its name is certain), **play**, **pause**, **next**, **previous**, **volume 40** / **volume up** / **mute**, **brightness up**, **dark mode** / **light mode**, **do not disturb on**, **lock**, **timer 10 min**, **pomodoro**, **work layout** (a saved layout), **task: buy milk**, **settings**, **workspace 2**, **move window to workspace 3**, **night light on**, **take a screenshot** ([the whole list](./quick-ai#fast-commands)). It works in the middle of a conversation too, when the command names what it acts on ("pause the music", not "pause it"); the bubble says **Done: …** with **Undo**, and Muse hears of it with your next message. Anything else, or anything unsure, goes to Muse as before. A new conversation started there is a normal one, in the side panel's tabs and history like any other, not a **From Muse** thread. A chat of the side panel that answers while the panel is closed also says so in the bubble, its answer there to reply to.
+- **Ask it anything**: **Mod+C**, or a click on the robot in the bar, opens the bubble to type in; pressing it again puts the bubble away. A plain command is done at once, without the model (which can think for a while), and the bubble says what it did: **open** an app (when its name is certain), **play**, **pause**, **next**, **previous**, **volume 40** / **volume up** / **mute**, **brightness up**, **dark mode** / **light mode**, **do not disturb on**, **lock**, **timer 10 min**, **pomodoro**, **work layout** (a saved layout), **task: buy milk**, **settings**, **workspace 2**, **move window to workspace 3**, **night light on**, **take a screenshot** ([the whole list](/nixbook-shell/quick-ai#fast-commands)). It works in the middle of a conversation too, when the command names what it acts on ("pause the music", not "pause it"); the bubble says **Done: …** with **Undo**, and Muse hears of it with your next message. Anything else, or anything unsure, goes to Muse as before. A new conversation started there is a normal one, in the side panel's tabs and history like any other, not a **From Muse** thread. A chat of the side panel that answers while the panel is closed also says so in the bubble, its answer there to reply to.
 - **Reactions**, with **React to what I do** on (off by default): when you download a file, take a screenshot or plug in a drive, the bubble offers one-click help: **Open**, **Show in folder**, and by the file's kind **Summarize it**, **What's in it?** or **How do I install it?** (those ask Muse, the file attached), or **Extract it** (done at once, into a folder next to it, then shown). Plain code, no model call until you click; not for what an agent did, never while you are busy, once per file, gone after 15 seconds (30 minutes in the bar); **Don't tell me this** silences that kind only.
 - **A bubble button beside the robot in the bar** for the rest, breathing slowly, with a count of what you haven't read yet (like the notification count); it goes down as you read, answer or dismiss them and is gone at zero. Click it to bring it (or your conversation) back in the speech bubble, right-click for not now. The robot hops when Muse has something new to say and nods while it answers. These expire after a few hours.
 
@@ -377,4 +495,4 @@ programs.nixbook-shell.desktopMcp.settings = {
 
 Written to `~/.config/nixbook-shell/desktop-mcp.json`; `nixbook-desktop-mcp config` prints what applies. Other keys tune screenshots (`screenshotFormat`, `screenshotQuality`, `screenshotMaxEdge`), terminal output (`terminalOutputMax`, 6000 characters) and memory (`memoryPromptChars`, `memoryMaxNotes`, `memoryLearn`, `memoryModel`, `personalPromptChars`, `personalMaxEntries`, `personalContacts`, `personalContactsAccount`).
 
-The `ui` group needs the accessibility bus (`customNixOSModules.niri.accessibility`, on by default); the module sets the variables that make Firefox-based and Chromium/Electron apps publish their tree (apps started before need a restart). Electron apps' pages need `--force-renderer-accessibility` as well (see [Working alongside you](#working-alongside-you)). The `browser` group's `browser` key holds `blockedSites` (regexes on the address) and `blockedContainers` (Zen container names).
+The `ui` group needs the accessibility bus (`customNixOSModules.niri.accessibility`, on by default); the module sets the variables that make Firefox-based and Chromium/Electron apps publish their tree (apps started before need a restart). Electron apps' pages need `--force-renderer-accessibility` as well (see [Working alongside you](#working-alongside-you)). The `pages` group's `browser` key holds `blockedSites` (regexes on the address) and `blockedContainers` (Zen container names), its `pages` key `blockedApps` (regexes on the bridged apps' names). A `tools` list naming `browser` (the group's name before) means `pages`.

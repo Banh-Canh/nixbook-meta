@@ -218,7 +218,7 @@ let
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-speak.py} "$@"
   '';
 
-  # The desktop agents in Zen (nixbook-desktop-mcp's browser_* tools): the
+  # The desktop agents in Zen (nixbook-desktop-mcp's page_* tools): the
   # extension (zen/, unsigned: Zen doesn't require signing, the profile
   # turns the check off) force-installed by the browser's policies, and its
   # native messaging host, a bridge to a private Unix socket
@@ -226,8 +226,22 @@ let
   # installs both (`passthru.zenAgent`).
   zenExtensionId = "desktop-agent@nixbook-shell";
   zenExtension = pkgs.runCommand "nixbook-zen-extension.xpi" { nativeBuildInputs = [ pkgs.zip ]; } ''
-    cp ${./zen}/manifest.json ${./zen}/background.js .
-    zip -q -X -9 $out manifest.json background.js
+    cp ${./zen}/manifest.json ${./zen}/page.js ${./zen}/background.js .
+    zip -q -X -9 $out manifest.json page.js background.js
+  '';
+  # The same page tools in Electron apps: `nixbook-electron-app APP -- BINARY
+  # ARGS…` starts the app with its DevTools protocol on a private pipe and
+  # serves its fixed operations on $XDG_RUNTIME_DIR/nixbook-electron/APP.sock
+  # (scripts/electron-bridge.py; Zen's page code, zen/page.js, and an app's
+  # own operations, electron/APP.js: discord). nixbook's lib/electronA11y.nix
+  # starts the apps it wraps through it (`passthru.electronBridge`).
+  # Its watcher (`watch`) tells the user with notify-send, sees calls with
+  # pactl and starts apps in a scope of their own with systemd-run.
+  electronBridge = pkgs.writeShellScriptBin "nixbook-electron-app" ''
+    export NIXBOOK_NOTIFY_SEND=${pkgs.libnotify}/bin/notify-send \
+      NIXBOOK_PACTL=${pkgs.pulseaudio}/bin/pactl NIXBOOK_SYSTEMD_RUN=${pkgs.systemd}/bin/systemd-run
+    exec ${pkgs.python3}/bin/python3 -I ${./scripts/electron-bridge.py} \
+      --page-js ${./zen/page.js} --adapters ${./electron} "$@"
   '';
   zenBridge = pkgs.writeShellScriptBin "nixbook-zen-bridge" ''
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/zen-bridge.py} "$@"
@@ -582,6 +596,7 @@ launcher.overrideAttrs (old: {
       securityContext
       fonts
       keep
+      electronBridge
       ;
     zenAgent = {
       extension = zenExtension;

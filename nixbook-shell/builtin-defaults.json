@@ -64,7 +64,7 @@
       "commandLineFolders": true,
       "effort": "low",
       "feedback": true,
-      "mcpServersOff": ["linkedin", "immich"],
+      "mcpServersOff": ["linkedin", "immich", "jellyfin"],
       "memoryModel": "small",
       "model": "main",
       "resolve": true,
@@ -75,6 +75,11 @@
     "immich": {
       "apiKeyFile": "",
       "url": ""
+    },
+    "jellyfin": {
+      "apiKeyFile": "",
+      "url": "",
+      "user": ""
     },
     "phone": {
       "readMessages": false

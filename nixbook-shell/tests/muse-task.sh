@@ -18,13 +18,16 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
+# The tasks' control sockets go in the runtime dir: a short path of its own
+# (a socket path over 108 bytes can't be bound, e.g. under a nix-shell's TMPDIR).
+run="$(mktemp -d /tmp/mt-run.XXXXXX)"
 server_pid=""
 cleanup() {
   [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null
   # The runners and agents still going (a failed test).
   pkill -f "$root/scripts/muse-task.py run" 2>/dev/null || true
   pkill -f "$root/scripts/meta-agent.py" 2>/dev/null || true
-  rm -rf "$tmp"
+  rm -rf "$tmp" "$run"
 }
 trap cleanup EXIT
 
@@ -42,8 +45,8 @@ expect_contains() {
   case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "expected to contain: $3"$'\n'"actual: $2" ;; esac
 }
 
-mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/state" "$tmp/run" "$tmp/cfg/nixbook-shell" "$tmp/data" "$tmp/home"
-export XDG_STATE_HOME="$tmp/state" XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_DATA_HOME="$tmp/data" XDG_CACHE_HOME="$tmp/cache"
+mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/state" "$run" "$tmp/cfg/nixbook-shell" "$tmp/data" "$tmp/home"
+export XDG_STATE_HOME="$tmp/state" XDG_RUNTIME_DIR="$run" XDG_CONFIG_HOME="$tmp/cfg" XDG_DATA_HOME="$tmp/data" XDG_CACHE_HOME="$tmp/cache"
 export HOME="$tmp/home" NIXBOOK_AI_RETRY_DELAY=0.05 NIXBOOK_MUSE_TASK_SPAWN=plain
 unset NIXBOOK_META_AGENT NIXBOOK_SHELL_CONFIG
 
@@ -180,7 +183,7 @@ expect_eq "done: a notification with the summary, Open opening the Tasks list" \
   "$(tail -n1 "$tmp/notify.log")"
 until_dead "$id" || true
 expect_eq "done: the runner gone, its socket too" "false no" \
-  "$(field "$id" .alive) $([ -e "$tmp/run/nixbook-shell/tasks/$id.sock" ] && echo yes || echo no)"
+  "$(field "$id" .alive) $([ -e "$run/nixbook-shell/tasks/$id.sock" ] && echo yes || echo no)"
 first=$(requests taskdone | sed -n 1p)
 expect_contains "agent: the task as the first message, the context first" "$(jq -c '.messages[0].content' <<<"$first")" "CTXBLOCK"
 expect_contains "agent: told it works in the background" "$(jq -r '.system[0].text' <<<"$first")" "in the background"
@@ -199,7 +202,7 @@ expect_eq "approval: what waits in the state" '{"id":"d1","tool":"tasks","summar
   "$(field "$id" '.approval | tojson')"
 wait_notify 'Muse needs you: tasks (id=t1, action=delete)'
 expect_contains "approval: the user notified" "$(tail -n1 "$tmp/notify.log")" "Muse needs you: tasks (id=t1, action=delete)"
-expect_eq "approval: the socket only this user's" "600" "$(stat -c %a "$tmp/run/nixbook-shell/tasks/$id.sock")"
+expect_eq "approval: the socket only this user's" "600" "$(stat -c %a "$run/nixbook-shell/tasks/$id.sock")"
 expect_eq "approval: nothing run yet" "" "$(cat "$tmp/desk-calls.log")"
 expect_eq "approval: the wrong step refused" '{"error":"no such step waits for an answer"}' "$(mt approve "$id" nope yes || true)"
 expect_eq "approval: allowed" '{"ok":true}' "$(mt approve "$id" d1 yes)"
@@ -315,7 +318,7 @@ NIXBOOK_AI_SMALL_MODEL=small-model mt start "AGENTTEST:taskdone with the provide
 if until_status "$id" "done"; then pass "plain spawn: the agent has the runner's provider settings"; else
   fail "plain spawn: the agent has the runner's provider settings" "$(
     mt show "$id"
-    cat "$tmp/run/nixbook-shell/tasks/$id.log" 2>/dev/null
+    cat "$run/nixbook-shell/tasks/$id.log" 2>/dev/null
   )"
 fi
 until_dead "$id" || true
@@ -330,7 +333,7 @@ id=$(NIXBOOK_META_AGENT="$tmp/bin/broken-agent" mt start "AGENTTEST:taskdone doo
 until_status "$id" failed || fail "a failing agent: failed" "$(mt show "$id")"
 expect_eq "a failing agent: its stderr in the task's error" "the agent stopped (exit 1): nixbook-meta-agent: no model provider with an API key" \
   "$(field "$id" .error)"
-expect_contains "a failing agent: and in the task's log" "$(cat "$tmp/run/nixbook-shell/tasks/$id.log")" "no model provider with an API key"
+expect_contains "a failing agent: and in the task's log" "$(cat "$run/nixbook-shell/tasks/$id.log")" "no model provider with an API key"
 until_dead "$id" || true
 mv "$tmp/provider.ok" "$tmp/bin/nixbook-model-provider"
 
