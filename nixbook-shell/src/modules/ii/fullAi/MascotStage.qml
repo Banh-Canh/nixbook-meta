@@ -24,6 +24,16 @@ Item {
 
     property string mood: "idle"
     property string line: ""
+    // "say" (a speech bubble with its tail), "thought" (a dimmer cloud in
+    // italics, little circles trailing to the mascot), "heard" (the user's
+    // words, in quotes), "status" (how to talk to it).
+    property string lineKind: "say"
+    // Yes / No under a question (FullAi.yesNo): `chose(yes)` on a click;
+    // `choicesArea` is what the overlay lets clicks through to.
+    property bool yesNo: false
+    signal chose(bool yes)
+    readonly property Item choicesArea: choices
+    readonly property bool thinking: root.lineKind === "thought" || root.lineKind === "status"
     property string hint: ""
     property real level: 0
     property bool talking: false
@@ -246,17 +256,37 @@ Item {
         visible: opacity > 0
         opacity: root.line.length > 0 ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 180 } }
-        width: Math.min(maxW, balloonText.implicitWidth + 28)
-        height: balloonText.implicitHeight + 20
-        radius: 16
-        color: Qt.alpha(Appearance.m3colors.m3surfaceContainerHigh, 0.97)
-        border.width: 2
-        border.color: mascot.outline
+        width: Math.min(maxW, Math.max(balloonText.implicitWidth, root.yesNo ? choices.implicitWidth : 0) + 28)
+        height: balloonText.implicitHeight + 20 + (root.yesNo ? choices.implicitHeight + 8 : 0)
+        radius: root.thinking ? height / 2 : 16
+        color: root.lineKind === "heard" ? Qt.alpha(Appearance.m3colors.m3secondaryContainer, 0.95)
+            : root.thinking ? Qt.alpha(Appearance.m3colors.m3surfaceContainer, 0.88)
+            : Qt.alpha(Appearance.m3colors.m3surfaceContainerHigh, 0.97)
+        border.width: root.thinking ? 1 : root.lineKind === "ask" ? 3 : 2
+        border.color: root.thinking ? Qt.alpha(mascot.outline, 0.45)
+            : root.lineKind === "ask" ? Appearance.colors.colPrimary : mascot.outline
+        Behavior on color { ColorAnimation { duration: 160 } }
         x: Math.max(8, Math.min(root.width - width - 8, onLeft ? actor.x - width - 14 : actor.x + root.mw + 14))
         y: Math.max(8, Math.min(root.height - height - 8, actor.y + 10))
         transformOrigin: onLeft ? Item.Right : Item.Left
-        // The tail, towards the mascot.
+        // A thought: little circles trailing to the mascot, no tail.
+        Repeater {
+            model: root.thinking ? 2 : 0
+            delegate: Rectangle {
+                required property int index
+                width: index === 0 ? 10 : 6
+                height: width
+                radius: width / 2
+                color: balloon.color
+                border.width: 1
+                border.color: balloon.border.color
+                y: balloon.height - 6 + index * 8
+                x: balloon.onLeft ? balloon.width - 6 + index * 9 : -4 - index * 9 - width / 2
+            }
+        }
+        // The tail, towards the mascot (speech only).
         Rectangle {
+            visible: !root.thinking
             width: 14
             height: 14
             rotation: 45
@@ -276,9 +306,50 @@ Item {
             wrapMode: Text.Wrap
             maximumLineCount: 6
             elide: Text.ElideRight
-            font.pixelSize: Appearance.font.pixelSize.normal
-            color: Appearance.m3colors.m3onSurface
-            onTextChanged: if (balloonText.text.length > 0) pop.restart()
+            font.pixelSize: root.lineKind === "say" ? Appearance.font.pixelSize.normal : Appearance.font.pixelSize.small
+            font.italic: root.lineKind !== "say"
+            color: root.lineKind === "heard" ? Appearance.m3colors.m3onSecondaryContainer
+                : root.thinking ? Qt.alpha(Appearance.m3colors.m3onSurface, 0.72) : Appearance.m3colors.m3onSurface
+            // A pop when a new kind of line appears, not at every sentence
+            // revealed as it is said.
+            property string lastKind: ""
+            onTextChanged: {
+                if (balloonText.text.length > 0 && balloonText.lastKind !== root.lineKind) pop.restart();
+                balloonText.lastKind = balloonText.text.length > 0 ? root.lineKind : "";
+            }
+        }
+        Row {
+            id: choices
+            visible: root.yesNo
+            spacing: 8
+            x: 14
+            y: balloonText.y + balloonText.height + 8
+            Repeater {
+                model: [true, false]
+                delegate: Rectangle {
+                    id: chip
+                    required property bool modelData
+                    width: chipText.implicitWidth + 24
+                    height: chipText.implicitHeight + 10
+                    radius: height / 2
+                    color: chipMouse.containsMouse ? Appearance.colors.colPrimaryHover
+                        : chip.modelData ? Appearance.colors.colPrimary : Appearance.colors.colLayer2
+                    StyledText {
+                        id: chipText
+                        anchors.centerIn: parent
+                        text: chip.modelData ? Translation.tr("Yes") : Translation.tr("No")
+                        color: chip.modelData ? Appearance.colors.colOnPrimary : Appearance.colors.colOnLayer2
+                        font.pixelSize: Appearance.font.pixelSize.small
+                    }
+                    MouseArea {
+                        id: chipMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.chose(chip.modelData)
+                    }
+                }
+            }
         }
         SequentialAnimation {
             id: pop

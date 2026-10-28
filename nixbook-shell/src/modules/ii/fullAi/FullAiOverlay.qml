@@ -11,9 +11,10 @@ import Quickshell.Wayland
 /**
  * Full AI mode's layer (services/FullAi.qml): over every screen, a soft
  * glow at the edges saying the AI is listening, and the mascot
- * (MascotStage) on the screen the mode was started on. It takes neither
- * keys nor clicks: the user keeps working, the agent's own clicks and keys
- * go through too. While the agent takes a screenshot, it vanishes.
+ * (MascotStage) on the screen the mode was started on. It takes no keys and
+ * no clicks but on the balloon's Yes / No while a question waits: the user
+ * keeps working, the agent's own clicks and keys go through too. While the
+ * agent takes a screenshot, it vanishes.
  */
 Scope {
     id: root
@@ -35,7 +36,12 @@ Scope {
             // Never in the way: no keys, every click through to the apps
             // (the user keeps their desktop; Mod+Shift+T leaves the mode).
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-            mask: Region {}
+            // Clicks only on the balloon's Yes / No while a question waits.
+            property Region noInput: Region {}
+            property Region choicesInput: Region {
+                item: stageLoader.item ? stageLoader.item.choicesArea : null
+            }
+            mask: FullAi.yesNo && stageLoader.item && !MakeWay.capture ? window.choicesInput : window.noInput
 
             Item {
                 id: keys
@@ -75,6 +81,9 @@ Scope {
                         active: true
                         mood: FullAi.mood
                         line: FullAi.line
+                        lineKind: FullAi.lineKind
+                        yesNo: FullAi.yesNo
+                        onChose: yes => FullAi.answer(yes)
                         hint: FullAi.hint
                         level: Voice.level
                         talking: FullAi.mood === "speaking"

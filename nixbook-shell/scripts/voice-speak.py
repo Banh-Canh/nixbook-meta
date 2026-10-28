@@ -417,10 +417,14 @@ def main(argv):
 
         failed = []
 
+        # Each sentence told on stdout as it starts playing ({"part": N,
+        # "of": M}): the shell shows the words as they are said.
+        said = sentences(text)
+
         def maker():
             try:
-                for s in sentences(text):
-                    ready.put(sp.make(s))
+                for n, s in enumerate(said):
+                    ready.put((sp.make(s), n))
             except RuntimeError as e:
                 if not sp.stopped:
                     failed.append(str(e))
@@ -428,9 +432,11 @@ def main(argv):
 
         threading.Thread(target=maker, daemon=True).start()
         while True:
-            wav = ready.get()
-            if wav is None or sp.stopped:
+            item = ready.get()
+            if item is None or sp.stopped:
                 break
+            wav, n = item
+            print(json.dumps({"part": n + 1, "of": len(said)}), flush=True)
             try:
                 sp.run(["pw-play", "--media-role=Assistant", wav])
             except RuntimeError as e:

@@ -196,6 +196,8 @@ Singleton {
         if (!rest.trim()) return false;
         root._remember(rest);
         root.stopSpeaking(false);
+        speaker.part = 0;
+        speaker.total = 0;
         speaker.text = rest;
         speaker.wanted = true;
         speaker.reopen = root._holdMic();
@@ -294,6 +296,19 @@ Singleton {
     property int revealUpto: 0
     property bool revealAll: true
     readonly property bool revealing: root.streamTurn && root.streamedTurn && !root.revealAll && root.streamTarget !== null
+    // What is being said out loud so far (both speakers), for the mascot's
+    // balloon: null when it says nothing, "" before its first sentence
+    // plays — the words never ahead of the voice.
+    readonly property var saying: {
+        if (streamSpeaker.running && root.streamTarget)
+            return root._plain(root.streamTarget).slice(0, root.revealUpto);
+        if (speaker.running) {
+            if (speaker.total <= 0) return "";
+            const parts = root._sentencesOf(speaker.text);
+            return parts.slice(0, Math.ceil(speaker.part / speaker.total * parts.length)).join("").trim();
+        }
+        return null;
+    }
     // The text of `m` to show now, or null to show it all.
     function shownText(m) {
         if (!root.revealing || m !== root.streamTarget) return null;
@@ -475,6 +490,24 @@ Singleton {
         property bool wanted: true
         // The microphone was closed for it: opened again after.
         property bool reopen: false
+        // The sentence playing (its {"part", "of"} lines): what is said so
+        // far, for the mascot's balloon.
+        property int part: 0
+        property int total: 0
+        stdout: SplitParser {
+            onRead: data => {
+                let o = null;
+                try {
+                    o = JSON.parse(data);
+                } catch (e) {
+                    return;
+                }
+                if (typeof o?.part === "number" && typeof o?.of === "number") {
+                    speaker.part = o.part;
+                    speaker.total = o.of;
+                }
+            }
+        }
         command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" -- "$2"', "_",
             root.voiceStyle, speaker.text]
         stderr: StdioCollector { id: speakerErr }

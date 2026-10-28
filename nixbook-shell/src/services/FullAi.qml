@@ -56,21 +56,63 @@ Singleton {
         return Voice.listening ? "listening" : "idle";
     }
     // The mascot's balloon: the words heard, the step under way, the answer.
-    readonly property string line: {
-        if (!root.active) return "";
-        if (root.reacting) return root.reactingLine;
-        if (Voice.listening && Voice.partial.length > 0) return `“${Voice.partial}”`;
-        if (QuickAi.pending)
-            return Translation.tr("May I %1? Say yes or no.").arg(QuickAi.pending.tool.replace(/_/g, " "));
+    // A question waiting for the user, shown in the balloon until answered
+    // (the bubble needn't be called up): the step it asks leave for (Yes /
+    // No answer it), or its last answer asking back (a clarifying
+    // question, or ending with "?"; a yes/no one gets Yes / No too).
+    property var oldMessages: ({})
+    readonly property var question: {
+        if (!root.active) return null;
+        const p = QuickAi.pending;
+        if (p) return { text: Translation.tr("May I %1?").arg(String(p.tool ?? "").replace(/_/g, " ")
+                + (p.summary ? ` (${p.summary})` : "")), yesNo: true, approval: true };
+        if (QuickAi.busy || Initiative.thinking) return null;
+        const chat = Initiative.chat;
+        const ids = chat?.messageIDs ?? [];
+        const id = ids.length > 0 ? ids[ids.length - 1] : "";
+        const m = id ? chat.messageByID[id] : null;
+        if (!m || m.role !== "assistant" || root.oldMessages[id]) return null;
+        const t = Voice._plain(m).replace(/\s+/g, " ").trim();
+        if (!m.clarify && !/\?\s*$/.test(t)) return null;
+        // The question itself: its last sentence (the rest was said).
+        const parts = t.match(/[^.!?…]+[.!?…]*/g) ?? [t];
+        const q = (parts[parts.length - 1] ?? t).trim();
+        const yesNo = !m.clarify && /^(do|does|did|should|shall|can|could|would|will|is|are|want|may|voulez|veux|dois|est-ce|faut-il|puis-je|souhaites|soll|willst|möchtest|kann|darf|ist|sind)\b/i.test(q)
+            || /\bkhông\s*\?$/i.test(q);
+        return { text: q.slice(0, 300), yesNo: yesNo, approval: false };
+    }
+    function answer(yes) {
+        const q = root.question;
+        if (!q) return;
+        if (q.approval) QuickAi.approve(yes);
+        else Initiative.reply(yes ? Translation.tr("Yes") : Translation.tr("No"));
+    }
+    // The balloon: what it says ("say": a speech bubble, the words as they
+    // are said — never ahead of the voice), what it thinks or does
+    // ("thought": a thought cloud), what it hears ("heard": the user's words)
+    // and how to talk to it ("status").
+    readonly property var balloon: {
+        if (!root.active) return { text: "", kind: "status" };
+        const saying = Voice.saying;
+        if (Voice.listening && Voice.partial.length > 0) return { text: `“${Voice.partial}”`, kind: "heard" };
+        if (saying !== null && saying !== undefined)
+            return saying.length > 0 ? { text: saying, kind: "say" } : { text: "…", kind: "thought" };
+        if (root.question) return { text: root.question.text, kind: "ask" };
+        if (root.reacting) return { text: root.reactingLine, kind: "thought" };
         if (QuickAi.busy) {
             const step = [...QuickAi.steps].reverse().find(s => s.status === "run") ?? QuickAi.steps[QuickAi.steps.length - 1];
-            if (step) return `${step.tool.replace(/_/g, " ")}${step.summary ? " · " + step.summary : ""}…`;
-            return Translation.tr("Thinking…");
+            if (step) return { text: `${step.tool.replace(/_/g, " ")}${step.summary ? " · " + step.summary : ""}…`, kind: "thought" };
+            return { text: Translation.tr("Thinking…"), kind: "thought" };
         }
-        if (root.said.length > 0) return root.said;
-        if (!root.micOn) return Translation.tr("Mic off. Mod+T to talk to me again.");
-        return Translation.tr("I'm listening. What should I do?");
+        if (root.said.length > 0) return { text: root.said, kind: "say" };
+        if (!root.micOn) return { text: Translation.tr("Mic off. Mod+T to talk to me again."), kind: "status" };
+        return { text: Translation.tr("I'm listening. What should I do?"), kind: "status" };
     }
+    readonly property string line: root.balloon.text
+    readonly property string lineKind: root.balloon.kind
+    // Yes / No on the balloon while a yes/no question waits (clickable: the
+    // overlay takes clicks there only).
+    readonly property bool yesNo: root.lineKind === "ask" && (root.question?.yesNo ?? false)
     readonly property string hint: Translation.tr("Mod+Shift+T: leave Full AI · Mod+T: mic %1").arg(root.micOn ? Translation.tr("off") : Translation.tr("on"))
 
     // A new line in the balloon, said out loud in its cute voice (Voice.speak,
@@ -91,6 +133,10 @@ Singleton {
         root.screenName = WM.focusedMonitor?.name ?? Quickshell.screens[0]?.name ?? "";
         root.micOn = true;
         root.said = "";
+        // What was asked before the mode started isn't asked now.
+        const old = {};
+        for (const id of (Initiative.chat?.messageIDs ?? [])) old[id] = true;
+        root.oldMessages = old;
         root.active = true;
         Voice.session = true;
         // Out of sight unless wanted (ai.quick.bubble): the mascot's balloon.
