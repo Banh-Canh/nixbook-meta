@@ -1403,9 +1403,10 @@ event queue, for every AI feature.
   `--context-for bubble`, `--confirm <ai.quick.confirm>`, `--report`,
   `--lazy-mcp 12`, `--learn`, `--resolve` / `--verify` per
   `ai.agent.resolve` / `ai.agent.verify`, `--core-tools` per
-  `ai.agent.coreTools`, `--tool-result-max 6000 --max-tokens 1200`, and
+  `ai.agent.coreTools`, `--tool-result-max 6000` (no output ceiling of its own: the
+  prompt keeps answers short), and
   `--model <ai.routing.quick>`; the side panel the same with
-  `--context-for chat`, `--max-tokens 8000`, its own model and no confirm/report; the system
+  `--context-for chat`, its own model and no confirm/report; the system
   prompt masked through `DesktopHelper` beforehand, the script masking it
   itself only as a fallback). `approval_request` events are
   the bubble's Allow / No chips, the report its REPORT brief, `answer` shows

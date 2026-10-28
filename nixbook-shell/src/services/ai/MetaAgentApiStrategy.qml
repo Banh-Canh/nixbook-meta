@@ -61,6 +61,10 @@ QtObject {
     property int textRaw: -1
     property int textShown: -1
     property string lastText: ""
+    // Where the reply streaming now began: a reply the output limit cut
+    // off is taken back (`retract`) and asked again.
+    property int replyRaw: -1
+    property int replyShown: -1
 
     function reset() {
         toolCalls = ({});
@@ -79,6 +83,8 @@ QtObject {
         textRaw = -1;
         textShown = -1;
         lastText = "";
+        replyRaw = -1;
+        replyShown = -1;
     }
     // Case, punctuation and spacing aside.
     function _sameText(a, b) {
@@ -246,6 +252,11 @@ QtObject {
         if (ev.type === "stream_event") {
             // Text and thinking as they come (--include-partial-messages).
             const e = ev.event ?? {};
+            if (e.type === "message_start") {
+                flush(message);
+                replyRaw = message.rawContent.length;
+                replyShown = message.content.length;
+            }
             if (e.type === "content_block_start" && e.content_block?.type === "thinking")
                 append(message, "\n\n<think>\n");
             else if (e.type === "content_block_start" && e.content_block?.type === "text") {
@@ -283,6 +294,16 @@ QtObject {
                     _terminalRun(message, block.tool_use_id, resultText(block.content), block.is_error === true);
                 append(message, `\n\n<think>\n${call}\n\n${block.is_error ? "⚠ " : "→ "}${text}\n</think>\n\n`);
             }
+        } else if (ev.type === "retract") {
+            // The reply was cut off by the output limit: what it showed goes.
+            if (replyRaw >= 0) {
+                held = "";
+                inReport = false;
+                message.rawContent = message.rawContent.slice(0, replyRaw);
+                message.content = message.content.slice(0, replyShown);
+            }
+            textRaw = -1;
+            textShown = -1;
         } else if (ev.type === "tool_started") {
             // Started as soon as its call was complete, the message still
             // streaming (no approval needed).

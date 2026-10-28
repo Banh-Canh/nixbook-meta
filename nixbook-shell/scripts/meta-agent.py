@@ -73,7 +73,8 @@ to do behind the options below (all off by default).
                              model (MCP tools: 6000 by default; the built-ins
                              keep their own limits unless it is given); JSON
                              sent compact
-  --max-tokens N             the answer's limit (16000; the bubble 1200)
+  --max-tokens N             the reply's limit (16000; a tool call it cuts off
+                             is never run: asked again, once with twice the room)
   --learn                    a turn that acted: its episode {task, app,
                              actions} to `nixbook-desktop-mcp episode -`
   --resolve                  a request that may be ambiguous (a local
@@ -161,6 +162,7 @@ BOOL_FLAGS = {"-p", "--print", "--verbose", "--include-partial-messages", "--str
               "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools"}
 
 MAX_TOKENS = int(os.environ.get("NIXBOOK_AI_MAX_TOKENS") or 16000)
+CUT_MAX_TOKENS = 32000  # the most a reply cut by the output limit is asked again with
 TOOL_OUTPUT_MAX = 60000
 # What an MCP tool's answer may be for the model (--tool-result-max).
 TOOL_RESULT_MAX = 6000
@@ -2036,7 +2038,11 @@ class Agent:
         except nixbook_ai.AIError as e:
             raise AgentError(str(e))
         self.count_usage(msg)
-        content = msg["content"] or [{"type": "text", "text": ""}]
+        # A tool call the output limit cut off is neither shown nor kept: it
+        # never runs (loop() asks for it again).
+        cut = set(msg.get("cut") or [])
+        content = [b for b in msg["content"] if not (b.get("type") == "tool_use" and b.get("id") in cut)] \
+            or [{"type": "text", "text": ""}]
         if record:
             self.emit({"type": "assistant", "message": {"id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message",
                                                         "role": "assistant", "model": msg.get("model") or self.model,
@@ -2648,6 +2654,7 @@ class Agent:
         error, structured, turns). Tool calls start while their message
         streams (unless --json-schema: the answer may come with them)."""
         subtype, error, structured, turns = "success", False, None, 0
+        budget, regrown = None, False
         while True:
             if turns >= limit:
                 if self.schema:
@@ -2659,7 +2666,32 @@ class Agent:
                 break
             turns += 1
             early = None if self.schema else Early(self)
-            msg = self.call(early=early)
+            msg = self.call(early=early, max_tokens=budget)
+            cut = set(msg.get("cut") or [])
+            cut_note = ""
+            if cut:
+                # Tool calls the output limit cut off: never run (their input
+                # is incomplete). With whole calls beside them, those run
+                # and the model is told to send the rest again; alone, the
+                # reply is taken back (the chat drops what it showed) and
+                # asked again once with twice the room.
+                last = self.messages[-1]
+                last["content"] = [b for b in last["content"]
+                                   if not (b.get("type") == "tool_use" and b.get("id") in cut)] \
+                    or [{"type": "text", "text": ""}]
+                msg = dict(msg, content=[b for b in msg["content"]
+                                         if not (b.get("type") == "tool_use" and b.get("id") in cut)])
+                if not any(b.get("type") == "tool_use" for b in msg["content"]):
+                    if not regrown:
+                        regrown = True
+                        budget = min(CUT_MAX_TOKENS, 2 * (budget or self.opts.max_tokens))
+                        self.messages.pop()
+                        self.emit({"type": "retract"})
+                        turns -= 1
+                        continue
+                else:
+                    cut_note = ("(A tool call of yours was cut off by the output limit and not run: send it "
+                                "again, in smaller parts if it is long.)")
             texts = [b.get("text", "") for b in msg["content"] if b.get("type") == "text"]
             if "".join(texts).strip():
                 result = "".join(texts).strip()
@@ -2693,6 +2725,8 @@ class Agent:
                 break
             self.save()
             results = self.run_tools(calls, early=early)
+            if cut_note:
+                results = results + [{"type": "text", "text": cut_note}]
             self.messages.append({"role": "user", "content": results})
             self.emit({"type": "user", "message": {"role": "user", "content": results}, "parent_tool_use_id": None})
             self.save()

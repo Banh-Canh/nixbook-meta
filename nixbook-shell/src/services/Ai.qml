@@ -776,11 +776,13 @@ Singleton {
         args.push("--context-for", bubble ? "bubble" : "chat", "--lazy-mcp", "12", "--learn");
         // Speed (ai.agent.coreTools): the desktop server's ~25 core tools up
         // front, the others behind one open_tools__desktop_<group> tool per
-        // group, loaded when called; tool results sent to the model capped;
-        // the answer's length sized to where it is shown (the bubble's one
-        // to three sentences, the panel's longer ones).
+        // group, loaded when called; tool results sent to the model capped.
+        // No output ceiling of its own (meta-agent's 16000 stays the safety
+        // net): the prompt keeps the answers short, and the ceiling also
+        // counts the thinking and the tools' inputs — the bubble's 1200 cut
+        // a memory rewrite off ("the answer was cut").
         if (desktop && (Config.options.ai.agent.coreTools ?? true)) args.push("--core-tools");
-        args.push("--tool-result-max", "6000", "--max-tokens", bubble ? "1200" : "8000");
+        args.push("--tool-result-max", "6000");
         if (Config.options.ai.agent.resolve ?? true) args.push("--resolve");
         if (Config.options.ai.agent.verify ?? true) args.push("--verify");
         // The trust ladder (ai.autonomy.trust): each class of action asked

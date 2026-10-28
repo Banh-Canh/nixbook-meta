@@ -15,7 +15,8 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
     resolver), the others the steps. A reply object may also carry
     "delay" (seconds before answering) and "hold" (seconds after its last
     content block, before message_stop: a tool call complete while the
-    message still streams);
+    message still streams); a tool_use block with "cut": true streams
+    only half its input (the output limit reached; stop_reason max_tokens);
   - text with RETRY429:N: an HTTP 429 (retry-after 0) the first N times;
   - GET /page: an HTML page; GET /search?q=: a search engine's results page;
   - tools offered: a tool call (launch_app firefox, or close_window 7 when
@@ -82,7 +83,8 @@ def events_of(content, stop_reason, model):
                         "content_block": {"type": "tool_use", "id": b["id"], "name": b["name"], "input": {}}})
             raw = json.dumps(b.get("input") or {})
             half = len(raw) // 2
-            for piece in (raw[:half], raw[half:]):
+            # "cut": the output limit reached halfway through its input.
+            for piece in ((raw[:half],) if b.get("cut") else (raw[:half], raw[half:])):
                 out.append({"type": "content_block_delta", "index": i,
                             "delta": {"type": "input_json_delta", "partial_json": piece}})
         out.append({"type": "content_block_stop", "index": i})

@@ -753,6 +753,26 @@ out=$(turn "AGENTTEST:streamask delete it" '{"type": "approval", "id": "d1", "al
 expect_eq "streamed tools: a risky one waits for the message's end and the user" "message_stop approval_request" \
   "$(jq -r 'if .type == "approval_request" then "approval_request" elif .type == "stream_event" and .event.type == "message_stop" then "message_stop" else empty end' <<<"$out" | head -n2 | paste -sd' ')"
 expect_eq "streamed tools: denied, never run" "" "$(cat "$tmp/desk-calls.log")"
+# The output limit reached halfway through a tool call: its input is
+# incomplete, so it never runs (it used to run with {}). Alone: the reply is
+# taken back (retract) and asked again once with twice the room.
+script cutalone '[{"content": [{"type": "text", "text": "Saving."}, {"type": "tool_use", "id": "c1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}, "cut": true}], "stop_reason": "max_tokens"}]'
+: >"$tmp/desk-calls.log"
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:cutalone save it" | agent -p --output-format stream-json --include-partial-messages --mcp-config "$desk_config")
+expect_eq "cut tool call: never run" "" "$(cat "$tmp/desk-calls.log")"
+expect_eq "cut tool call: never shown as a step" "" "$(jq -r 'select(.type == "tool_started" or .type == "assistant") | .message.content[]? | select(.type == "tool_use") | .id' <<<"$out")"
+expect_eq "cut alone: the reply taken back once" "1" "$(jq -c 'select(.type == "retract")' <<<"$out" | wc -l | tr -d ' ')"
+expect_eq "cut alone: asked again with twice the room" "16000 32000" "$(requests cutalone | jq -r .max_tokens | paste -sd' ')"
+# Beside whole calls: those run, the model is told to send the cut one again.
+script cutpair '[{"content": [{"type": "tool_use", "id": "p1", "name": "mcp__desktop__list_windows", "input": {}}, {"type": "tool_use", "id": "p2", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}, "cut": true}], "stop_reason": "max_tokens"},
+  [{"type": "text", "text": "Done."}]]'
+: >"$tmp/desk-calls.log"
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:cutpair look then open" | agent -p --output-format stream-json --include-partial-messages --mcp-config "$desk_config")
+expect_eq "cut beside whole calls: the whole one ran, the cut one not" '"list_windows"' "$(jq -c .name "$tmp/desk-calls.log")"
+expect_contains "cut beside whole calls: told to send it again" "$(requests cutpair | tail -n1 | jq -c '.messages[-1].content')" "cut off by the output limit"
+expect_eq "cut beside whole calls: the turn goes on" "Done." "$(jq -r 'select(.type == "result") | .result' <<<"$out")"
 
 # -- The prompt cache and the history sent -------------------------------------------------------------
 : >"$tmp/requests.log"

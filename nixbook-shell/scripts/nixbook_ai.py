@@ -532,7 +532,9 @@ def normalize_message(msg):
         elif t == "redacted_thinking":
             content.append({"type": "redacted_thinking", "data": b.get("data", "")})
     return {"content": content, "stop_reason": msg.get("stop_reason") or "end_turn",
-            "usage": msg.get("usage") or {}, "model": msg.get("model") or ""}
+            "usage": msg.get("usage") or {}, "model": msg.get("model") or "",
+            # The tool calls the output limit cut off (their input incomplete).
+            **({"cut": list(msg["cut"])} if msg.get("cut") else {})}
 
 
 def synthesize(msg, relay, on_block=None):
@@ -571,7 +573,7 @@ def _block_done(on_block, b):
 def read_sse(resp, relay, on_block=None):
     """A streamed Messages API reply: the whole message, each event relayed,
     each tool call to on_block as soon as its block ends (its input whole)."""
-    blocks, partial = {}, {}
+    blocks, partial, cut = {}, {}, set()
     msg = {"stop_reason": "end_turn", "usage": {}, "model": ""}
     data_lines = []
 
@@ -608,7 +610,12 @@ def read_sse(resp, relay, on_block=None):
                 try:
                     b["input"] = json.loads(raw) if raw.strip() else (b.get("input") or {})
                 except ValueError:
+                    # Cut off by the output limit: never run on an empty input.
                     b["input"] = {}
+                    if not b.get("id"):
+                        b["id"] = f"toolu_{uuid.uuid4().hex[:20]}"
+                    cut.add(b["id"])
+                    return
                 if on_block:
                     if not b.get("id"):
                         b["id"] = f"toolu_{uuid.uuid4().hex[:20]}"
@@ -646,7 +653,11 @@ def read_sse(resp, relay, on_block=None):
                 b["input"] = json.loads(partial.get(i) or "{}")
             except ValueError:
                 b["input"] = {}
+                if not b.get("id"):
+                    b["id"] = f"toolu_{uuid.uuid4().hex[:20]}"
+                cut.add(b["id"])
     msg["content"] = [blocks[i] for i in sorted(blocks)]
+    msg["cut"] = sorted(cut)
     return normalize_message(msg)
 
 
