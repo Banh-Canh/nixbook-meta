@@ -202,6 +202,26 @@ DENIED = "The user said no."
 NO_ONE_TO_ASK = ("Not done: this step needs the user's OK and there is no one to ask here. Don't retry it another "
                  "way; say it needs them.")
 CHECK_ONLY = "Not now: this round only checks, with tools that read. Don't change anything."
+# A name made up for a hidden person (--privacy): the user asked for
+# ⟦Person 7 first⟧ and the model searched Discord, the contacts and its
+# memory for "Guilloux", a name nobody said; it could as well have written
+# to the wrong person. While the user's message names a hidden person, a
+# people tool (by its name) whose who/query argument (by its key) holds a
+# word no message, tool result or the system prompt has, and no placeholder,
+# is refused before it runs: the placeholder goes as it is, the tool gets
+# the real name.
+PEOPLE_TOOL = re.compile(r"discord|slack|contact|conversation|message|sms|mail|people|person|user|member|friend|"
+                         r"phone|whatsapp|signal|telegram|matrix|chat|recall|remember|dm(?:s)?\b", re.I)
+PEOPLE_ARG = re.compile(r"^(?:query|q|search|name|names|to|recipient|recipients|user|username|who|contact|"
+                        r"person|people|target|member|with|from)$", re.I)
+HIDDEN_PERSON = re.compile(r"⟦(?:Person \d+|User)(?: [a-z]+)?⟧")
+NAME_WORD = re.compile(r"[^\W\d_]{3,}")
+
+
+def invented(hidden):
+    return (f"Not run: that name was never said in this conversation, so it isn't who {hidden} is — a guessed "
+            f"name finds nobody, or the wrong person. Use the placeholder exactly as it is (e.g. \"{hidden}\"): "
+            "the tool gets the real name. Never write a name for a placeholder.")
 # Quick AI's wording (its AGENT_SYSTEM), for --report.
 REPORT_PROMPT = (
     "Only when a task of several steps partly failed, or something now needs the user, add after your answer a "
@@ -1835,6 +1855,12 @@ def user_line(d):
     return None
 
 
+def fold_name(text):
+    """Lower case, accents off: Zoé and zoe are one name."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+
+
 def content_text(content):
     if isinstance(content, str):
         return content
@@ -2168,6 +2194,9 @@ class Agent:
         name, args = call.get("name", ""), call.get("input") or {}
         if name == VERIFY:
             return "run", None, ""
+        why = self.made_up_name(name, args)
+        if why:
+            return "refuse", why, "refused"
         reads = self.reads(name, args)
         if checking and not reads:
             return "refuse", CHECK_ONLY, "refused"
@@ -2206,6 +2235,34 @@ class Agent:
         if allowed:
             return None, ""
         return DENIED, "denied"
+
+    def made_up_name(self, name, args):
+        """Why a people tool's call names someone nobody said (PEOPLE_TOOL),
+        None when it doesn't."""
+        if not self.opts.privacy or not isinstance(args, dict) or not PEOPLE_TOOL.search(name):
+            return None
+        hidden = sorted(dict.fromkeys(HIDDEN_PERSON.findall(self.last_turn_text())), key=lambda t: t.startswith("⟦User"))
+        if not hidden:
+            return None
+        values = [v for k, v in args.items() if isinstance(v, str) and PEOPLE_ARG.match(k)]
+        if not values or any("⟦" in v for v in values):
+            return None
+        # What was said: the system prompt, the user's messages and the
+        # tools' results (the model's own words aren't a source).
+        known = [self.system if isinstance(self.system, str) else json.dumps(self.system, ensure_ascii=False)]
+        for m in self.messages:
+            if m.get("role") != "user":
+                continue
+            for b in as_blocks(m.get("content")):
+                if b.get("type") == "text":
+                    known.append(str(b.get("text") or ""))
+                elif b.get("type") == "tool_result" and not b.get("is_error"):
+                    c = b.get("content")
+                    known.append(c if isinstance(c, str) else content_text(c))
+        said = fold_name("\n".join(known))
+        if all(fold_name(w) in said for v in values for w in NAME_WORD.findall(v)):
+            return None
+        return invented(hidden[0])
 
     def gate(self, call, checking, step=None):
         """None when the call may run, else why not (its tool_result)."""

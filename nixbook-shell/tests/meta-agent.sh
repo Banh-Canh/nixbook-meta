@@ -103,7 +103,8 @@ import json, sys, time
 log = sys.argv[1]
 tools = [{"name": "echo", "description": "Echo the text", "inputSchema": {"$schema": "x", "type": "object", "properties": {"text": {"type": "string"}}}},
          {"name": "look", "description": "An image", "inputSchema": {"type": "object", "properties": {}}},
-         {"name": "slow", "description": "Takes its time", "inputSchema": {"type": "object", "properties": {}}}]
+         {"name": "slow", "description": "Takes its time", "inputSchema": {"type": "object", "properties": {}}},
+         {"name": "contacts", "description": "Find a contact", "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}}}]
 for line in sys.stdin:
     msg = json.loads(line)
     if "id" not in msg:
@@ -119,7 +120,9 @@ for line in sys.stdin:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
         if p["name"] == "slow":
             time.sleep(4)
-        if p["name"] == "look":
+        if p["name"] == "contacts":
+            res = {"content": [{"type": "text", "text": "contacts: " + p["arguments"].get("query", "")}]}
+        elif p["name"] == "look":
             res = {"content": [{"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}]}
         else:
             res = {"content": [{"type": "text", "text": "echo: " + p["arguments"].get("text", "")}]}
@@ -358,7 +361,7 @@ script mcp '[[{"type": "tool_use", "id": "m1", "name": "mcp__stub__echo", "input
 : >"$tmp/requests.log"
 out=$(echo "AGENTTEST:mcp" | agent -p --output-format stream-json --strict-mcp-config --mcp-config "$mcp_config" --privacy)
 first=$(requests mcp | head -n1)
-expect_eq "mcp: its tools, as mcp__server__tool" '["mcp__stub__echo","mcp__stub__look","mcp__stub__slow"]' "$(jq -c '[.tools[].name]' <<<"$first")"
+expect_eq "mcp: its tools, as mcp__server__tool" '["mcp__stub__echo","mcp__stub__look","mcp__stub__slow","mcp__stub__contacts"]' "$(jq -c '[.tools[].name]' <<<"$first")"
 expect_eq "mcp: no schema dialect key" "null" "$(jq -c '.tools[0].input_schema["$schema"]' <<<"$first")"
 expect_contains "mcp: its instructions in the system prompt" "$(jq -c .system <<<"$first")" "STUBINSTRUCTIONS"
 expect_eq "mcp: in the init event" '["connected"]' "$(jq -c 'select(.type == "system") | [.mcp_servers[].status]' <<<"$out")"
@@ -366,6 +369,26 @@ expect_eq "privacy: the input unmasked for the server" "Julien says hi" "$(jq -r
 results=$(requests mcp | tail -n1 | jq -c '.messages[-1].content')
 expect_eq "privacy: its result masked for the model" "echo: ⟦Person 1⟧ says hi" \
   "$(jq -r '.[] | select(.tool_use_id == "m1") | .content[0].text' <<<"$results")"
+# A name made up for a hidden person: the user names ⟦Person 1⟧, the model
+# searches "Guilloux" (nobody said it): refused, never run; the placeholder
+# then runs, the tool getting the real name. A name the user gave runs.
+script madeup '[[{"type": "tool_use", "id": "g1", "name": "mcp__stub__contacts", "input": {"query": "Guilloux"}}],
+  [{"type": "tool_use", "id": "g2", "name": "mcp__stub__contacts", "input": {"query": "⟦Person 1⟧"}}], [{"type": "text", "text": "ok"}]]'
+: >"$tmp/mcp-calls.log"
+: >"$tmp/requests.log"
+echo "AGENTTEST:madeup send a dm to ⟦Person 1⟧ on discord" | agent -p --strict-mcp-config --mcp-config "$mcp_config" --privacy >/dev/null
+expect_eq "made-up name: never run, the placeholder then is (the real name)" "Julien" \
+  "$(jq -r 'select(.name == "contacts") | .arguments.query' "$tmp/mcp-calls.log" | paste -sd' ')"
+expect_contains "made-up name: told to use the placeholder" \
+  "$(requests madeup | sed -n 2p | jq -c '.messages[-1].content[0]')" 'that name was never said in this conversation, so it isn'"'"'t who ⟦Person 1⟧ is'
+script givenname '[[{"type": "tool_use", "id": "k1", "name": "mcp__stub__contacts", "input": {"query": "Juju42"}}], [{"type": "text", "text": "ok"}]]'
+: >"$tmp/mcp-calls.log"
+echo "AGENTTEST:givenname send a dm to ⟦Person 1⟧, Juju42 on discord" | agent -p --strict-mcp-config --mcp-config "$mcp_config" --privacy >/dev/null
+expect_eq "made-up name: one the user gave runs" "Juju42" "$(jq -r 'select(.name == "contacts") | .arguments.query' "$tmp/mcp-calls.log")"
+script nomask '[[{"type": "tool_use", "id": "n1", "name": "mcp__stub__contacts", "input": {"query": "Guilloux"}}], [{"type": "text", "text": "ok"}]]'
+: >"$tmp/mcp-calls.log"
+echo "AGENTTEST:nomask send a dm to ⟦Person 1⟧" | agent -p --strict-mcp-config --mcp-config "$mcp_config" >/dev/null
+expect_eq "made-up name: only with --privacy" "Guilloux" "$(jq -r 'select(.name == "contacts") | .arguments.query' "$tmp/mcp-calls.log")"
 printf 'Julien wrote this\n' >"$tmp/ro/note.txt"
 script privread "[[{\"type\": \"tool_use\", \"id\": \"p1\", \"name\": \"Read\", \"input\": {\"file_path\": \"$tmp/ro/note.txt\"}}], [{\"type\": \"text\", \"text\": \"ok\"}]]"
 echo "AGENTTEST:privread" | agent -p --tools Read --add-dir "$tmp/ro" --privacy >/dev/null

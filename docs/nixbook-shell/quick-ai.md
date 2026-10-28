@@ -405,7 +405,11 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 
 Text goes through the [privacy mask](./desktop-agents.md) on the way out (names,
 emails and the like become placeholders such as `⟦Person 1⟧`) and the answer is
-unmasked on this computer. Every request is listed under _What it sent_. With the local engine the
+unmasked on this computer. A model may not write a name of its own for a
+placeholder: while your message names a hidden person, a people tool (Discord,
+contacts, messages, memory…) asked about a name that appears nowhere in the
+conversation is refused before it runs, and the model is told to use the
+placeholder, which the tool receives as the real name. Every request is listed under _What it sent_. With the local engine the
 voice never leaves the computer, only its text does; with Meta it is streamed
 to Meta. Screen regions and Kiroshi
 scans are images: they go to the provider as they are.
