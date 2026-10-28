@@ -40,6 +40,7 @@ import base64
 import concurrent.futures
 import json
 import os
+import re
 import sys
 import time
 
@@ -496,15 +497,19 @@ def ask(path, argv=None):
 # ── Kiroshi scan (services/Kiroshi.qml): a situational brief of the focused
 # screen. A screenshot, the focused window's accessibility text and what the
 # user is doing (their recent windows and commands, the open windows, the
-# latest notifications, the next events, the time) go to the model, which
-# says what they are in the middle of, the one thing that matters now, and
-# labels the 3–8 things on screen with a substantial detail and, when the AI
-# can take it off their hands, a plan, a draft and a self-contained
-# instruction for the desktop agent (Quick AI's "do"). Everything is masked
-# by the privacy mask on the way out. Answer: {"type": "scan", width,
-# height, doing, focus, items: [{label, kind, box: [x, y, w, h] in the
-# image's pixels, urgency, detail, handle: {title, plan, draft, instruction}
-# | null}], routine: [item indexes]}.
+# latest notifications with their ids, the next events, the time, the
+# offers they took from earlier scans) go to the model, which says what they
+# are in the middle of, the one thing that matters now, and labels the 3–8
+# things on screen with their substance (facts, why it matters, the next
+# step) and up to three offers, each only when it saves real effort: a quick
+# one (one desktop-mcp tool call from an allow-list, its arguments filled in
+# and checked here) or an agent one (a plan, a draft and a self-contained
+# instruction for the desktop agent). Everything is masked by the privacy
+# mask on the way out. Answer: {"type": "scan", width, height, items:
+# [{label, kind, box: [x, y, w, h] in the image's pixels, urgency, gist}],
+# routine}, then one {"type": "item", index, facts, why, next, detail,
+# options, handle} per item, then {"type": "ranked", order, routine} (the
+# items' indexes best first: value × urgency).
 SCAN_KINDS = {"window", "notification", "error", "message", "button", "field", "text", "media", "link", "event",
               "other"}
 SCAN_URGENCY = ("now", "soon", "later", "noise")
@@ -519,9 +524,10 @@ SCAN_FAST = (
     "coming, a form, the work in the main window, a notification…), most important first. For each: label (2-5 "
     "words), kind ({kinds}), box [x, y, width, height] in pixels of the image, tight around it, urgency (now: "
     "needs them now, soon, later, noise: can be dismissed or ignored), gist (one line, at most 14 words, the "
-    "key fact). Then routine = the indexes (from 0) of the items an assistant with desktop tools could handle "
-    "entirely without the user's judgment (noise to dismiss, an acknowledgement, a task to file). Write in "
-    "{lang}. Output only JSON: "
+    "key fact). Then routine = the indexes (from 0) of the items an assistant could take entirely off their "
+    "hands without their judgment AND where that saves real effort: several routine notifications to clear at "
+    "once, a task or an event to file with its details, a reminder to set. Never an item whose only help would "
+    "be one click (open it, focus it, dismiss one toast, play or pause). Write in {lang}. Output only JSON: "
     '{{"items": [{{"label": "…", "kind": "…", "box": [0, 0, 0, 0], "urgency": "now", "gist": "…"}}], '
     '"routine": []}}'
 )
@@ -532,23 +538,91 @@ SCAN_BRIEF = (
     "message waiting, a failure), or \"\" if nothing is pressing. Output only JSON: "
     '{{"doing": "…", "focus": "…"}}'
 )
-# Pass 2, one per item, in parallel: the substance and what the agent can do.
+# Pass 2, one per item, in parallel: the substance, and what is worth doing
+# for the user. An offer must save real effort: the rules below, and
+# scan_options() drops what breaks the ones code can check.
 SCAN_ITEM = (
-    "On this screen you labelled:\n{listing}\n\nNow only item {n} (\"{label}\").{routine} Give:\n"
-    "- detail: 2-3 sentences of real substance from what is visible and the context: the key facts, numbers, "
-    "dates, who asks what, what an error means and its likely cause. Never just restate the label.\n"
-    "- handle: what the user's desktop agent can take off their hands, or null when only the user can decide. "
-    "The agent has tools for windows and apps, typing and keys, the clipboard, notifications, calendar, tasks, "
-    "contacts, reminders and the shell, and can read the screen and the apps' accessibility trees. Prefer "
-    "multi-step work that saves real effort (reply with the right context, gather information from several "
-    "places, file a task with the details, set a reminder before the meeting, look up an error and propose the "
-    "fix) over a single click the user could do as fast. handle = {{\"title\": a short verb phrase, \"plan\": 2 "
-    "to 5 concrete steps, \"draft\": the exact text it would send or type if it writes something (a reply, a "
-    "message, a commit message, a search) else \"\", \"instruction\": the complete self-contained instruction "
-    "for the agent, naming the app, the window, the person, and including the draft}}.\n"
-    "Write in {lang}; a draft in the language of the conversation it answers. Output only JSON: "
-    '{{"detail": "…", "handle": {{"title": "…", "plan": ["…"], "draft": "", "instruction": "…"}}}}'
+    "On this screen you labelled:\n{listing}\n\nNow only item {n} (\"{label}\").{routine}\n"
+    "First the substance, from what is visible and the context, never the label again:\n"
+    "- facts: 3 to 6 short bullets (at most 15 words each): who, what, when or the deadline, numbers, links, "
+    "and what is asked of the user. For an error: what failed and its likely cause.\n"
+    "- why: one line, why it matters to them now (\"\" if it doesn't).\n"
+    "- next: one line, the next step if they do it themselves.\n"
+    "Then options: what the assistant can do for them, at most 3, best first, and ONLY what saves real "
+    "effort: several steps or clicks, a switch to another app, writing, looking things up, or remembering "
+    "something for later. NEVER offer: opening, focusing, reading or scrolling to what is already on the "
+    "screen; dismissing one notification or toast; play, pause, skip or \"keep\" the music; continuing or "
+    "\"keeping\" what is already happening; anything one click does as fast. When nothing saves effort, "
+    "options = [] (often the right answer).\n"
+    "Worth offering: a reply drafted with the right context (who wrote, what they asked, facts from the other "
+    "windows, notifications or calendar); a date or a time in a message → a calendar event; a request or a "
+    "promise → a task with its due date; an error → its cause and the concrete fix (the command or the edit); "
+    "a long thread or post → a summary with its action items saved to a note; a reminder to follow up; "
+    "information gathered across apps; several routine notifications cleared in one go.{taken}\n"
+    "Each option: title (a verb phrase, at most 6 words), saves (the effort it saves, e.g. \"~2 min · 6 "
+    "clicks\"), value (1 small, 2 clear, 3 big), and kind:\n"
+    "- \"quick\": ONE tool call does all of it, every argument filled in: tool and args, the tool one of:\n"
+    "{tools}\n"
+    "- \"agent\": several steps for the desktop agent: plan (2 to 5 concrete steps), draft (the exact text it "
+    "would send or type, else \"\"), instruction (complete and self-contained: the app, the window, the "
+    "person, the draft).\n"
+    "Prefer quick when one call does it. Dates YYYY-MM-DD and times YYYY-MM-DDTHH:MM, from today's date "
+    "above. Write in {lang}; a draft in the language of the conversation it answers. Output only JSON: "
+    '{{"facts": ["…"], "why": "…", "next": "…", "options": [{{"title": "…", "saves": "~1 min · 5 clicks", '
+    '"value": 2, "kind": "quick", "tool": "tasks", "args": {{"action": "create", "title": "…", "due": '
+    '"2026-01-31"}}}}, {{"title": "…", "saves": "~3 min", "value": 3, "kind": "agent", "plan": ["…", "…"], '
+    '"draft": "", "instruction": "…"}}]}}'
 )
+
+# The tools a quick option may call (desktop-mcp's), what the model is told
+# of each, and what scan_options() checks on top of the tool's inputSchema:
+# fixed arguments (filled in when missing, the option dropped when they
+# differ), required ones, one of which must be there, dates, and the
+# argument holding the text the user may edit (the draft).
+QUICK_TOOLS = {
+    "calendar": {"say": '{"action": "create", "summary", "start", "end"?, "location"?, "description"?, '
+                        '"reminders"?: [minutes before]}: an event from a date or a time in a message',
+                 "fixed": {"action": "create"}, "need": ("summary", "start"),
+                 "dates": {"start": "datetime", "end": "datetime"}},
+    "tasks": {"say": '{"action": "create", "title", "due"?: YYYY-MM-DD, "notes"?}: a task from a request or a '
+                     'promise, with what it needs in the notes',
+              "fixed": {"action": "create"}, "need": ("title",), "dates": {"due": "due"}, "draft": "notes"},
+    "notification_action": {"say": '{"id": the notification\'s #, "reply": the text} sends a reply (the user '
+                                   'reads and confirms it first), or {"id", "action": a button\'s label}',
+                            "need": ("id",), "one_of": ("reply", "action"), "notification": "id",
+                            "draft": "reply"},
+    "dismiss_notifications": {"say": '{"ids": [two or more #]} or {"app"}: several routine notifications '
+                                     'cleared at once (never one alone)',
+                              "one_of": ("ids", "app", "contains"), "forbid": ("all",)},
+    "remind": {"say": '{"text", "at": "HH:MM" or "YYYY-MM-DDTHH:MM"} (or "app" / "title": when that app or '
+                      'window comes): a follow-up reminder',
+               "need": ("text",), "one_of": ("at", "app", "title"), "dates": {"at": "at"}},
+    "widget": {"say": '{"widget": "notes", "action": "add", "text"}: a note on the desktop (a summary, action '
+                      'items, what to remember)',
+               "fixed": {"widget": "notes", "action": "add"}, "need": ("text",), "draft": "text"},
+    "clipboard_set": {"say": '{"text"}: text put together for them to paste (gathered from several places)',
+                      "need": ("text",), "draft": "text"},
+    "browser_open": {"say": '{"url"}: a page to look something up they would otherwise search for, never a '
+                            'link already on the screen',
+                     "need": ("url",), "min_value": 2},
+}
+# Titles of one-click work (en/fr/de/vi): an agent option, or a page opened,
+# that only opens, focuses, plays or keeps what is there.
+TRIVIAL_TITLE = re.compile(
+    r"^\s*(open|focus|scroll|switch to|go to|view|show|look at|read|play|pause|resume|skip|keep|continue|"
+    r"dismiss|close|click|tap|select|ouvr\w*|afficher|affiche|voir|lire|faire défiler|aller à|passer à|"
+    r"reprendre|continuer|garder|fermer|ferme|ignorer|masquer|cliquer|clique|öffne\w*|zeige?|anzeigen|"
+    r"scrolle?n?|wechsle\w*|gehe? zu|spiele?|abspielen|fortsetzen|weiter|behalte\w*|schließe?n?|klicke?n?|"
+    r"mở|xem|cuộn|chuyển sang|đi tới|phát|tạm dừng|tiếp tục|giữ|đóng|bấm|nhấn|bỏ qua)\b", re.I)
+SCAN_URGENCY_WEIGHT = {"now": 4, "soon": 3, "later": 2, "noise": 1}
+SCAN_TAKEN_MAX = 10
+JSON_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list,
+              "object": dict, "null": type(None)}
+DATE_FORMS = {
+    "datetime": re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$"),
+    "due": re.compile(r"^(\d{4}-\d{2}-\d{2}|today|tomorrow|\+\d{1,3})$"),
+    "at": re.compile(r"^(\d{1,2}:\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$"),
+}
 
 
 def image_size(path):
@@ -582,26 +656,74 @@ def quick_call(args, timeout):
     return out.strip() if code == 0 else ""
 
 
+def dm_out(args, timeout):
+    """nixbook-desktop-mcp ARGS through the helper's socket when it takes
+    them (else a process): its stdout, "" when it fails."""
+    code, out = nixbook_ai.dm(args, timeout=timeout)
+    return out.strip() if code == 0 else ""
+
+
+def quick_tool_schemas():
+    """The allow-listed tools desktop-mcp has enabled, {name: inputSchema}
+    (a tool group switched off: not there); None when it can't say (then
+    only QUICK_TOOLS' own rules check the options)."""
+    try:
+        tools = json.loads(dm_out(["tools"], 5) or "null")
+    except ValueError:
+        return None
+    if not isinstance(tools, list):
+        return None
+    return {t["name"]: t.get("inputSchema") or {} for t in tools
+            if isinstance(t, dict) and t.get("name") in QUICK_TOOLS}
+
+
+def offers_taken():
+    """The Kiroshi offers this user used lately (the shell's 👍 on use,
+    `feedback add` with surface kiroshi), newest first, as prompt lines."""
+    try:
+        entries = json.loads(dm_out(["feedback", "list", "50"], 3) or "[]")
+    except ValueError:
+        return []
+    lines = []
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict) or e.get("surface") != "kiroshi" or e.get("verdict") != "up":
+            continue
+        title = " ".join(str(e.get("answer") or "").split())[:80]
+        if not title:
+            continue
+        on = " ".join(str(e.get("request") or "").split())[:100]
+        lines.append(f"- {title}" + (f" (for: {on})" if on else ""))
+        if len(lines) >= SCAN_TAKEN_MAX:
+            break
+    return lines
+
+
 def scan_context(req):
     """What the user is doing, as text for the prompt (masked later with it):
     the broker's (the time, next events, what they just did, the memory)
     and what is on screen (the windows, the latest notifications, the
-    focused window's accessibility tree), the tree and the broker asked in
-    parallel."""
+    focused window's accessibility tree), plus what the options are checked
+    against: {tools: the quick tools' schemas | None, notifications: their
+    ids, taken: the offers this user takes}. The tree, the broker, the
+    feedback and the tools asked in parallel."""
     ctx = req.get("context") or {}
     recent = req.get("recent") or []
-    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+    with concurrent.futures.ThreadPoolExecutor(4) as pool:
         ui = pool.submit(quick_call, ["call", "ui_read", "{}"], 3)
         known = pool.submit(broker, "scan", ctx.get("title") or ctx.get("app") or "", ctx.get("app") or "",
                             ctx.get("title") or "")
+        taken_job = pool.submit(offers_taken)
+        tools_job = pool.submit(quick_tool_schemas)
         ui_text, known_text = ui.result()[:2500], known.result()
+        taken, tools = taken_job.result(), tools_job.result()
     recent_text = ""
     if not known_text and recent:
         # No broker: the recent activity filtered by desktop-mcp's `context`.
         recent_text = quick_call(["context", json.dumps({"now": int(time.time()), "events": recent[-40:]})], 3)[:1500]
-    parts = []
-    if not known_text:
-        parts.append(f"Now: {ctx.get('now') or time.strftime('%a %d %b %Y %H:%M')}")
+    # Today's date as the quick options write it (events, tasks, reminders).
+    parts = [f"Today: {time.strftime('%Y-%m-%d %H:%M, %A')}"]
+    if not known_text and ctx.get("now"):
+        parts.append(f"Now: {ctx['now']}")
     where = " — ".join(str(ctx[k]) for k in ("app", "title") if ctx.get(k))
     if where:
         parts.append(f"Focused window: {where}")
@@ -612,12 +734,24 @@ def scan_context(req):
         parts.append(f"What the desktop knows (the time, next events, what they just did, their memory):\n{known_text}")
     if recent_text:
         parts.append(f"What they did the last minutes:\n{recent_text}")
-    notes = []
+    notes, ids = [], set()
     for n in (req.get("notifications") or [])[:8]:
         body = " ".join(str(n.get("body") or "").split())[:220]
-        notes.append(f"- [{n.get('time', '')}] {n.get('app', '')} · {n.get('summary', '')}: {body}")
+        nid = n.get("id")
+        tag = ""
+        if isinstance(nid, int) and not isinstance(nid, bool):
+            ids.add(nid)
+            tag = f"#{nid} "
+        extra = []
+        buttons = [str(b)[:30] for b in n.get("actions") or [] if str(b).strip()][:4]
+        if buttons:
+            extra.append("buttons: " + ", ".join(buttons))
+        if n.get("canReply"):
+            extra.append("can reply")
+        notes.append(f"- {tag}[{n.get('time', '')}] {n.get('app', '')} · {n.get('summary', '')}: {body}"
+                     + (f" ({'; '.join(extra)})" if extra else ""))
     if notes:
-        parts.append("Latest notifications (newest first):\n" + "\n".join(notes))
+        parts.append("Latest notifications (newest first; # = its id):\n" + "\n".join(notes))
     if not known_text:
         events = [f"- {e.get('when', '')}: {e.get('summary', '')}" + (f" @ {e['location']}" if e.get("location") else "")
                   + (" (video call)" if e.get("meeting") else "") for e in (req.get("events") or [])[:4]]
@@ -625,7 +759,7 @@ def scan_context(req):
             parts.append("Next calendar events:\n" + "\n".join(events))
     if ui_text:
         parts.append(f"The focused window's accessibility tree (what a screen reader sees):\n<<<\n{ui_text}\n>>>")
-    return "\n\n".join(parts)
+    return "\n\n".join(parts), {"tools": tools, "notifications": ids, "taken": taken}
 
 
 def scan_json(text):
@@ -669,19 +803,180 @@ def scan_brief(text, w, h):
     return {"items": items, "routine": routine}
 
 
-def scan_handle(d):
-    """Pass 2's JSON: {detail, handle | None}."""
+def schema_ok(value, schema):
+    """VALUE of the JSON type SCHEMA says (a list of types: any of them;
+    an array's items checked too)."""
+    want = schema.get("type") if isinstance(schema, dict) else None
+    if not want:
+        return True
+    types = want if isinstance(want, list) else [want]
+    for t in types:
+        py = JSON_TYPES.get(t)
+        if py is None:
+            return True
+        if t in ("integer", "number") and isinstance(value, bool):
+            continue
+        if isinstance(value, py):
+            if t == "array" and isinstance(schema.get("items"), dict):
+                return all(schema_ok(v, schema["items"]) for v in value)
+            if "enum" in schema and value not in schema["enum"]:
+                return False
+            return True
+    return False
+
+
+def quick_args(tool, args, schemas, notification_ids):
+    """A quick option's arguments, checked: QUICK_TOOLS' rules for TOOL,
+    then the tool's inputSchema when desktop-mcp gave it (required fields,
+    known properties, types). The arguments to call it with, or None."""
+    rule = QUICK_TOOLS.get(tool)
+    if rule is None or not isinstance(args, dict):
+        return None
+    if schemas is not None and tool not in schemas:
+        return None  # its tool group is off
+    out = {}
+    for k, v in args.items():
+        if isinstance(v, str):
+            v = v.strip()[:2000]
+            if not v:
+                continue
+        elif v is None:
+            continue
+        out[str(k)] = v
+    if out.get("help") or any(out.get(k) for k in rule.get("forbid", ())):
+        return None
+    for k, v in rule.get("fixed", {}).items():
+        if k not in out:
+            out[k] = v
+        elif out[k] != v:
+            return None
+    if any(k not in out for k in rule.get("need", ())):
+        return None
+    if rule.get("one_of") and not any(k in out for k in rule["one_of"]):
+        return None
+    for k, form in rule.get("dates", {}).items():
+        if k in out and not (isinstance(out[k], str) and DATE_FORMS[form].match(out[k])):
+            return None
+    nkey = rule.get("notification")
+    if nkey:
+        nid = out.get(nkey)
+        if not isinstance(nid, int) or isinstance(nid, bool) or (notification_ids and nid not in notification_ids):
+            return None
+    if tool == "dismiss_notifications" and "ids" in out:
+        got = out["ids"]
+        if not (isinstance(got, list) and len(set(got)) >= 2 and all(
+                isinstance(i, int) and not isinstance(i, bool) and (not notification_ids or i in notification_ids)
+                for i in got)):
+            return None  # one alone: a click the user does as fast
+    if tool == "browser_open" and not re.match(r"^https?://[^\s/]+\.[^\s]+$", str(out.get("url") or "")):
+        return None
+    schema = (schemas or {}).get(tool)
+    if isinstance(schema, dict) and schema:
+        props = schema.get("properties") or {}
+        if any(k not in out for k in schema.get("required") or []):
+            return None
+        for k in list(out):
+            if k not in props:
+                if schema.get("additionalProperties") is False:
+                    return None
+                continue
+            if not schema_ok(out[k], props[k]):
+                return None
+    return out
+
+
+def option_value(v):
+    try:
+        return max(1, min(3, int(v)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def scan_options(raw, schemas=None, notification_ids=()):
+    """The model's options, checked strictly and best first: a quick one
+    needs an allow-listed tool with well-formed arguments (quick_args), an
+    agent one a self-contained instruction and a real plan (two steps, or a
+    draft); one-click work (TRIVIAL_TITLE: open, focus, play, keep…) and
+    anything malformed is dropped. At most 3."""
+    out = []
+    for o in raw if isinstance(raw, list) else []:
+        if not isinstance(o, dict):
+            continue
+        title = " ".join(str(o.get("title") or "").split())[:60]
+        if not title:
+            continue
+        value = option_value(o.get("value"))
+        base = {"title": title, "saves": " ".join(str(o.get("saves") or "").split())[:40], "value": value}
+        kind = str(o.get("kind") or ("quick" if o.get("tool") else "agent")).lower()
+        if kind == "quick":
+            tool = str(o.get("tool") or "").strip()
+            args = quick_args(tool, o.get("args"), schemas, set(notification_ids or ()))
+            rule = QUICK_TOOLS.get(tool) or {}
+            if args is None or value < rule.get("min_value", 1):
+                continue
+            if tool == "browser_open" and TRIVIAL_TITLE.match(title):
+                continue
+            key = rule.get("draft")
+            draft = args.get(key, "") if key and isinstance(args.get(key), str) else ""
+            # The user's OK first for anything sent or risky (Send in the card).
+            confirm = (tool == "notification_action" and "reply" in args) or nixbook_ai.is_risky(tool, args)
+            out.append({**base, "kind": "quick", "tool": tool, "args": args, "confirm": bool(confirm),
+                        "draft": draft, "draftKey": key if draft else ""})
+        elif kind == "agent":
+            instruction = str(o.get("instruction") or "").strip()[:2000]
+            plan = [" ".join(str(p).split())[:160] for p in (o.get("plan") or []) if str(p).strip()][:5] \
+                if isinstance(o.get("plan"), list) else []
+            draft = str(o.get("draft") or "")[:2000]
+            if not instruction or (len(plan) < 2 and not draft.strip()):
+                continue
+            if TRIVIAL_TITLE.match(title) and not draft.strip() and len(plan) <= 2:
+                continue
+            out.append({**base, "kind": "agent", "plan": plan, "draft": draft, "instruction": instruction})
+    # Best first; the model's order breaks ties.
+    out.sort(key=lambda o: -o["value"])
+    return out[:3]
+
+
+def scan_item(d, schemas=None, notification_ids=()):
+    """Pass 2's JSON: {facts, why, next, detail, options, handle}: detail is
+    the facts and the two lines joined (what older shells show), handle the
+    best agent option as {title, plan, draft, instruction} (or None)."""
     if d is None:
-        return {"detail": "", "handle": None}
-    handle = d.get("handle")
-    if isinstance(handle, dict) and str(handle.get("instruction") or "").strip():
-        handle = {"title": str(handle.get("title") or "Handle it")[:60],
-                  "plan": [str(p).strip()[:160] for p in (handle.get("plan") or []) if str(p).strip()][:5],
-                  "draft": str(handle.get("draft") or "")[:2000],
-                  "instruction": str(handle["instruction"]).strip()[:2000]}
-    else:
-        handle = None
-    return {"detail": str(d.get("detail") or "")[:700], "handle": handle}
+        return {"facts": [], "why": "", "next": "", "detail": "", "options": [], "handle": None}
+    facts = d.get("facts")
+    facts = [" ".join(str(f).split())[:200] for f in facts if str(f).strip()][:6] if isinstance(facts, list) else []
+    why = " ".join(str(d.get("why") or "").split())[:240]
+    nxt = " ".join(str(d.get("next") or "").split())[:240]
+    raw = d.get("options")
+    if raw is None and isinstance(d.get("handle"), dict):
+        # An older answer's single handle: an agent option.
+        raw = [{**d["handle"], "kind": "agent", "value": 2}]
+    options = scan_options(raw, schemas, notification_ids)
+    detail = str(d.get("detail") or "").strip()[:700] if isinstance(d.get("detail"), str) else ""
+    if not detail:
+        detail = "\n".join([f"• {f}" for f in facts] + [t for t in (why, nxt) if t])[:700]
+    agent = next((o for o in options if o["kind"] == "agent"), None)
+    handle = {k: agent[k] for k in ("title", "plan", "draft", "instruction")} if agent else None
+    return {"facts": facts, "why": why, "next": nxt, "detail": detail, "options": options, "handle": handle}
+
+
+def scan_rank(items, details, routine):
+    """The items' order, best first, and the routine ones: by the best
+    option's value × urgency (an item without options counts half a point,
+    so the urgent ones still come first), the noise without any option
+    last. Routine = those pass 1 judged routine that have an option worth
+    it (value ≥ 2) needing no confirmation."""
+    def score(i):
+        opts = (details.get(i) or {}).get("options") or []
+        urgency = items[i].get("urgency", "later")
+        best = max((o["value"] for o in opts), default=0)
+        last = not opts and urgency == "noise"
+        return (1 if last else 0, -(best or 0.5) * SCAN_URGENCY_WEIGHT.get(urgency, 2), i)
+
+    order = sorted(range(len(items)), key=score)
+    ready = [i for i in routine if any(o["value"] >= 2 and not o.get("confirm")
+                                        for o in (details.get(i) or {}).get("options") or [])]
+    return order, sorted(ready)
 
 
 def complete(req, p, system, image_block, parts, max_tokens):
@@ -700,9 +995,9 @@ def scan(req, started, p):
     """Three kinds of passes, the first two at once: the brief's two lines
     (emitted as "brief" in ~3 s), what is on the screen
     (the image: "scan", with boxes, urgency and a gist), then every item's
-    detail and handle in parallel ("item", each as it comes). The image and
-    the context come first in every request: the passes share that prefix
-    (the provider's prompt cache)."""
+    substance and options in parallel ("item", each as it comes), and last
+    their order ("ranked"). The image and the context come first in every
+    request: the passes share that prefix (the provider's prompt cache)."""
     ms = lambda: int((time.monotonic() - started) * 1000)  # noqa: E731
     image = req.get("image") or ""
     w, h = image_size(image)
@@ -711,7 +1006,8 @@ def scan(req, started, p):
         emit("done", ms=ms())
         return 1
     lang = LANGS.get(str(req.get("lang") or "en")[:2].lower(), "English")
-    shared = mask(SCAN_INTRO.format(w=w, h=h) + "\n\n" + scan_context(req))
+    context_text, known = scan_context(req)
+    shared = mask(SCAN_INTRO.format(w=w, h=h) + "\n\n" + context_text)
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
     model = p.model(model_alias(req))
     fast = SCAN_FAST.format(kinds="|".join(sorted(SCAN_KINDS)), lang=lang)
@@ -726,6 +1022,11 @@ def scan(req, started, p):
     media = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
     data = base64.b64encode(raw).decode()
     image_block = {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
+    schemas = known["tools"]
+    tools_text = "\n".join(f"  - {name} {rule['say']}" for name, rule in QUICK_TOOLS.items()
+                           if schemas is None or name in schemas) or '  (none available: only "agent")'
+    taken = mask("\nOffers this user takes (prefer those kinds when they fit):\n" + "\n".join(known["taken"])) \
+        if known["taken"] else ""
 
     def ask_model(task, with_image=True, max_tokens=6000):
         text, usage = complete(req, p, system, image_block if with_image else None, [shared, task], max_tokens)
@@ -760,18 +1061,23 @@ def scan(req, started, p):
 
         def detail(i):
             it = found["items"][i]
-            hint = (" You judged it routine: the agent handles it entirely (dismiss the notification, acknowledge, "
-                    "file the task…), so give a handle, never null.") if i in found["routine"] else ""
-            task = SCAN_ITEM.format(listing=listing, n=i, label=mask(it["label"]), lang=lang, routine=hint)
+            hint = (" You judged it routine: when one saves effort, give an option that takes it entirely off "
+                    "their hands (no confirmation needed).") if i in found["routine"] else ""
+            task = SCAN_ITEM.format(listing=listing, n=i, label=mask(it["label"]), lang=lang, routine=hint,
+                                    taken=taken, tools=tools_text)
             try:
-                return i, scan_handle(scan_json(unmask(ask_model(task)))), ""
+                return i, scan_item(scan_json(unmask(ask_model(task))), schemas, known["notifications"]), ""
             except Exception as e:  # noqa: BLE001
-                return i, {"detail": "", "handle": None}, str(e) or e.__class__.__name__
+                return i, scan_item(None), str(e) or e.__class__.__name__
 
+        details = {}
         jobs = [pool.submit(detail, i) for i in range(len(found["items"]))]
         for fut in concurrent.futures.as_completed(jobs):
             i, got, err = fut.result()
+            details[i] = got
             emit("item", index=i, ms=ms(), error=err, **got)
+        order, routine = scan_rank(found["items"], details, found["routine"])
+        emit("ranked", order=order, routine=routine, ms=ms())
         brief_job.result()
     emit("done", ms=ms())
     return 0

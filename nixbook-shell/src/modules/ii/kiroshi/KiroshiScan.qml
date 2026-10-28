@@ -15,11 +15,16 @@ import Quickshell.Wayland
  * a scan sweep while the model looks, then a brief at the top (what the
  * user is doing, the one thing that matters now, "Handle the routine ones")
  * and the things that matter in corner brackets coloured by urgency (noise
- * dimmed), each with a small tag (number, label, urgency, its gist). A
- * click on a box or tag, or its number key, opens its card: the substance,
- * what the agent would do (the plan as a checklist, the draft to edit) and
- * Do it / Copy draft / Tell me more. Enter does it, Esc closes the card
- * then the overlay. The Cyberpunk theme's colours and font when it is on,
+ * dimmed), each with a small tag (number, label, urgency, its gist, its
+ * best offer). A click on a box or tag, or its number key, opens its card:
+ * the facts as bullets, why it matters and the next step, then the offers
+ * as buttons (A, B, C) with the effort each saves: a quick one runs at once
+ * and shows ✓ or the error in place (one that sends, like a reply, shows its
+ * draft and waits for Send), an agent one hands its plan to Muse; the
+ * chosen offer's call, plan or draft below (the draft editable), Copy draft,
+ * Tell me more. Enter takes the chosen offer (the best unless another was
+ * picked), Esc closes the card then the overlay. The Cyberpunk theme's
+ * colours and font when it is on,
  * else Kiroshi yellow / cyan / red that read on any wallpaper. Nothing
  * animates once the scan is done.
  */
@@ -149,6 +154,19 @@ Scope {
                     window.tagSizes = {};
                     window.tagSpots = {};
                 }
+                // Ranked: the tags' sizes and the drafts follow their items.
+                function onReordered(perm) {
+                    const sizes = {};
+                    for (const k in window.tagSizes) if (perm[k] !== undefined) sizes[perm[k]] = window.tagSizes[k];
+                    window.tagSizes = sizes;
+                    const drafts = {};
+                    for (const k in card.drafts) {
+                        const [item, option] = k.split(":");
+                        if (perm[item] !== undefined) drafts[`${perm[item]}:${option}`] = card.drafts[k];
+                    }
+                    card.drafts = drafts;
+                    Qt.callLater(window.placeTags);
+                }
             }
 
             Item {
@@ -163,12 +181,21 @@ Scope {
                 }
                 Keys.onPressed: (event) => {
                     const n = event.key - Qt.Key_1;
+                    // A, B, C: the open card's offers (letters: the digits
+                    // need Shift on AZERTY, where Shift+digit opens an item).
+                    const letter = event.key - Qt.Key_A;
                     if (n >= 0 && n < 8 && n < Kiroshi.items.length) {
                         Kiroshi.expand(n);
                         content.forceActiveFocus();
                         event.accepted = true;
+                    } else if (Kiroshi.expanded >= 0 && letter >= 0 && letter < 3
+                        && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+                        card.run(letter);
+                        event.accepted = true;
                     } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && Kiroshi.expanded >= 0) {
-                        card.doIt();
+                        // Send when an offer waits for it, else the chosen (best) offer.
+                        if (card.confirming >= 0) card.send();
+                        else card.run(card.sel);
                         event.accepted = true;
                     }
                 }
@@ -434,8 +461,9 @@ Scope {
                                     color: Qt.alpha(root.ink, 0.75)
                                 }
                                 Text {
+                                    readonly property var best: (mark.modelData.options ?? [])[0] ?? null
                                     text: mark.modelData.pending ? Translation.tr("▸ reading…")
-                                        : mark.modelData.handle ? "▸ " + mark.modelData.handle.title : ""
+                                        : best ? "▸ " + best.title + (best.saves ? `  ·  ${best.saves}` : "") : ""
                                     visible: text.length > 0
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -552,7 +580,7 @@ Scope {
                             }
                             Item { Layout.fillWidth: true }
                             Text {
-                                text: Translation.tr("1–%1 open · Enter do it · Esc").arg(Math.max(1, Kiroshi.items.length))
+                                text: Translation.tr("1–%1 open · A–C offers · Enter · Esc").arg(Math.max(1, Kiroshi.items.length))
                                 font.family: root.mono
                                 font.pixelSize: 11
                                 color: root.grey
@@ -566,10 +594,15 @@ Scope {
                     id: card
                     readonly property var it: Kiroshi.expanded >= 0 ? Kiroshi.items[Kiroshi.expanded] ?? null : null
                     readonly property color col: root.urgencyColor(card.it?.urgency ?? "later")
-                    readonly property var handle: card.it?.handle ?? null
+                    readonly property var options: card.it?.options ?? []
+                    readonly property int confirming: card.it?.confirming ?? -1
+                    // The offer whose plan or draft shows below the buttons:
+                    // the best, another one clicked, or the one waiting for Send.
+                    property int sel: 0
+                    readonly property var opt: card.options[card.sel] ?? null
                     visible: card.it !== null
                     z: 10
-                    width: Math.min(500, window.width - 32)
+                    width: Math.min(540, window.width - 32)
                     height: cardColumn.implicitHeight + 28
                     // Beside the box: right of it if it fits, else left, else under the brief.
                     readonly property real bx: (card.it?.box[0] ?? 0) * window.sx
@@ -585,16 +618,61 @@ Scope {
                     MouseArea { anchors.fill: parent }
                     Rectangle { width: 4; height: parent.height; color: card.col }
 
-                    // The draft as edited: kept per item while the overlay is open.
+                    // The drafts as edited, per item and offer ("item:offer"),
+                    // kept while the overlay is open.
                     property var drafts: ({})
-                    function doIt() {
-                        if (!card.handle) return;
-                        Kiroshi.doIt(Kiroshi.expanded, draftField.visible ? draftField.text : undefined);
+                    function draftOf(n) {
+                        return card.drafts[`${Kiroshi.expanded}:${n}`] ?? card.options[n]?.draft ?? "";
                     }
-                    onItChanged: {
-                        // (From `it` itself: `handle`'s binding may not have followed yet.)
-                        draftField.text = card.drafts[Kiroshi.expanded] ?? card.it?.handle?.draft ?? "";
+                    function loadDraft() {
+                        draftField.text = card.draftOf(card.sel);
                     }
+                    // Offer n: run (a quick one at once, one that sends asks
+                    // for Send first; an agent one goes to Muse). One with a
+                    // draft not shown yet is chosen first (its draft to read
+                    // and edit), run on the next click.
+                    function run(n) {
+                        if (n < 0 || n >= card.options.length) return;
+                        if (card.sel !== n && (card.options[n]?.draft ?? "").length > 0) {
+                            card.sel = n;
+                            return;
+                        }
+                        card.sel = n;
+                        Kiroshi.runOption(Kiroshi.expanded, n, card.draftOf(n), false, true);
+                    }
+                    // The user's OK for the offer waiting for it.
+                    function send() {
+                        const n = card.confirming;
+                        if (n >= 0) Kiroshi.runOption(Kiroshi.expanded, n, card.draftOf(n), true, true);
+                    }
+                    // What a quick offer's one call does, in words.
+                    function callText(o) {
+                        const a = o?.args ?? {};
+                        switch (o?.tool) {
+                        case "calendar": return Translation.tr("Calendar event: %1 · %2").arg(a.summary ?? "").arg(String(a.start ?? "").replace("T", " ") + (a.end ? " – " + String(a.end).replace("T", " ") : ""));
+                        case "tasks": return Translation.tr("Task: %1").arg(a.title ?? "") + (a.due ? " · " + Translation.tr("due %1").arg(a.due) : "");
+                        case "notification_action": return a.reply !== undefined ? Translation.tr("Reply to the notification")
+                            : Translation.tr("Press \"%1\" on the notification").arg(a.action ?? "");
+                        case "dismiss_notifications": return a.ids ? Translation.tr("Clear %1 notifications").arg(a.ids.length)
+                            : Translation.tr("Clear the notifications of %1").arg(a.app ?? a.contains ?? "");
+                        case "remind": return Translation.tr("Reminder: %1 · %2").arg(a.text ?? "").arg(String(a.at ?? a.app ?? a.title ?? "").replace("T", " "));
+                        case "widget": return Translation.tr("A note on the desktop");
+                        case "clipboard_set": return Translation.tr("Ready to paste (clipboard)");
+                        case "browser_open": return Translation.tr("Open %1 in Zen, in the background").arg(a.url ?? "");
+                        }
+                        return o?.tool ?? "";
+                    }
+                    Connections {
+                        target: Kiroshi
+                        function onExpandedChanged() {
+                            card.sel = Math.max(0, card.confirming);
+                            card.loadDraft();
+                        }
+                    }
+                    onSelChanged: card.loadDraft()
+                    onConfirmingChanged: if (card.confirming >= 0) card.sel = card.confirming
+                    // Its offers coming in (or a result): the draft, unless being edited.
+                    onItChanged: if (!draftField.activeFocus) card.loadDraft()
 
                     ColumnLayout {
                         id: cardColumn
@@ -635,8 +713,11 @@ Scope {
                                 color: card.col
                             }
                         }
+                        // The substance: the facts as bullets (else the detail
+                        // text, or the gist while it reads).
                         Text {
                             Layout.fillWidth: true
+                            visible: (card.it?.facts ?? []).length === 0
                             text: card.it?.pending ? (card.it?.gist ?? "") + "\n" + Translation.tr("Reading the details…")
                                 : (card.it?.detail || card.it?.gist || "")
                             wrapMode: Text.Wrap
@@ -645,24 +726,60 @@ Scope {
                             lineHeight: 1.15
                             color: Qt.alpha(root.ink, 0.92)
                         }
-                        // What the agent would do.
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: card.handle !== null
-                            spacing: 4
-                            Text {
-                                text: Translation.tr("AI CAN") + " — " + (card.handle?.title ?? "")
-                                font.family: root.mono
-                                font.pixelSize: 11
-                                font.letterSpacing: 1
-                                color: card.col
-                            }
+                            visible: (card.it?.facts ?? []).length > 0
+                            spacing: 3
                             Repeater {
-                                model: card.handle?.plan ?? []
-                                delegate: Text {
+                                model: card.it?.facts ?? []
+                                delegate: RowLayout {
+                                    id: factRow
                                     required property string modelData
                                     Layout.fillWidth: true
-                                    text: "☐  " + modelData
+                                    spacing: 8
+                                    Rectangle {
+                                        Layout.alignment: Qt.AlignTop
+                                        Layout.topMargin: 7
+                                        implicitWidth: 5
+                                        implicitHeight: 5
+                                        color: card.col
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: factRow.modelData
+                                        wrapMode: Text.Wrap
+                                        font.family: root.body
+                                        font.pixelSize: 14
+                                        color: Qt.alpha(root.ink, 0.92)
+                                    }
+                                }
+                            }
+                        }
+                        // Why it matters now, and the next step done by hand.
+                        Repeater {
+                            model: [
+                                { tag: Translation.tr("WHY"), text: card.it?.why ?? "", tint: root.red },
+                                { tag: Translation.tr("NEXT"), text: card.it?.next ?? "", tint: root.cyan },
+                            ]
+                            delegate: RowLayout {
+                                id: lineRow
+                                required property var modelData
+                                Layout.fillWidth: true
+                                visible: lineRow.modelData.text.length > 0
+                                spacing: 10
+                                Text {
+                                    Layout.alignment: Qt.AlignTop
+                                    Layout.preferredWidth: 38
+                                    topPadding: 2
+                                    text: lineRow.modelData.tag
+                                    font.family: root.mono
+                                    font.pixelSize: 10
+                                    font.letterSpacing: 1.5
+                                    color: lineRow.modelData.tint
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: lineRow.modelData.text
                                     wrapMode: Text.Wrap
                                     font.family: root.body
                                     font.pixelSize: 13
@@ -670,12 +787,139 @@ Scope {
                                 }
                             }
                         }
+
+                        // The offers: A, B, C, best first, each with the effort it
+                        // saves; a click (or its letter) runs it.
+                        Text {
+                            visible: card.options.length > 0
+                            text: Translation.tr("AI CAN")
+                            font.family: root.mono
+                            font.pixelSize: 11
+                            font.letterSpacing: 1
+                            color: card.col
+                        }
+                        Repeater {
+                            model: card.options.length
+                            delegate: Rectangle {
+                                id: optRow
+                                required property int index
+                                readonly property var o: card.options[optRow.index] ?? ({})
+                                readonly property var result: (card.it?.results ?? {})[optRow.index] ?? null
+                                readonly property bool chosen: card.sel === optRow.index
+                                readonly property bool busy: optRow.result?.state === "running"
+                                Layout.fillWidth: true
+                                implicitHeight: optColumn.implicitHeight + 12
+                                color: optMouse.containsMouse ? Qt.alpha(card.col, 0.18) : optRow.chosen ? Qt.alpha(card.col, 0.08) : "transparent"
+                                border.width: 1
+                                border.color: Qt.alpha(card.col, optRow.chosen ? 0.9 : 0.4)
+                                MouseArea {
+                                    id: optMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: optRow.busy ? Qt.BusyCursor : Qt.PointingHandCursor
+                                    onClicked: if (!optRow.busy) card.run(optRow.index)
+                                }
+                                ColumnLayout {
+                                    id: optColumn
+                                    x: 8
+                                    y: 6
+                                    width: optRow.width - 16
+                                    spacing: 2
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Rectangle {
+                                            implicitWidth: 18
+                                            implicitHeight: 18
+                                            color: card.col
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: String.fromCharCode(65 + optRow.index)
+                                                font.family: root.mono
+                                                font.pixelSize: 11
+                                                font.weight: Font.Bold
+                                                color: root.panel
+                                            }
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: optRow.o.title ?? ""
+                                            elide: Text.ElideRight
+                                            font.family: root.body
+                                            font.pixelSize: 14
+                                            font.weight: Font.DemiBold
+                                            color: root.ink
+                                        }
+                                        // The effort it saves.
+                                        Rectangle {
+                                            visible: (optRow.o.saves ?? "").length > 0
+                                            implicitWidth: savesText.implicitWidth + 12
+                                            implicitHeight: savesText.implicitHeight + 4
+                                            color: "transparent"
+                                            border.width: 1
+                                            border.color: Qt.alpha(root.cyan, 0.7)
+                                            Text {
+                                                id: savesText
+                                                anchors.centerIn: parent
+                                                text: optRow.o.saves ?? ""
+                                                font.family: root.mono
+                                                font.pixelSize: 10
+                                                color: root.cyan
+                                            }
+                                        }
+                                        Text {
+                                            text: optRow.o.kind === "quick" ? (optRow.o.confirm ? Translation.tr("ASKS") : Translation.tr("NOW"))
+                                                : Translation.tr("MUSE")
+                                            font.family: root.mono
+                                            font.pixelSize: 10
+                                            font.letterSpacing: 1.2
+                                            color: Qt.alpha(card.col, 0.9)
+                                        }
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 26
+                                        visible: optRow.result !== null
+                                        text: optRow.busy ? Translation.tr("Doing it…")
+                                            : optRow.result?.state === "done" ? "✓ " + (optRow.result?.text || Translation.tr("Done"))
+                                            : "✗ " + (optRow.result?.text ?? "")
+                                        elide: Text.ElideRight
+                                        font.family: root.mono
+                                        font.pixelSize: 11
+                                        color: optRow.result?.state === "error" ? root.red : optRow.busy ? root.grey : root.cyan
+                                    }
+                                }
+                            }
+                        }
+
+                        // The chosen offer: what its call does, or the agent's plan.
+                        Text {
+                            Layout.fillWidth: true
+                            visible: card.opt?.kind === "quick"
+                            text: "▸ " + card.callText(card.opt)
+                            wrapMode: Text.Wrap
+                            font.family: root.body
+                            font.pixelSize: 12
+                            color: Qt.alpha(root.ink, 0.75)
+                        }
+                        Repeater {
+                            model: card.opt?.kind === "agent" ? (card.opt?.plan ?? []) : []
+                            delegate: Text {
+                                required property string modelData
+                                Layout.fillWidth: true
+                                text: "☐  " + modelData
+                                wrapMode: Text.Wrap
+                                font.family: root.body
+                                font.pixelSize: 13
+                                color: Qt.alpha(root.ink, 0.85)
+                            }
+                        }
                         Rectangle {
                             Layout.fillWidth: true
-                            visible: (card.handle?.draft ?? "").length > 0
+                            visible: (card.opt?.draft ?? "").length > 0
                             implicitHeight: Math.min(160, draftField.implicitHeight + 8)
                             color: Qt.alpha(root.ink, 0.06)
-                            border.width: draftField.activeFocus ? 1 : 0
+                            border.width: draftField.activeFocus || card.confirming === card.sel ? 1 : 0
                             border.color: card.col
                             ScrollView {
                                 anchors.fill: parent
@@ -690,21 +934,48 @@ Scope {
                                     selectedTextColor: root.panel
                                     background: null
                                     placeholderText: Translation.tr("The text it will send")
-                                    onTextChanged: if (activeFocus) card.drafts[Kiroshi.expanded] = text
+                                    onTextChanged: if (activeFocus) card.drafts[`${Kiroshi.expanded}:${card.sel}`] = text
                                     Keys.onEscapePressed: content.forceActiveFocus()
                                     Keys.onPressed: (event) => {
                                         if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & Qt.ControlModifier)) {
-                                            card.doIt();
+                                            if (card.confirming === card.sel) card.send();
+                                            else card.run(card.sel);
                                             event.accepted = true;
                                         }
                                     }
                                 }
                             }
                         }
+                        // An offer that sends: the user's explicit OK.
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: card.confirming >= 0
+                            spacing: 8
+                            Text {
+                                Layout.fillWidth: true
+                                text: Translation.tr("Send this as you?")
+                                wrapMode: Text.Wrap
+                                font.family: root.body
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                                color: root.ink
+                            }
+                            KButton {
+                                main: true
+                                tint: card.col
+                                text: Translation.tr("Send  ⏎")
+                                onClicked: card.send()
+                            }
+                            KButton {
+                                tint: root.grey
+                                text: Translation.tr("Cancel")
+                                onClicked: Kiroshi.cancelConfirm(Kiroshi.expanded)
+                            }
+                        }
                         Text {
                             Layout.fillWidth: true
-                            visible: !card.it?.pending && card.handle === null
-                            text: Translation.tr("Only you can decide this one.")
+                            visible: !card.it?.pending && card.options.length === 0
+                            text: Translation.tr("Nothing here the AI would save you time on.")
                             font.family: root.body
                             font.pixelSize: 12
                             font.italic: true
@@ -714,14 +985,7 @@ Scope {
                             Layout.fillWidth: true
                             spacing: 8
                             KButton {
-                                visible: card.handle !== null
-                                main: true
-                                tint: card.col
-                                text: Translation.tr("Do it  ⏎")
-                                onClicked: card.doIt()
-                            }
-                            KButton {
-                                visible: (card.handle?.draft ?? "").length > 0
+                                visible: (card.opt?.draft ?? "").length > 0
                                 tint: card.col
                                 text: Translation.tr("Copy draft")
                                 onClicked: Quickshell.execDetached(["wl-copy", "--", draftField.text])

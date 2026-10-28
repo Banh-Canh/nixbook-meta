@@ -8738,7 +8738,8 @@ def prefs_command(cfg, argv):
 
 
 # -- feedback -------------------------------------------------------------------------
-# 👍/👎 under an answer (the side panel, the bubble, Full AI, Quick AI):
+# 👍/👎 under an answer (the side panel, the bubble, Full AI, Quick AI; and
+# Kiroshi: an offer the user used, surface kiroshi, read back by its scan):
 # `feedback add JSON` {verdict up|down, request, answer, correction?, app?,
 # surface, notes?: the memory entries and notes the answer was given (the
 # broker's ids)}. Up: those entries and notes helped (ok + 1), and the
@@ -8746,7 +8747,7 @@ def prefs_command(cfg, argv):
 # the user meant, a `correction` the broker gives with similar requests.
 # The last FEEDBACK_KEEP in feedback.json; `feedback list [N]`.
 FEEDBACK_KEEP = 300
-FEEDBACK_SURFACES = ("chat", "bubble", "fullai", "quick")
+FEEDBACK_SURFACES = ("chat", "bubble", "fullai", "quick", "kiroshi")
 
 
 def feedback_path():
@@ -19632,7 +19633,7 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
   prefs list [QUERY]      the preferences (JSON), those about QUERY first
   prefs keys [ID…]        their keys in four languages (the small model; run by add)
   feedback add JSON       a 👍/👎 ({verdict: up|down, request, answer, correction?, app?,
-                          surface: chat|bubble|fullai|quick, notes?: [ids]})
+                          surface: chat|bubble|fullai|quick|kiroshi, notes?: [ids]})
   feedback list [N]       the last N (20) feedbacks (JSON, newest first)
   sent [show] | note PURPOSE TEXT | clear
                           what was sent to a model (JSON, newest first)

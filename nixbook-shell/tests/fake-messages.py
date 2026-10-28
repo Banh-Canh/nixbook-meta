@@ -21,6 +21,7 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
   - tools offered: a tool call (launch_app firefox, or close_window 7 when
     the order says CLOSE), then, once the tool result comes back, the text;
   - a "replies" task: a JSON object of three replies;
+  - KIROSHITEST in it: Kiroshi's scan (its brief, labels, each item's options);
   - text with FAIL500: an HTTP 500; NOEFFORT: a 400 while output_config is
     sent; BIGTOKENS: a 400 naming max_tokens above 8192; PRIVATE: an answer
     naming the masked person back;
@@ -100,6 +101,64 @@ def text_of(body):
             for b in c or []:
                 out.append(str(b.get("text", "")) + str(b.get("content", "")))
     return "\n".join(out)
+
+
+# Kiroshi's scan (KIROSHITEST in the context): the brief, four labels, and
+# per item options the scan must check — trivial, malformed, unknown or
+# switched-off tools dropped, the good ones kept.
+KIROSHI_ITEMS = [
+    {"label": "Music player", "kind": "media", "box": [0, 0, 20, 10], "urgency": "noise", "gist": "POP/STARS playing"},
+    {"label": "Ana asks about dinner", "kind": "message", "box": [10, 5, 30, 10], "urgency": "now",
+     "gist": "Dinner Friday 19:30?"},
+    {"label": "Build error", "kind": "error", "box": [2, 15, 40, 10], "urgency": "soon", "gist": "hash mismatch"},
+    {"label": "Update toasts", "kind": "notification", "box": [40, 0, 20, 8], "urgency": "noise",
+     "gist": "Two updates installed"},
+]
+KIROSHI_DETAILS = {
+    0: {"facts": ["POP/STARS by K/DA is playing"], "why": "", "next": "",
+        "options": [{"title": "Keep music rolling", "kind": "agent", "value": 1, "plan": ["Queue more songs"],
+                     "instruction": "Keep the music playing"},
+                    {"title": "Pause the music", "kind": "quick", "value": 1, "tool": "media_control",
+                     "args": {"action": "pause"}}]},
+    1: {"facts": ["Ana asks if dinner Friday at 19:30 works", "Sent 5 min ago on Signal"],
+        "why": "She is waiting for an answer.", "next": "Answer her on Signal.",
+        "options": [{"title": "Add the dinner to the calendar", "saves": "~1 min · 6 clicks", "kind": "quick",
+                     "value": 2, "tool": "calendar", "args": {"action": "create", "summary": "Dinner with Ana",
+                                                              "start": "2026-10-30T19:30"}},
+                    {"title": "Reply yes to Ana", "saves": "~1 min", "kind": "quick", "value": 3,
+                     "tool": "notification_action", "args": {"id": 42, "reply": "Oui, 19h30 c'est parfait !"}},
+                    {"title": "Add it without a time", "kind": "quick", "value": 3, "tool": "calendar",
+                     "args": {"action": "create", "summary": "Dinner"}},
+                    {"title": "Reply to someone else", "kind": "quick", "value": 3, "tool": "notification_action",
+                     "args": {"id": 999, "reply": "Hi"}},
+                    {"title": "Add it in colour", "kind": "quick", "value": 3, "tool": "calendar",
+                     "args": {"action": "create", "summary": "Dinner", "start": "2026-10-30T19:30", "colour": "red"}}]},
+    2: {"facts": ["nix build failed: hash mismatch in fetchurl", "Expected sha256-AAA, got sha256-BBB"],
+        "why": "The deploy is blocked.", "next": "Update the hash in the package.",
+        "options": [{"title": "File it for tomorrow", "kind": "quick", "value": 2, "tool": "tasks",
+                     "args": {"action": "create", "title": "Fix the hash", "due": "next week"}},
+                    {"title": "Delete the task", "kind": "quick", "value": 2, "tool": "tasks",
+                     "args": {"action": "delete", "task": "t1"}},
+                    {"title": "Note the hashes", "kind": "quick", "value": 2, "tool": "widget",
+                     "args": {"widget": "notes", "action": "add", "text": "sha256-BBB"}},
+                    {"title": "Fix the hash and rebuild", "saves": "~5 min", "kind": "agent", "value": 3,
+                     "plan": ["Open the package file", "Replace the hash with sha256-BBB", "Run the build again"],
+                     "draft": "", "instruction": "In kitty, replace the hash in the package with sha256-BBB and rebuild"}]},
+    3: {"facts": ["Two update notifications"], "why": "", "next": "",
+        "options": [{"title": "Dismiss the update toast", "kind": "quick", "value": 1, "tool": "dismiss_notifications",
+                     "args": {"ids": [7]}},
+                    {"title": "Clear both update notices", "saves": "2 clicks", "kind": "quick", "value": 2,
+                     "tool": "dismiss_notifications", "args": {"ids": [7, 8]}}]},
+}
+
+
+def kiroshi(text):
+    m = re.search(r"Now only item (\d+)", text)
+    if m:
+        return KIROSHI_DETAILS.get(int(m.group(1)), {"facts": [], "options": []})
+    if "Label the 3 to 8" in text:
+        return {"items": KIROSHI_ITEMS, "routine": [0, 1, 3]}
+    return {"doing": "Reading messages", "focus": "Ana is waiting for an answer"}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -293,7 +352,9 @@ class Handler(BaseHTTPRequestHandler):
                     else {"name": "open_app_tools", "input": {"server": "immich"}} if "PHOTOS" in text
                     else {"name": "launch_app", "input": {"app": "firefox"}})
             return self.send(200, {"content": [{"type": "tool_use", "id": "call_1", **call}], "stop_reason": "tool_use"})
-        if '"replies"' in text:
+        if "KIROSHITEST" in text:
+            answer = json.dumps(kiroshi(text), ensure_ascii=False)
+        elif '"replies"' in text:
             answer = json.dumps({"replies": ["Oui !", "Pas ce soir", "À quelle heure ?"]}, ensure_ascii=False)
         elif "PRIVATE" in text:
             answer = "Ask ⟦Person 1⟧"

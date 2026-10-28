@@ -10,7 +10,9 @@
 #   - doing things: handed to nixbook-meta-agent (a stub: its command line);
 #   - Full AI's reactions: the decisions model, the broker, prefs in the
 #     one memory (`prefs add`);
-#   - Kiroshi's scan: the broker asked for the scan surface;
+#   - Kiroshi's scan: the broker asked for the scan surface; its offers
+#     checked (allow-listed tools, their arguments, one-click work dropped),
+#     the facts, the ranking, the offers taken before in the prompt;
 #   - a missing request, a server error.
 # Needs bash, python3 and jq. Run: bash tests/quick-ai.sh
 set -euo pipefail
@@ -59,6 +61,8 @@ context)
   [ -e "$tmp/broker-off" ] && exit 1
   jq -cn --arg t "BROKER for=\$s noact=\$na query=\$q Julien" '{sections: [{name: "facts", text: \$t}], text: \$t}' ;;
 prefs) echo "\$2 \$3" >>"$tmp/prefs.log"; [ -e "$tmp/prefs-off" ] && exit 1; echo '{"ok": true}' ;;
+tools) [ -e "$tmp/tools.json" ] && cat "$tmp/tools.json" ;;
+feedback) echo "\$*" >>"$tmp/feedback.log"; [ -e "$tmp/feedback.json" ] && cat "$tmp/feedback.json" ;;
 esac
 EOF
 chmod +x "$tmp/bin/nixbook-desktop-mcp"
@@ -201,6 +205,76 @@ expect_eq "risky: closing a window isn't" False "$(risky mcp__desktop__close_win
 ask scan "{\"mode\": \"scan\", \"image\": \"$tmp/region.png\", \"context\": {\"app\": \"firefox\", \"title\": \"Inbox\"}, \"lang\": \"en\"}"
 expect_eq "scan: the broker, for the scan surface" "scan|Inbox|firefox|no" "$(grep '^scan' "$tmp/broker.log")"
 expect_contains_ "scan: its context in the prompt" "$(grep -F 'Label the 3' "$tmp/requests.log" | tail -n1)" "BROKER for=scan"
+
+# The scan's offers (the fake's KIROSHITEST answers): only what saves real
+# effort, checked against the allow-list and the tools' schemas (desktop-mcp
+# has calendar, tasks and the notification tools on; the notes widget's
+# group off), the offers this user took before in the prompt, the items
+# ranked by value × urgency.
+cat >"$tmp/tools.json" <<'JSON'
+[{"name": "calendar", "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action"],
+  "properties": {"action": {"type": "string", "enum": ["next", "create", "delete"]}, "summary": {"type": "string"},
+  "start": {"type": "string"}, "end": {"type": "string"}, "location": {"type": ["string", "null"]}}}},
+ {"name": "tasks", "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action"],
+  "properties": {"action": {"type": "string"}, "title": {"type": "string"}, "due": {"type": ["string", "null"]},
+  "task": {"type": "string"}, "notes": {"type": "string"}}}},
+ {"name": "notification_action", "inputSchema": {"type": "object", "additionalProperties": false, "required": ["id"],
+  "properties": {"id": {"type": "integer"}, "action": {"type": "string"}, "reply": {"type": "string"}}}},
+ {"name": "dismiss_notifications", "inputSchema": {"type": "object", "additionalProperties": false,
+  "properties": {"ids": {"type": "array", "items": {"type": "integer"}}, "app": {"type": "string"}}}},
+ {"name": "launch_app", "inputSchema": {"type": "object", "required": ["app"], "properties": {"app": {"type": "string"}}}}]
+JSON
+cat >"$tmp/feedback.json" <<'JSON'
+[{"verdict": "up", "surface": "kiroshi", "request": "Invoice: due Friday", "answer": "File a task due Friday"},
+ {"verdict": "up", "surface": "chat", "request": "open firefox", "answer": "CHATANSWER"},
+ {"verdict": "down", "surface": "kiroshi", "request": "x", "answer": "NOTTAKEN"}]
+JSON
+: >"$tmp/requests.log"
+: >"$tmp/feedback.log"
+ask kiroshi "{\"mode\": \"scan\", \"image\": \"$tmp/region.png\", \"lang\": \"en\",
+  \"context\": {\"app\": \"signal\", \"title\": \"KIROSHITEST Ana\"},
+  \"notifications\": [{\"id\": 42, \"time\": \"10:01\", \"app\": \"Signal\", \"summary\": \"Ana\", \"body\": \"dinner friday 19:30?\", \"canReply\": true, \"actions\": [\"Reply\"]},
+    {\"id\": 7, \"app\": \"Updates\", \"summary\": \"Firefox updated\"}, {\"id\": 8, \"app\": \"Updates\", \"summary\": \"Kitty updated\"}]}"
+item() { jq -c "select(.type == \"item\" and .index == $1)$2" "$tmp/kiroshi.out"; }
+expect_eq "kiroshi: the labels" 4 "$(event kiroshi scan '.items | length')"
+expect_eq "kiroshi: one-click offers dropped (keep the music rolling, a tool not allowed)" "[]" "$(item 0 .options)"
+expect_eq "kiroshi: the best option first, unknown notification / missing date / extra argument dropped" \
+  '["Reply yes to Ana","Add the dinner to the calendar"]' "$(item 1 '.options | map(.title)')"
+expect_eq "kiroshi: a reply needs the user's OK, its text is the draft" '[true,"Oui, 19h30 c'"'"'est parfait !","reply"]' \
+  "$(item 1 '.options[0] | [.confirm, .draft, .draftKey]')"
+expect_eq "kiroshi: a quick option is one checked tool call" '"calendar" {"action":"create","summary":"Dinner with Ana","start":"2026-10-30T19:30"} false "~1 min · 6 clicks"' \
+  "$(item 1 '.options[1] | "\(.tool | tojson) \(.args | tojson) \(.confirm) \(.saves | tojson)"' | jq -r .)"
+expect_eq "kiroshi: the facts, why and next" '["Ana asks if dinner Friday at 19:30 works","Sent 5 min ago on Signal"] "She is waiting for an answer." "Answer her on Signal."' \
+  "$(item 1 '| "\(.facts | tojson) \(.why | tojson) \(.next | tojson)"' | jq -r .)"
+expect_eq "kiroshi: the detail text joined from them (older shells)" '"• Ana asks if dinner Friday at 19:30 works\n• Sent 5 min ago on Signal\nShe is waiting for an answer.\nAnswer her on Signal."' "$(item 1 .detail)"
+expect_eq "kiroshi: no agent option, no handle" "null" "$(item 1 .handle)"
+expect_eq "kiroshi: bad due date, a fixed action changed, a switched-off tool: dropped" '["Fix the hash and rebuild"]' "$(item 2 '.options | map(.title)')"
+expect_eq "kiroshi: the handle = the best agent option (older shells)" '"Fix the hash and rebuild" 3 ""' \
+  "$(item 2 '| "\(.handle.title | tojson) \(.handle.plan | length) \(.handle.draft | tojson)"' | jq -r .)"
+expect_eq "kiroshi: one toast dismissed is no offer, two at once is" '["Clear both update notices"]' "$(item 3 '.options | map(.title)')"
+expect_eq "kiroshi: ranked by value × urgency, the noise without offers last" "[1,2,3,0]" "$(event kiroshi ranked .order)"
+expect_eq "kiroshi: routine = judged routine and worth it without an OK" "[1,3]" "$(event kiroshi ranked .routine)"
+prompt=$(grep -F 'Now only item 1' "$tmp/requests.log" | head -n1)
+expect_contains_ "kiroshi: the offers this user takes in the prompt" "$prompt" 'Offers this user takes (prefer those kinds when they fit):\n- File a task due Friday (for: Invoice: due Friday)'
+case "$prompt" in *CHATANSWER* | *NOTTAKEN*) fail "kiroshi: only the kiroshi offers taken" ;; *) pass "kiroshi: only the kiroshi offers taken" ;; esac
+expect_contains_ "kiroshi: the quick tools offered are the enabled ones" "$prompt" "  - dismiss_notifications"
+case "$prompt" in *"- widget {"*) fail "kiroshi: a switched-off tool not offered" ;; *) pass "kiroshi: a switched-off tool not offered" ;; esac
+expect_contains_ "kiroshi: notifications with their ids" "$prompt" "- #42 [10:01] Signal · Ana: dinner friday 19:30? (buttons: Reply; can reply)"
+expect_contains_ "kiroshi: the trivial offers named as forbidden" "$prompt" "NEVER offer: opening, focusing"
+expect_eq "kiroshi: the feedback asked once" "feedback list 50" "$(cat "$tmp/feedback.log")"
+# Without desktop-mcp's tool list, the allow-list's own rules still apply.
+kpy() { python3 -I -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("qa",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(eval(sys.argv[2]), ensure_ascii=False))' "$script" "$1"; }
+expect_eq "kiroshi: no schema, the rules: a task needs its title" "[]" \
+  "$(kpy 'm.scan_options([{"title": "File it", "kind": "quick", "value": 2, "tool": "tasks", "args": {"action": "create"}}])')"
+expect_eq "kiroshi: no schema, the notes widget allowed, its text the draft" '[["widget", "text", false]]' \
+  "$(kpy '[[o["tool"], o["draftKey"], o["confirm"]] for o in m.scan_options([{"title": "Save the action items", "kind": "quick", "value": 2, "tool": "widget", "args": {"widget": "notes", "text": "- call Bo"}}])]')"
+expect_eq "kiroshi: a page opened to look nothing up is no offer" "[]" \
+  "$(kpy 'm.scan_options([{"title": "Open AI book repo", "kind": "quick", "value": 2, "tool": "browser_open", "args": {"url": "https://github.com/x/ai-book"}}, {"title": "Look up the fix", "kind": "quick", "value": 1, "tool": "browser_open", "args": {"url": "https://nixos.wiki/x"}}])')"
+expect_eq "kiroshi: an agent option needs a plan or a draft" "[]" \
+  "$(kpy 'm.scan_options([{"title": "Summarize the post", "kind": "agent", "value": 2, "plan": ["Read it"], "instruction": "Summarize the post"}])')"
+expect_eq "kiroshi: an older answer's handle is an agent option" '["Reply to Bo", "Reply to Bo"]' \
+  "$(kpy '(lambda d: [d["options"][0]["title"], d["handle"]["title"]])(m.scan_item({"detail": "Bo asks", "handle": {"title": "Reply to Bo", "plan": ["Open Signal", "Send it"], "draft": "Yes", "instruction": "Reply yes to Bo in Signal"}}))')"
+rm "$tmp/tools.json" "$tmp/feedback.json"
 
 # Full AI mode's reactions: ask by default, act alone only when told or
 # after the user agreed twice; their answers kept and given back.

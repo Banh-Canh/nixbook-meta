@@ -204,9 +204,23 @@ something failed. A soft glow around the screens says the AI is in charge.
 - **The microphone stays open**, also while the agent works: give the next order
   whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
 - **It talks**: what it says in its balloon (what it does, its questions, the
-  outcome) is said out loud in its cute voice; the microphone is held meanwhile
-  so it never hears itself, and `Mod+T` cuts it short.
-- Steps that need your OK are asked in its balloon: say "yes" or "no".
+  outcome) is said out loud in its cute voice, the words appearing as they are
+  said (never ahead of the voice), and each answer only once.
+- **Its balloon tells thinking from talking**: what it thinks or is doing
+  (_Thinking…_, a step, a reaction) is a dimmer thought cloud in italics with
+  little circles trailing to it; what it says is the speech bubble; your words
+  are quoted while it hears them. A long answer shows its latest sentences.
+- **Questions stay on screen until you answer**, without calling the bubble
+  up: a step that needs your OK, or a question back to you. A yes/no question
+  has **Yes** / **No** to click (the only place the overlay takes clicks); or
+  say "yes" or "no".
+- **Interrupt it by voice**: say "stop", "wait", "hold on", "pause" (alone),
+  "attends", "arrête", "warte", "halt", "dừng lại", "chờ đã"… while it works or
+  talks: it stops and listens, and what follows ("wait, play jazz instead") is
+  your new order. With the echo-cancelled microphone (`voice.echoCancel`) it
+  also listens while it talks, so just speaking up cuts it short; its own voice
+  heard back is ignored. `Mod+T` stops it too. Settings > Desktop agents >
+  _Interrupt by speaking_ (`ai.voice.bargeIn`).
 - The conversation is still in the speech bubble.
 
 **It reacts to what happens** (_Full AI reacts to what happens_, on by default;
@@ -269,17 +283,41 @@ notifications, your next events) and shows:
 - **Focus** and **Doing** at the top: the one thing that matters now, and what
   you are in the middle of.
 - **What matters, framed on the screen**, coloured by urgency (now, soon,
-  later, noise dimmed), each with a one-line gist.
-- **Open an item** (click it, or press its number) for the substance: key
-  facts, who asks what, what an error means. Then **what the AI can do**:
-  a short plan and, when the task writes something (a reply, a message, a
-  commit message), the **draft, editable**. **Do it** (`Enter`) hands the task
-  to Muse in the bubble, which carries it out with the desktop tools, step by
-  step.
-  **Copy draft**, or **Tell me more** for a closer look at that part of the
-  screen. Items only you can decide say so.
-- **Handle the routine ones** does every item the AI can deal with alone
-  (noise to dismiss, acknowledgements, todos) in one go.
+  later, noise dimmed), each with a one-line gist and its best offer. The items
+  worth acting on come first (the offers' value × urgency).
+- **Open an item** (click it, or press its number) for the substance: the
+  **facts** as bullets (who, what, when or the deadline, the numbers, links,
+  what is asked of you), **why** it matters now and the **next** step if you do
+  it yourself.
+- Then up to three **offers** (`A`, `B`, `C`, best first), each with the effort
+  it saves (`~2 min · 6 clicks`). The scan only offers what saves real work: a
+  reply drafted with the right context, a date in a message added to your
+  calendar, a request filed as a task with its due date, an error's cause and
+  fix, a long thread summed up with its action items in a note, a follow-up
+  reminder, information gathered across apps, several routine notifications
+  cleared at once. It never offers to open, focus or scroll to what is already
+  on screen, dismiss one toast, play or pause, or "keep" what is already going
+  on; when nothing is worth it, the card says so.
+  - A **one-step offer** is a single desktop tool call (a calendar event, a
+    task, a reminder, a desktop note, a notification's button or reply,
+    notifications cleared, text for the clipboard, a page looked up in Zen),
+    its arguments checked before it is shown; it runs at once and shows ✓ or
+    the error in the card. Desktop control's pause and guards apply.
+  - One that **sends** something (a reply) or is risky shows its draft, editable,
+    and waits for **Send** (`Enter`): nothing is sent without that click.
+  - A **bigger offer** shows its plan and, when it writes something, the
+    **draft, editable**; it goes to Muse in the bubble, which carries it out with
+    the desktop tools, step by step. An offer whose draft isn't shown yet is
+    chosen by the first click (to read it) and run by the second.
+  - `Enter` takes the chosen offer (the best one unless you picked another).
+    **Copy draft**, or **Tell me more** for a closer look at that part of the
+    screen.
+- **It learns what you take**: each offer you use is kept as a 👍 (desktop-mcp's
+  `feedback`, surface `kiroshi`), and the next scans are told the last ten, so
+  they offer more of what you actually use.
+- **Handle the routine ones** does every routine item that has an offer worth
+  it and needing no confirmation in one go (one-step offers run in place, the
+  others go to Muse together).
 
 The brief shows in about 4 seconds and the details follow (about 12 seconds
 for everything); `Esc` closes an item, then the scan.

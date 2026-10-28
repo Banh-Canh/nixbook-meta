@@ -15,15 +15,21 @@ import QtQuick
  * its accessibility text, the open windows, their recent activity when
  * ai.initiative.recentContext is on, the latest notifications, the next
  * events, the time) to `nixbook-quick-ai` (mode "scan", scripts/quick-ai.py),
- * masked on the way. It answers in three waves: the brief (what they are
+ * masked on the way. It answers in waves: the brief (what they are
  * doing, the one thing that matters now) in ~3 s, the 3–8 things on screen
- * (boxes, urgency, a gist) in ~6 s, then each one's substance and handle
- * (a plan, a draft, a self-contained instruction for the desktop agent) as
- * they come. The overlay (modules/ii/kiroshi/KiroshiScan.qml) shows them;
- * Do it hands the instruction (with the draft as edited) to Muse's agent in
- * the speech bubble's session (QuickAi.command), Tell me more asks about the
- * item's crop,
- * and the routine ones go in one combined instruction. Gated like Quick AI
+ * (boxes, urgency, a gist) in ~6 s, then each one's substance (facts, why it
+ * matters, the next step) and up to three options as they come, and last
+ * their order (best first: the options' value × urgency). An option exists
+ * only when it saves real effort (the script drops one-click work and
+ * anything malformed): a quick one is one desktop-mcp tool call, run here
+ * at once (`nixbook-desktop-mcp call`: desktop control's pause and guards
+ * apply), its ✓ or error shown in the card, and one that sends something
+ * (a reply) or is risky waits for the user's Send; an agent one hands its
+ * instruction (with the draft as edited) to Muse's agent in the speech
+ * bubble's session (QuickAi.command). Each option the user uses is kept as
+ * a 👍 (`feedback add`, surface kiroshi), which the next scans read back as
+ * the offers this user takes. Tell me more asks about the item's crop, and
+ * the routine ones are done in one go. Gated like Quick AI
  * (QuickAi.available: ai.quick.enable, policies.ai).
  */
 Singleton {
@@ -36,6 +42,8 @@ Singleton {
     property bool scanning: false
     // The output scanned (its name), the screenshot (kept for crops) and its size.
     property string screenName: ""
+    // The focused app when it scanned (the feedback's).
+    property string scanApp: ""
     property string imagePath: ""
     property int imageWidth: 0
     property int imageHeight: 0
@@ -43,9 +51,15 @@ Singleton {
     property string doing: ""
     property string focus: ""
     property bool briefIn: false
-    // [{label, kind, box: [x, y, w, h] (image px), urgency: now|soon|later|noise,
-    // gist, detail, handle: {title, plan, draft, instruction} | null, pending}]
+    // [{key (its index in the script's answer), label, kind, box: [x, y, w, h]
+    // (image px), urgency: now|soon|later|noise, gist, facts, why, next,
+    // detail, options: [{title, saves, value 1-3, kind quick|agent, tool,
+    // args, confirm, draft, draftKey | plan, draft, instruction}], handle (the
+    // best agent option, older answers), pending, results: {option: {state
+    // running|done|error, text}}, confirming: the option waiting for Send}]
     property var items: []
+    // The items' new places once ranked: perm[old index] = new index.
+    signal reordered(var perm)
     property bool itemsIn: false
     // Indexes of the items the agent can handle without the user's judgment.
     property var routine: []
@@ -59,7 +73,14 @@ Singleton {
     // The item opened in the overlay (-1: none).
     property int expanded: -1
 
-    readonly property var routineReady: root.routine.filter(i => root.items[i]?.handle)
+    readonly property var routineReady: root.routine.filter(i => root.routineOption(i) >= 0)
+
+    // The option a routine item is done with: its best worth it (value ≥ 2)
+    // that needs no Send, -1 if none.
+    function routineOption(i) {
+        const opts = root.items[i]?.options ?? [];
+        return opts.findIndex(o => (o.value ?? 1) >= 2 && !o.confirm);
+    }
 
     function scan() {
         if (!QuickAi.available) return QuickAi.refuse();
@@ -67,6 +88,7 @@ Singleton {
         const name = WM.focusedMonitor?.name ?? Quickshell.screens[0]?.name ?? "";
         const top = ToplevelManager.activeToplevel;
         root.screenName = name;
+        root.scanApp = top?.appId ?? "";
         root.items = [];
         root.routine = [];
         root.doing = "";
@@ -99,9 +121,13 @@ Singleton {
     function situation() {
         const windows = (WM.windowList ?? []).slice().sort((a, b) => (b.focusedAt ?? 0) - (a.focusedAt ?? 0))
             .slice(0, 10).map(w => ({ app: w.appId ?? "", title: w.title ?? "" }));
+        // With their ids, buttons and whether they take a typed reply: what
+        // a quick option acts on (notification_action, dismiss_notifications).
         const notifications = (Notifications.list ?? []).slice().sort((a, b) => (b.time ?? 0) - (a.time ?? 0))
-            .slice(0, 8).map(n => ({ time: Qt.formatDateTime(new Date(n.time), "hh:mm"), app: n.appName ?? "",
-                summary: n.summary ?? "", body: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 300) }));
+            .slice(0, 8).map(n => ({ id: n.notificationId, time: Qt.formatDateTime(new Date(n.time), "hh:mm"),
+                app: n.appName ?? "", summary: n.summary ?? "", body: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 300),
+                actions: (n.actions ?? []).filter(a => a.identifier !== "default").map(a => a.text || a.identifier),
+                canReply: !!n.notification && !!n.hasInlineReply }));
         let events = [];
         try {
             events = CalendarEvents.upcoming(3).map(e => ({ when: CalendarEvents.whenText(e), summary: e.summary ?? "",
@@ -123,32 +149,130 @@ Singleton {
         root.expanded = root.expanded === i ? -1 : (i >= 0 && i < root.items.length ? i : -1);
     }
     function setItem(i, changes) {
+        if (i < 0 || i >= root.items.length) return;
         const items = root.items.slice();
         items[i] = Object.assign({}, items[i], changes);
         root.items = items;
     }
+    function indexOfKey(key) {
+        return root.items.findIndex(it => it.key === key);
+    }
+    // The script's order (its indexes, best first) and routine ones.
+    function applyRank(order, routine) {
+        const old = root.items;
+        if (!Array.isArray(order) || order.length !== old.length) return;
+        const items = order.map(k => old.find(it => it.key === k));
+        if (items.some(it => !it)) return;
+        const pos = {};
+        items.forEach((it, i) => pos[it.key] = i);
+        const perm = old.map(it => pos[it.key]);
+        root.items = items;
+        root.routine = (routine ?? []).map(k => pos[k]).filter(i => i !== undefined).sort((a, b) => a - b);
+        if (root.expanded >= 0) root.expanded = perm[root.expanded];
+        root.reordered(perm);
+    }
 
     // ── Handing off ──
-    // The item's handle, done by the desktop agent; `draft` as the user left it.
-    function doIt(i, draft) {
+    // Option n of item i. A quick one runs its tool call here (one that
+    // sends or is risky first waits for Send: `confirmed`, the user's click
+    // in the card, never from IPC); an agent one goes to Muse's agent with
+    // its instruction. `draft`: the text as the user left it. `fromUser`:
+    // a click or a key (kept as a 👍 for the next scans).
+    function runOption(i, n, draft, confirmed, fromUser) {
         const it = root.items[i];
-        const h = it?.handle;
-        if (!h) return;
-        let text = h.instruction;
-        if (draft !== undefined && draft !== null && String(draft) !== (h.draft ?? ""))
-            text += `\n\nThe text to send or type is exactly this (the user edited it):\n<<<\n${draft}\n>>>`;
+        const o = it?.options?.[n];
+        if (!o) return;
+        const edited = draft !== undefined && draft !== null && String(draft) !== (o.draft ?? "") ? String(draft) : null;
+        if (o.kind === "quick") {
+            if (o.confirm && !confirmed) {
+                root.setItem(i, { confirming: n });
+                return;
+            }
+            const args = Object.assign({}, o.args);
+            if (edited !== null && o.draftKey) args[o.draftKey] = edited;
+            if (o.draftKey && String(args[o.draftKey] ?? "").trim().length === 0) return;
+            root.setResult(i, n, { state: "running", text: "" }, -1);
+            quickCall.createObject(root, { key: it.key, option: n, serial: proc.serial, tool: o.tool, args: args });
+            if (fromUser !== false) root.taken(it, o);
+            return;
+        }
+        let text = o.instruction;
+        if (edited !== null)
+            text += `\n\nThe text to send or type is exactly this (the user edited it):\n<<<\n${edited}\n>>>`;
+        if (fromUser !== false) root.taken(it, o);
         root.close();
         // The bubble shows the task's title, the agent gets the instruction.
-        QuickAi.command(text, "scan", h.title ? `${h.title} (${it.label})` : it.label);
+        QuickAi.command(text, "scan", o.title ? `${o.title} (${it.label})` : it.label);
     }
-    // The routine ones, in one go.
+    function cancelConfirm(i) {
+        root.setItem(i, { confirming: -1 });
+    }
+    function setResult(i, n, result, confirming) {
+        const results = Object.assign({}, root.items[i]?.results ?? {});
+        results[n] = result;
+        root.setItem(i, confirming === undefined ? { results: results } : { results: results, confirming: confirming });
+    }
+    // The item's best option (Enter, IPC doIt): option 0.
+    function doIt(i, draft) {
+        root.runOption(i, 0, draft, false, true);
+    }
+    // An option the user used: a 👍 the next scans read back ("Offers this
+    // user takes"). Nothing goes to a model here.
+    function taken(it, o) {
+        const entry = { verdict: "up", surface: "kiroshi", request: `${it.label}: ${it.gist ?? ""}`.slice(0, 2000),
+            answer: String(o.title ?? "").slice(0, 2000), app: root.scanApp };
+        DesktopHelper.run(["feedback", "add", JSON.stringify(entry)], "", (code, out) => {
+            if (code !== 0) console.log("[Kiroshi] Feedback not saved:", out);
+        });
+    }
+    // The routine ones, in one go: the quick ones run here, the agent ones
+    // in one combined instruction.
     function handleRoutine() {
         const ready = root.routineReady;
         if (ready.length === 0) return;
-        const lines = ready.map((i, n) => `${n + 1}. ${root.items[i].label}: ${root.items[i].handle.instruction}`);
+        const agent = [];
+        for (const i of ready) {
+            const n = root.routineOption(i);
+            const it = root.items[i];
+            const o = it.options[n];
+            if (o.kind === "quick") root.runOption(i, n, undefined, false, true);
+            else {
+                agent.push({ it: it, o: o });
+                root.taken(it, o);
+            }
+        }
+        if (agent.length === 0) return;
+        const lines = agent.map((a, n) => `${n + 1}. ${a.it.label}: ${a.o.instruction}`);
         root.close();
         QuickAi.command(`Handle these small things for me, in order, without asking:\n${lines.join("\n")}`, "scan",
-            Translation.tr("Handle the routine ones: %1").arg(ready.map(i => root.items[i].label).join(", ")));
+            Translation.tr("Handle the routine ones: %1").arg(agent.map(a => a.it.label).join(", ")));
+    }
+    // A quick option's tool call, as the user's own (desktop control's
+    // pause, tool groups and guards apply in desktop-mcp).
+    Component {
+        id: quickCall
+        Process {
+            id: qc
+            property int key: -1
+            property int option: 0
+            property int serial: 0
+            property string tool: ""
+            property var args: ({})
+            command: ["nixbook-desktop-mcp", "call", qc.tool, JSON.stringify(qc.args)]
+            environment: ({ NIXBOOK_DESKTOP_MCP_CLIENT: "Kiroshi" })
+            running: true
+            stdout: StdioCollector { id: qcOut }
+            stderr: StdioCollector { id: qcErr }
+            onExited: (code) => {
+                const i = root.indexOfKey(qc.key);
+                if (qc.serial === proc.serial && i >= 0) {
+                    const said = (qcOut.text.trim() || qcErr.text.trim()).split("\n")[0].slice(0, 200);
+                    root.setResult(i, qc.option, code === 0 ? { state: "done", text: said }
+                        : { state: "error", text: said || Translation.tr("Failed (exit %1)").arg(code) });
+                }
+                qc.destroy();
+            }
+        }
     }
     // The item's part of the screen, explained in context.
     function tellMore(i) {
@@ -219,15 +343,21 @@ Singleton {
                     root.imageWidth = ev.width ?? 0;
                     root.imageHeight = ev.height ?? 0;
                     root.itemsMs = ev.ms ?? 0;
-                    root.items = (ev.items ?? []).map(it => Object.assign({ detail: "", handle: null, pending: true }, it));
+                    root.items = (ev.items ?? []).map((it, k) => Object.assign({ key: k, facts: [], why: "", next: "",
+                        detail: "", options: [], handle: null, pending: true, results: ({}), confirming: -1 }, it));
                     root.routine = ev.routine ?? [];
                     root.itemsIn = true;
                     break;
-                case "item":
-                    if (ev.index >= 0 && ev.index < root.items.length)
-                        root.setItem(ev.index, { detail: ev.detail ?? "", handle: ev.handle ?? null, pending: false,
-                            failed: ev.error ?? "" });
+                case "item": {
+                    const at = root.indexOfKey(ev.index);
+                    if (at >= 0)
+                        root.setItem(at, { facts: ev.facts ?? [], why: ev.why ?? "", next: ev.next ?? "",
+                            detail: ev.detail ?? "", handle: ev.handle ?? null, failed: ev.error ?? "", pending: false,
+                            // Older scripts: the handle alone, as an agent option.
+                            options: ev.options ?? (ev.handle ? [Object.assign({ kind: "agent", value: 2, saves: "" }, ev.handle)] : []) });
                     break;
+                }
+                case "ranked": root.applyRank(ev.order ?? [], ev.routine ?? root.routine); break;
                 case "error": root.error = ev.error ?? Translation.tr("No answer"); break;
                 case "done": root.lastMs = ev.ms ?? (Date.now() - root.startedAt); break;
                 }
@@ -257,9 +387,12 @@ Singleton {
             else root.scan();
         }
         function close(): void { root.close(); }
-        // Item N (from 1): opened, done (its handle), or explained.
+        // Item N (from 1): opened, done (its best option), or explained.
         function expand(n: int): void { root.expand(n - 1); }
-        function doIt(n: int): void { root.doIt(n - 1); }
+        function doIt(n: int): void { root.runOption(n - 1, 0, undefined, false, false); }
+        // Option M (from 1) of item N: run (one that sends still waits for
+        // the Send click in the card: never sent from here).
+        function option(n: int, m: int): void { root.runOption(n - 1, m - 1, undefined, false, false); }
         function tellMore(n: int): void { root.tellMore(n - 1); }
         function handleRoutine(): void { root.handleRoutine(); }
         function status(): string {
