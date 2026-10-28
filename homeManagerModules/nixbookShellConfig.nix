@@ -29,11 +29,15 @@ let
   hmModules = enabledIn (config.customHomeManagerModules or { });
   niriEnabled = config.customHomeManagerModules.niriConfig.enable or false;
   # Music apps the AI chat gets an MCP server for, where they're installed.
+  # Matched by name, not by derivation: a wrapped copy (lib/electronA11y.nix's
+  # "pear-desktop-a11y", totoro's) is still the app — comparing derivations
+  # silently dropped the YouTube Music server there.
+  installed = name: lib.any (p: lib.hasPrefix name (lib.getName p)) config.home.packages;
   musicMcpServers =
-    lib.optionalAttrs (lib.elem pkgs.customPkgs.pear-desktop config.home.packages) {
+    lib.optionalAttrs (installed "pear-desktop") {
       youtube-music.command = lib.getExe pkgs.customPkgs.youtube-music-mcp;
     }
-    // lib.optionalAttrs (lib.elem pkgs.spotify config.home.packages) {
+    // lib.optionalAttrs (installed "spotify") {
       spotify.command = lib.getExe pkgs.customPkgs.spotify-mcp;
     };
   extraMcpServers =
