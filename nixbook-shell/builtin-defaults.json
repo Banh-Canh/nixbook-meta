@@ -64,7 +64,7 @@
       "commandLineFolders": true,
       "effort": "low",
       "feedback": true,
-      "mcpServersOff": ["linkedin", "immich", "jellyfin"],
+      "mcpServersOff": ["linkedin", "immich", "jellyfin", "seerr"],
       "memoryModel": "small",
       "model": "main",
       "resolve": true,
@@ -77,6 +77,11 @@
       "url": ""
     },
     "jellyfin": {
+      "apiKeyFile": "",
+      "url": "",
+      "user": ""
+    },
+    "seerr": {
       "apiKeyFile": "",
       "url": "",
       "user": ""
