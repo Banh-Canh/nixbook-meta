@@ -261,7 +261,9 @@ ContentPage {
                 font.pixelSize: Appearance.font.pixelSize.small
                 text: Translation.tr("Acting goes through the desktop tools' own rules: paused with Mod+Shift+Escape, never in terminals or password managers, every step in the audit log. Text is sent with the private details hidden (the privacy mask below).")
             }
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
+                Layout.fillWidth: true
                 spacing: 8
                 SmallButton {
                     materialIcon: "bolt"
@@ -539,7 +541,9 @@ ContentPage {
                     text: Translation.tr("× : not private, never learned again.")
                 }
             }
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
+                Layout.fillWidth: true
                 spacing: 8
                 SmallButton {
                     materialIcon: "delete"
@@ -685,7 +689,9 @@ ContentPage {
                 }
             }
 
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
+                Layout.fillWidth: true
                 spacing: 8
                 SmallButton {
                     materialIcon: "campaign"
@@ -738,7 +744,9 @@ ContentPage {
             ContentSubsection {
                 title: Translation.tr("What it sent")
                 tooltip: Translation.tr("Everything the small model was given (notifications, pairing, news, memory passes…) and what went with a question asked in the bubble, the last 7 days. A local model's are marked: they never left this computer. Not your chats in the side panel: you wrote those.")
-                RowLayout {
+                // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+                Flow {
+                    Layout.fillWidth: true
                     spacing: 8
                     SmallButton {
                         materialIcon: sentList.shown ? "expand_less" : "receipt_long"
@@ -975,7 +983,8 @@ ContentPage {
                 from: 1; to: 8; stepSize: 1
                 onValueChanged: Config.options.ai.autonomy.maxTasks = value
             }
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
                 Layout.fillWidth: true
                 spacing: 8
                 SmallButton {
@@ -1051,6 +1060,72 @@ ContentPage {
                         }
                     }
                 }
+            }
+        }
+
+        // Terminal & coding (ai.terminal, services/TerminalAccess.qml; the
+        // desktop MCP server's `terminal` tools over kitty's and nvim's sockets).
+        ContentSection {
+            icon: "terminal"
+            title: Translation.tr("Terminal & coding")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Muse helps while you code, in kitty and Neovim: it reads what a terminal shows, puts a command on your prompt for you to run, runs one itself after you say Allow (in its own kitty tab named Muse), and reads or opens files in the Neovim in front. Guards: windows at a password prompt or running a secret tool (sudo, ssh, gpg, pass, rbw…) are never read, secrets (keys, tokens, passwords) are redacted from what it reads, sudo and its own controls are never run, risky commands (rm -rf, git push, reboot…) always ask, and typing blindly into a terminal stays refused.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.terminal.read"
+                    buttonIcon: "visibility"
+                    text: Translation.tr("Read my terminals (output, screen, selection)")
+                    checked: Config.options.ai.terminal.read
+                    onCheckedChanged: Config.options.ai.terminal.read = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.terminal.suggest"
+                    buttonIcon: "keyboard_command_key"
+                    text: Translation.tr("Suggest commands on my prompt (I press Enter)")
+                    checked: Config.options.ai.terminal.suggest
+                    onCheckedChanged: Config.options.ai.terminal.suggest = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.terminal.run"
+                    buttonIcon: "play_arrow"
+                    text: Translation.tr("Run commands for me (asked first)")
+                    checked: Config.options.ai.terminal.run
+                    onCheckedChanged: Config.options.ai.terminal.run = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.terminal.runVisible"
+                    buttonIcon: "tab"
+                    enabled: !nixManaged && Config.options.ai.terminal.run
+                    text: Translation.tr("Run them in Muse's own kitty tab")
+                    checked: Config.options.ai.terminal.runVisible
+                    onCheckedChanged: Config.options.ai.terminal.runVisible = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.terminal.editor"
+                    buttonIcon: "code"
+                    text: Translation.tr("Neovim: read the file, selection and diagnostics, open files")
+                    checked: Config.options.ai.terminal.editor
+                    onCheckedChanged: Config.options.ai.terminal.editor = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.terminal.context"
+                    buttonIcon: "history"
+                    text: Translation.tr("Send the terminal in front with my questions")
+                    checked: Config.options.ai.terminal.context
+                    onCheckedChanged: Config.options.ai.terminal.context = checked
+                }
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pixelSize: Appearance.font.pixelSize.smaller
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Each command Muse runs is asked first, with the command and its folder shown; a kind of command you allowed three times in a row can stop being asked (Autonomy above), never the risky ones. kitty needs remote control on (nixbook's kitty configuration does it: a socket per kitty in your runtime folder).")
             }
         }
 
@@ -2175,7 +2250,9 @@ ContentPage {
                         echoMode: TextInput.Password
                         onAccepted: immichSave.clicked()
                     }
-                    RowLayout {
+                    // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+                    Flow {
+                        Layout.fillWidth: true
                         spacing: 6
                         SmallButton {
                             id: immichSave
@@ -2477,7 +2554,9 @@ ContentPage {
                 }
             }
 
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
+                Layout.fillWidth: true
                 spacing: 8
                 SmallButton {
                     materialIcon: "delete_sweep"
@@ -2571,7 +2650,9 @@ ContentPage {
                 }
             }
 
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
+                Layout.fillWidth: true
                 visible: (DesktopControl.habits.enabled ?? false) || (DesktopControl.habits.days ?? 0) > 0
                 spacing: 8
                 SmallButton {
@@ -2678,7 +2759,9 @@ ContentPage {
                 }
             }
 
-            RowLayout {
+            // Wraps onto more lines on a narrow page (a RowLayout widened the page).
+            Flow {
+                Layout.fillWidth: true
                 spacing: 8
                 SmallButton {
                     materialIcon: "delete_sweep"

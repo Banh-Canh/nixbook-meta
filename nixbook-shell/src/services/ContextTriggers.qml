@@ -16,7 +16,9 @@ import QtQuick
  * want me to look into it?") with the order Muse would do on Yes, within the
  * day's budget and quiet rules. Each kind has its switch and a cooldown:
  *   - command_failed_again {command, error}: the same command failed twice
- *     in 10 minutes in a terminal (RecentContext's shell hook);
+ *     in 10 minutes in a terminal (RecentContext's shell hook); with
+ *     ai.terminal.read on, the error tells Muse to read the output with
+ *     terminal_read (the order carries it);
  *   - error_copied {text}: what was copied looks like an error or a stack
  *     trace (two lines or more saying Error, Exception, Traceback, panic,
  *     failed, or "at …:line");
@@ -112,8 +114,11 @@ Singleton {
     // -- from RecentContext: a command failing again, an error copied -------
     function commandFailed(command, cwd, exit) {
         if (!root.commandFailedAgain) return false
+        // The offer's order (the error goes in it): Muse reads the output
+        // from the terminal (terminal_read) instead of guessing it.
+        const hint = TerminalAccess.read ? "use terminal_read for the output" : ""
         return root.emit("command_failed_again", command, { command: String(command).slice(0, 300), cwd: cwd,
-            error: exit ? `exit ${exit}` : "" })
+            error: [exit ? `exit ${exit}` : "", hint].filter(x => x).join(" — ") })
     }
     // Two lines or more that say an error happened (a stack trace).
     readonly property var errorLine: /\b(error|exception|traceback|panic|failed)\b|^\s*at\s+\S.*:\d+/i

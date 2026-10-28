@@ -35,7 +35,11 @@ them):
                           what the agent loop asks about and reports
   action_class, class_summary
                           the kind of step a call is (the trust ladder, the
-                          journal: `close_window@firefox`, `calendar:add`)
+                          journal: `close_window@firefox`, `calendar:add`,
+                          `terminal_run:git-status`)
+  command_risk, command_segments, terminal_never
+                          a command line read as the shell would: its kind,
+                          whether it is risky, the kinds always asked
   config(), routing()     the shell's settings (config.json)
 
 Heavy modules (http.client, ssl, urllib) are imported when first used: the
@@ -1070,10 +1074,17 @@ def _bare(name, meta):
     return m.group(1) if m else str(name)
 
 
+# Tools that only read whatever their arguments (the terminal's and the
+# editor's: what is on screen, the file in front).
+READ_ONLY_TOOLS = {"terminal_list", "terminal_read", "editor_read"}
+
+
 def reads_only(name, args, meta=None):
     """True for a call that only reads: a tool annotated read-only (meta:
     {name: {read_only}}), or a multi-purpose tool asked a reading action."""
     if isinstance(meta, dict) and meta.get(name, {}).get("read_only"):
+        return True
+    if _bare(name, meta) in READ_ONLY_TOOLS:
         return True
     action = str((args or {}).get("action") or "").lower()
     return action in READ_ACTIONS
@@ -1081,6 +1092,9 @@ def reads_only(name, args, meta=None):
 
 def is_risky(name, args, meta=None):
     tool = _bare(name, meta)
+    if tool == "terminal_run":
+        # A command: risky by what it does (command_risk), and when it can't be read.
+        return command_risk((args or {}).get("command") if isinstance(args, dict) else None)[0]
     if HARMLESS_TOOL.search(tool):
         return False
     if RISKY_TOOL.search(tool):
@@ -1096,6 +1110,366 @@ def is_risky(name, args, meta=None):
         said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
         return bool(RISKY_TARGET.search(said))
     return False
+
+
+# ── Commands (terminal_run): their kind and their risk ─────────────────────
+# A command line is read as the shell would split it (shlex, its operators
+# kept): segments joined by && || ; | &, each with its words (assignments
+# and wrappers like env, nohup, timeout, xargs, `bash -c "…"` unwrapped:
+# what really runs) and its redirections; $(…), `…`, <(…) and find's -exec
+# read as commands of their own. A line that can't be read is risky.
+
+# Tools whose first word after them is part of the kind (`git status`,
+# `cargo test`): the options they take an argument for are skipped first.
+SUBCOMMAND_TOOLS = {
+    "git": {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"},
+    "cargo": {"-C", "--config", "-Z", "--manifest-path", "--color"},
+    "npm": {"--prefix", "-w", "--workspace"}, "pnpm": {"-C", "--dir", "--filter", "-F"},
+    "yarn": {"--cwd"}, "go": {"-C"}, "nix": {"--option", "-I", "--extra-experimental-features", "--log-format"},
+    "make": {"-C", "-f", "--file", "--directory", "-j", "-l", "-o", "-W"},
+    "docker": {"-H", "--host", "--context", "-c", "--config", "-l", "--log-level"},
+    "podman": {"--connection", "-c", "--url", "--root", "--runroot", "--log-level"},
+    "kubectl": {"-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-s", "--server"},
+    "colmena": {"-f", "--config", "--show-trace"},
+    "systemctl": {"-H", "--host", "-M", "--machine", "-t", "--type", "-p", "--property", "-n", "--lines", "-o",
+                  "--output"},
+}
+# What only wraps the real command: env, nohup, timeout… (the options that
+# take an argument, then for timeout its duration).
+COMMAND_WRAPPERS = {
+    "env": {"-u", "--unset", "-C", "--chdir"}, "nohup": set(), "time": {"-f", "--format", "-o", "--output"},
+    "command": set(), "builtin": set(), "exec": {"-a"}, "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "--class", "-n", "--classdata", "-p"}, "stdbuf": {"-i", "-o", "-e"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"}, "setsid": set(), "unbuffer": set(), "chronic": set(),
+    "caffeinate": set(), "xargs": {"-I", "-i", "-n", "--max-args", "-P", "--max-procs", "-d", "--delimiter", "-a",
+                                   "--arg-file", "-L", "-s", "-E", "-e"},
+    "watch": {"-n", "--interval", "-d"}, "systemd-inhibit": {"--what", "--who", "--why", "--mode"},
+}
+# Heads skipped when naming a command's kind: `cd x && cargo test` is a
+# cargo test.
+COMMAND_PREAMBLE = {"cd", "pushd", "popd", "export", "set", "unset", "true", ":", "shopt", "ulimit", "umask"}
+SHELL_NAMES = {"sh", "bash", "zsh", "dash", "fish", "ksh", "mksh", "ash", "busybox"}
+# What runs whatever it is given (a pipe into one, `bash <(curl …)`).
+INTERPRETERS = SHELL_NAMES | {"python", "python3", "perl", "ruby", "node", "deno", "bun", "php", "lua", "source", "."}
+PRIVILEGE_TOOLS = {"sudo", "su", "doas", "pkexec", "run0", "sudoedit", "machinectl"}
+# Kinds always asked whatever the arguments (`rm` alone too): what they
+# can do is rarely undone. A risky command of another kind gets `-risky`
+# (`terminal_run:echo-risky` for `echo x > /dev/sda`), never promoted either.
+TERMINAL_NEVER = {
+    "rm", "dd", "shred", "wipefs", "fdisk", "sfdisk", "parted", "sgdisk", "mkswap", "blkdiscard", "chmod", "chown",
+    "chgrp", "kill", "pkill", "killall", "xkill", "shutdown", "reboot", "poweroff", "halt", "git-push", "git-reset",
+    "git-clean", "git-rebase", "git-filter-branch", "git-filter-repo", "systemctl-stop", "systemctl-restart",
+    "systemctl-disable", "systemctl-mask", "systemctl-kill", "systemctl-poweroff", "systemctl-reboot",
+    "systemctl-halt", "systemctl-isolate", "nix-collect-garbage", "nixos-rebuild", "nixos-install", "colmena-apply",
+    "colmena-apply-local", "npm-publish", "pnpm-publish", "yarn-publish", "cargo-publish", "kubectl-delete",
+    "kubectl-apply", "kubectl-replace", "kubectl-drain", "kubectl-patch", "docker-rm", "docker-rmi", "podman-rm",
+    "podman-rmi", "eval", "unparsed", "empty", *SHELL_NAMES, *PRIVILEGE_TOOLS,
+}
+COMMAND_SEPARATORS = {"&&", "||", ";", "|", "&", "|&", ";;", ";&", "(", ")", "((", "))", "{", "}"}
+DEV_SAFE = re.compile(r"^/dev/(null|zero|stdout|stderr|stdin|tty|fd/\d+|shm/.*)$")
+GLOB = re.compile(r"[*?\[{]")
+
+
+def _word(w):
+    return os.path.basename(str(w)).lower()
+
+
+def _inner_commands(command):
+    """The commands inside $(…), <(…), >(…) and `…`, or None when the
+    parentheses don't close."""
+    out = re.findall(r"`([^`]*)`", command)
+    i, n = 0, len(command)
+    while i < n - 1:
+        if command[i] in "$<>" and command[i + 1] == "(":
+            arith = command[i] == "$" and command[i + 2:i + 3] == "("
+            depth, j = 0, i + 1
+            while j < n:
+                if command[j] == "(":
+                    depth += 1
+                elif command[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if depth:
+                return None
+            if not arith:
+                out.append(command[i + 2:j])
+            i = j
+        i += 1
+    return out
+
+
+def _tokens(command):
+    import shlex
+    lex = shlex.shlex(command.replace("\r", " ").replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    return list(lex)
+
+
+def _skip_options(words, takes_arg):
+    """The words after the leading options (and their arguments)."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w == "--":
+            return words[i + 1:]
+        if not w.startswith("-") or w == "-":
+            break
+        i += 2 if w in takes_arg else 1
+    return words[i:]
+
+
+def _unwrap(words, depth):
+    """(the words that really run, the command strings they run besides:
+    `bash -c STR`'s STR, find's -exec, the wrappers they came through)."""
+    extra, via = [], set()
+    for _ in range(8):
+        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+            words = words[1:]
+        if not words:
+            return words, extra, via
+        h = _word(words[0])
+        if h in COMMAND_WRAPPERS:
+            via.add(h)
+            rest = _skip_options(words[1:], COMMAND_WRAPPERS[h])
+            if h == "env":
+                while rest and "=" in rest[0] and not rest[0].startswith("-"):
+                    rest = rest[1:]
+            if h == "timeout" and rest:
+                rest = rest[1:]
+            if h == "watch" and len(rest) == 1:  # watch "a command"
+                extra.append(rest[0])
+                return [], extra, via
+            words = rest
+            continue
+        if h in SHELL_NAMES:
+            for k, w in enumerate(words[1:], 1):
+                if w.startswith("-") and not w.startswith("--") and "c" in w[1:]:
+                    if k + 1 < len(words):
+                        extra.append(words[k + 1])
+                        return [], extra, via
+                    break
+        if h == "find":
+            for k, w in enumerate(words):
+                if w in ("-exec", "-execdir", "-ok", "-okdir") and k + 1 < len(words):
+                    tail = words[k + 1:]
+                    end = next((m for m, x in enumerate(tail) if x in (";", "+", "\\;")), len(tail))
+                    extra.append(" ".join(_quote(x) for x in tail[:end]) or "true")
+        return words, extra, via
+    return words, extra, via
+
+
+def _quote(w):
+    import shlex
+    return shlex.quote(w)
+
+
+def command_segments(command, depth=0):
+    """[{words, redirects, piped (fed by a pipe), via (wrappers)}] of a
+    command line, or None when it can't be read."""
+    if not isinstance(command, str) or depth > 4:
+        return None
+    inner = _inner_commands(command)
+    if inner is None:
+        return None
+    try:
+        tokens = _tokens(command)
+    except ValueError:
+        return None
+    segments, cur, redirects, piped = [], [], [], False
+    pending_redirect = False
+
+    def close(sep):
+        nonlocal cur, redirects, piped
+        if cur or redirects:
+            words, extra, via = _unwrap(cur, depth)
+            segments.append({"words": words, "redirects": redirects, "piped": piped, "via": via})
+            for e in extra:
+                sub = command_segments(e, depth + 1)
+                if sub is None:
+                    raise ValueError("unreadable")
+                segments.extend(sub)
+            piped = sep in ("|", "|&")
+        elif sep not in ("(", ")", "{", "}", "((", "))"):
+            piped = False
+        cur, redirects = [], []
+
+    try:
+        for t in tokens:
+            if pending_redirect:
+                redirects.append(t)
+                pending_redirect = False
+                continue
+            if t and set(t) <= set("<>&|;()") and ("<" in t or ">" in t):
+                # A redirection: its target next (not for >&2-style ones,
+                # whose digit is the next word: harmless either way).
+                pending_redirect = True
+                continue
+            if t in COMMAND_SEPARATORS or (t and set(t) <= set("&|;()")):
+                close(t)
+                continue
+            cur.append(t)
+        close(";")
+        for e in inner:
+            sub = command_segments(e, depth + 1)
+            if sub is None:
+                return None
+            segments.extend(sub)
+    except ValueError:
+        return None
+    return segments
+
+
+def command_head(words):
+    """A command's kind: its first word, and its subcommand for git, cargo,
+    npm… (`git-status`, `cargo-test`); "" without words."""
+    if not words:
+        return ""
+    h = _word(words[0])
+    if h in SUBCOMMAND_TOOLS:
+        rest = [w for w in _skip_options(words[1:], SUBCOMMAND_TOOLS[h]) if not w.startswith("+")]
+        if h == "make":
+            rest = [w for w in rest if "=" not in w and not w.startswith("-")]
+        sub = _class_part(rest[0], 30) if rest else ""
+        return h + ("-" + sub if sub else "")
+    return _class_part(h, 40)
+
+
+def _flags(args):
+    short, long_ = set(), set()
+    for a in args:
+        if a.startswith("--"):
+            long_.add(a.split("=", 1)[0])
+        elif a.startswith("-") and len(a) > 1:
+            short.update(a[1:])
+    return short, long_
+
+
+def _nonopts(args):
+    return [a for a in args if not a.startswith("-")]
+
+
+def segment_risk(seg, whole):
+    """Why this segment is risky, or ""."""
+    words, redirects = seg["words"], seg["redirects"]
+    for r in redirects:
+        if r.startswith("/dev/") and not DEV_SAFE.match(r):
+            return f"writes to {r}"
+    if not words:
+        return ""
+    b, args = _word(words[0]), words[1:]
+    short, long_ = _flags(args)
+    plain = _nonopts(args)
+    head = command_head(words)
+    sub = head.split("-", 1)[1] if "-" in head and b in SUBCOMMAND_TOOLS else ""
+    if b in PRIVILEGE_TOOLS:
+        return "runs as another user"
+    if b == "rm" and (short & set("rRf") or long_ & {"--recursive", "--force", "--no-preserve-root"}
+                      or any(GLOB.search(a) for a in plain) or "xargs" in seg.get("via", ())):
+        return "deletes recursively, by force or by a pattern"
+    if b == "find" and "-delete" in args:
+        return "deletes what it finds"
+    if b in ("dd", "shred", "wipefs", "fdisk", "sfdisk", "cfdisk", "parted", "sgdisk", "mkswap", "blkdiscard") \
+            or b.startswith("mkfs"):
+        return "writes to a disk"
+    if b in ("chmod", "chown", "chgrp") and ("R" in short or "--recursive" in long_):
+        return "changes permissions recursively"
+    if b in ("kill", "pkill", "killall", "xkill"):
+        return "stops processes"
+    if b in ("shutdown", "reboot", "poweroff", "halt"):
+        return "turns the computer off or restarts it"
+    if b == "tee" and any(a.startswith("/dev/") and not DEV_SAFE.match(a) for a in plain):
+        return "writes to a device"
+    if b == "eval":
+        return "runs a string as a command"
+    if b in INTERPRETERS and seg.get("piped"):
+        return "runs what is piped into it"
+    if b in INTERPRETERS and re.search(r"\b(curl|wget)\b", whole):
+        return "runs something downloaded"
+    if b == "git":
+        rest = _skip_options(args, SUBCOMMAND_TOOLS["git"])
+        r_short, r_long = _flags(rest[1:])
+        r_plain = _nonopts(rest[1:])
+        if sub == "push":
+            return "pushes to a remote"
+        if sub == "reset" and r_long & {"--hard", "--merge", "--keep"}:
+            return "drops changes (reset --hard)"
+        if sub == "clean" and ("f" in r_short or "--force" in r_long):
+            return "deletes untracked files"
+        if sub == "checkout" and ("--" in rest or "." in r_plain or "f" in r_short or "--force" in r_long):
+            return "drops changes (checkout --)"
+        if sub == "restore" and ("--worktree" in r_long or "W" in r_short
+                                 or not ("--staged" in r_long or "S" in r_short)):
+            return "drops changes (restore)"
+        if sub in ("rebase", "filter-branch", "filter-repo"):
+            return "rewrites history"
+        if sub == "branch" and ("D" in r_short or ("d" in r_short and "f" in r_short) or "--delete" in r_long
+                                and "--force" in r_long):
+            return "deletes a branch"
+        if sub == "stash" and r_plain[:1] in (["drop"], ["clear"]):
+            return "drops stashed changes"
+        if sub in ("reflog", "update-ref") and ("expire" in r_plain or "delete" in r_plain or "d" in r_short):
+            return "drops history"
+        return ""
+    if b == "systemctl" and sub in ("stop", "restart", "disable", "mask", "kill", "poweroff", "reboot", "halt",
+                                    "isolate", "suspend", "hibernate", "try-restart", "reload-or-restart"):
+        return "stops, restarts or disables a service"
+    if b == "loginctl" and plain[:1] and re.match(r"^(terminate|kill|poweroff|reboot)", plain[0]):
+        return "ends a session"
+    if b == "nix-collect-garbage" or (b == "nix-store" and long_ & {"--gc", "--delete"}) \
+            or (b == "nix" and plain[:2] in (["store", "gc"], ["store", "delete"])) \
+            or (b == "nix-env" and ("e" in short or long_ & {"--uninstall", "--delete-generations"})) \
+            or (b == "nix" and plain[:1] == ["profile"] and plain[1:2] in (["remove"], ["wipe-history"])):
+        return "deletes from the Nix store or profile"
+    if b == "colmena" and plain[:1] in (["apply"], ["apply-local"]):
+        return "deploys the system"
+    if b in ("nixos-rebuild", "darwin-rebuild") and set(plain) & {"switch", "boot", "test"}:
+        return "switches the system"
+    if b == "nixos-install" or (b == "home-manager" and "switch" in plain):
+        return "switches the configuration"
+    if b in ("docker", "podman") and set(plain) & {"rm", "rmi", "prune", "kill", "down"}:
+        return "removes containers, images or volumes"
+    if b == "kubectl" and sub in ("delete", "apply", "replace", "drain", "patch", "cordon", "taint", "scale") \
+            or b == "kubectl" and sub == "rollout" and set(plain) & {"restart", "undo"}:
+        return "changes a cluster"
+    if b == "helm" and plain[:1] and plain[0] in ("uninstall", "delete", "rollback", "upgrade", "install"):
+        return "changes a cluster"
+    if b in ("npm", "pnpm", "yarn") and sub in ("publish", "unpublish", "deprecate"):
+        return "publishes a package"
+    if b == "cargo" and sub in ("publish", "yank"):
+        return "publishes a crate"
+    if b == "twine" and "upload" in plain or b == "gh" and plain[:2] in (["repo", "delete"], ["release", "delete"]):
+        return "publishes or deletes online"
+    if b == "crontab" and "r" in short:
+        return "deletes the crontab"
+    return ""
+
+
+def command_risk(command):
+    """(risky, why, the kind's head): the head of the risky part when one is."""
+    segments = command_segments(command)
+    if segments is None:
+        return True, "can't be read", "unparsed"
+    segments = [s for s in segments if s["words"] or s["redirects"]]
+    if not segments:
+        return True, "empty", "empty"
+    for s in segments:
+        why = segment_risk(s, command)
+        if why:
+            head = command_head(s["words"]) or "redirect"
+            if head not in TERMINAL_NEVER and not head.startswith("mkfs"):
+                head += "-risky"
+            return True, why, head
+    main = next((s for s in segments if s["words"] and _word(s["words"][0]) not in COMMAND_PREAMBLE), None)
+    main = main or next((s for s in segments if s["words"]), None)
+    return False, "", command_head(main["words"]) if main else "empty"
+
+
+def terminal_never(action):
+    """Whether a terminal_run kind (`git-push`, `echo-risky`) is always asked."""
+    action = str(action or "")
+    return action in TERMINAL_NEVER or action.startswith("mkfs") or action.endswith("-risky") or not action
 
 
 # The trust ladder's classes (action_class): what the user lets Muse do
@@ -1126,6 +1500,10 @@ def action_class(name, args, app=None, meta=None):
     tool = _bare(name, meta)
     cls = tool
     args = args if isinstance(args, dict) else {}
+    if tool == "terminal_run":
+        # A command's kind: `terminal_run:git-status`; a risky one by its
+        # risky part, never promoted (terminal_never).
+        return cls + ":" + (_class_part(command_risk(args.get("command"))[2], 60) or "empty")
     action = _class_part(args.get("action"), 40)
     if action:
         cls += ":" + action

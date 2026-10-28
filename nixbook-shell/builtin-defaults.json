@@ -109,6 +109,14 @@
         "errorDialog": true
       }
     },
+    "terminal": {
+      "read": true,
+      "suggest": true,
+      "run": true,
+      "runVisible": true,
+      "editor": true,
+      "context": true
+    },
     "improve": {
       "enable": false,
       "model": "main",

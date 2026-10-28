@@ -34,8 +34,13 @@ in
             - Niri: Mod+Return bind
             - Sway: terminal = kitty, Mod4+Return keybind
 
+          Remote control (the desktop agents' terminal tools):
+            - allow_remote_control socket-only, listen_on a per-process
+              socket $XDG_RUNTIME_DIR/kitty-<pid>.sock (0700 runtime dir)
+
           Shell integration:
-            - Zsh integration enabled inside kitty
+            - Zsh integration enabled inside kitty (also needed by the
+              terminal tools: last command output, prompt, cwd)
             - `ssh` aliased to TERM=xterm-256color inside kitty (fixes remote terms)
             - `sshs` alias uses kitty+kitten ssh for seamless remote kitty sessions
 
@@ -56,6 +61,8 @@ in
     programs = {
       kitty = {
         enable = true;
+        # Shell integration: also what the terminal tools rely on (the last
+        # command's output, whether a window is at its prompt, its cwd).
         shellIntegration = {
           enableZshIntegration = true;
         };
@@ -80,6 +87,17 @@ in
           cursor_trail_decay = "0.1 0.8";
           cursor_trail_start_on = "key_or_mouse";
           enabled_layouts = "splits";
+
+          # Remote control for the desktop agents' terminal tools
+          # (nixbook-desktop-mcp's terminal_*: reading a window's last
+          # output, putting a command on the prompt, Muse's own tab), over
+          # a socket only: programs running inside kitty can't drive it
+          # through their tty. A filesystem socket in the 0700 runtime dir,
+          # one per kitty process (kitty expands the variable and
+          # {kitty_pid} itself); an abstract socket (unix:@…) would be
+          # reachable from any sandbox sharing the network namespace.
+          allow_remote_control = "socket-only";
+          listen_on = "unix:\${XDG_RUNTIME_DIR}/kitty-{kitty_pid}.sock";
         };
 
         keybindings = {

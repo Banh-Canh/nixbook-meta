@@ -9,6 +9,9 @@
 #   - the pointer: the exact Wayland requests sent to a fake compositor
 #     (tests/fake-wayland.py), screenshot mappings, the ydotool fallback;
 #   - the agent desktop: switching the tools to it and back, starting it;
+#   - the terminal and the editor: stub kitty and nvim (their remote
+#     control), every terminal tool, the guards and redactions, Muse's tab,
+#     the broker's terminal section, the trust ladder for commands;
 #   - HTTP: loopback only, bearer token, Host/Origin checks.
 # Needs bash, python3, jq and curl. Run: bash tests/desktop-mcp.sh
 set -euo pipefail
@@ -103,7 +106,8 @@ if [ "$1 $2" = "msg --json" ]; then
       # With $STUB_USER_SPLASH it's a splash (id 6) for 3 window lists, then
       # the app's own window (id 7).
       # Hidden: ids listed in $STUB_CALLS.hidden (closed windows).
-      # With $STUB_KITTY_POS ([column, tile]) kitty is tiled there.
+      # With $STUB_KITTY_POS ([column, tile]) kitty is tiled there; with
+      # $STUB_KITTY_PID it has that pid (the terminal tools' kitty).
       hidden="$(cat "$STUB_CALLS.hidden" 2>/dev/null || echo '[]')"
       launched_app="$(cat "$STUB_CALLS.launched" 2>/dev/null || true)"
       launched_id=6
@@ -116,7 +120,8 @@ if [ "$1 $2" = "msg --json" ]; then
         --arg launched_app "${launched_app:-firefox}" --argjson launched_id "$launched_id" --argjson hidden "$hidden" '[
         {id: 1, app_id: "firefox", title: "Mozilla Firefox", workspace_id: 10, is_focused: ($f == "firefox"), is_floating: false},
         {id: 2, app_id: "kitty", title: "~", workspace_id: 10, is_focused: ($f == "kitty"), is_floating: false,
-         layout: (if env.STUB_KITTY_POS then {window_size: [1000, 900], pos_in_scrolling_layout: (env.STUB_KITTY_POS | fromjson)} else null end)},
+         layout: (if env.STUB_KITTY_POS then {window_size: [1000, 900], pos_in_scrolling_layout: (env.STUB_KITTY_POS | fromjson)} else null end)}
+         + (if env.STUB_KITTY_PID then {pid: (env.STUB_KITTY_PID | tonumber)} else {} end),
         {id: 3, app_id: "org.gnome.Nautilus", title: "Enter password", workspace_id: 11, is_focused: ($f == "prompt"), is_floating: true,
          layout: {window_size: [800, 600], tile_pos_in_workspace_view: [100.4, 50], pos_in_scrolling_layout: null}},
         {id: 4, app_id: "org.gnome.TextEditor", title: "notes", workspace_id: 10, is_focused: false, is_floating: false,
@@ -471,7 +476,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 72 tools" 72 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 78 tools" 78 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -4355,13 +4360,16 @@ unset STUB_AGENT_ANSWER
 # The schedule cue: `routine due` at given times.
 at() { date -d "today $1" +%s; }
 due() { python3 "$mcp" routine due --now "$1" | jq -r 'map(.id) | join(" ")'; }
-expect_eq "schedule: not due before its time" "" "$(due "$(at 17:59)")"
-expect_eq "schedule: due at its time" "$dig" "$(due "$(at 18:05)")"
-expect_eq "schedule: missed by more than the grace, not due" "" "$(due "$(at 19:30)")"
+# The daily ones: without the every-15-minutes order above (due whenever the
+# test runs 15 minutes before or after the times asked).
+daily() { python3 "$mcp" routine due --now "$1" | jq -r --arg t "$thm" 'map(select(.id != $t) | .id) | join(" ")'; }
+expect_eq "schedule: not due before its time" "" "$(daily "$(at 17:59)")"
+expect_eq "schedule: due at its time" "$dig" "$(daily "$(at 18:05)")"
+expect_eq "schedule: missed by more than the grace, not due" "" "$(daily "$(at 19:30)")"
 jq --arg id "$dig" '(.routines[] | select(.id==$id) | .when.days) = ["xxx"]' "$dmem" >"$dmem.new" && mv "$dmem.new" "$dmem"
-expect_eq "schedule: not on its days" "" "$(due "$(at 18:05)")"
+expect_eq "schedule: not on its days" "" "$(daily "$(at 18:05)")"
 jq --arg id "$dig" --arg d "$(LC_ALL=C date +%a | tr '[:upper:]' '[:lower:]' | cut -c1-3)" '(.routines[] | select(.id==$id) | .when.days) = [$d]' "$dmem" >"$dmem.new" && mv "$dmem.new" "$dmem"
-expect_eq "schedule: on its days" "$dig" "$(due "$(at 18:05)")"
+expect_eq "schedule: on its days" "$dig" "$(daily "$(at 18:05)")"
 on_since=$(jq --arg id "$thm" '.routines[] | select(.id==$id) | .onSince' "$dmem")
 expect_eq "schedule every 15 min: not yet" "" "$(due $((on_since + 600)) | tr ' ' '\n' | grep -c "$thm" | sed 's/^0$//')"
 expect_contains "schedule every 15 min: due after 15 min" "$(due $((on_since + 901)))" "$thm"
@@ -4700,6 +4708,453 @@ python3 "$mcp" initiative clear
 rm -f "$XDG_STATE_HOME/nixbook-shell/"{journal,trust}.json "$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
 unset NIXBOOK_MUSE_TASK
 python3 "$mcp" personal clear >/dev/null
+
+# -- the terminal and the editor (kitty, Neovim) -------------------------------
+# A stub kitty answering its remote control (`kitty @ --to unix:SOCK …`)
+# from files: two kittys (their sockets kitty-PID.sock, PIDs of sleeping
+# processes), windows with a shell at its prompt, sudo, pass, Neovim and a
+# git password prompt in front; get-text from files with secrets in them;
+# send-text and launch logged, launch running the command as Muse's tab's
+# wrapper would (its output and exit files). A stub nvim answering
+# --remote-expr with JSON and logging --remote-send.
+
+term="$tmp/kitty"
+mkdir -p "$term"
+term_home="$tmp/thome"
+mkdir -p "$term_home/proj/src" "$term_home/.ssh" "$term_home/.config"
+old_home="$HOME"
+export HOME="$term_home"
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git init -q -b main "$term_home/proj"
+: >"$term_home/proj/new.txt"
+sleep 600 &
+kpid_a=$!
+sleep 600 &
+kpid_b=$!
+sleep 600 &
+npid_a=$!
+sleep 600 &
+npid_b=$!
+mksock() { python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$1"; }
+mksock "$XDG_RUNTIME_DIR/kitty-$kpid_a.sock"
+mksock "$XDG_RUNTIME_DIR/kitty-$kpid_b.sock"
+mksock "$XDG_RUNTIME_DIR/kitty-999999.sock" # a kitty that is gone
+mksock "$XDG_RUNTIME_DIR/nvim.$npid_a.0"
+sleep 0.05
+mksock "$XDG_RUNTIME_DIR/nvim.$npid_b.0" # the most recently used
+export STUB_KITTY="$term" STUB_KITTY_PID="$kpid_a" STUB_NVIM_A="$npid_a"
+echo 1 >"$term/focused"
+proj="$term_home/proj"
+tilde='~' # the prompts show the home as ~
+ps1="$tilde/proj ❯"
+jq -n --arg proj "$proj" --arg home "$term_home" --argjson npid "$npid_a" '[{id: 1, is_focused: true, tabs: [
+  {id: 1, title: "proj", is_focused: true, windows: [
+    {id: 1, title: "~/proj", cwd: $proj, at_prompt: true, last_reported_cmdline: "cargo test", last_cmd_exit_status: 101,
+     foreground_processes: [{pid: 11, cmdline: ["/run/current-system/sw/bin/zsh"], cwd: $proj}]},
+    {id: 2, title: "sudo nixos-rebuild switch", cwd: $proj, at_prompt: false,
+     foreground_processes: [{pid: 12, cmdline: ["zsh"], cwd: $proj}, {pid: 13, cmdline: ["sudo", "nixos-rebuild", "switch"], cwd: $proj}]},
+    {id: 3, title: "~", cwd: $home, at_prompt: false,
+     foreground_processes: [{pid: 14, cmdline: ["zsh"], cwd: $home}, {pid: 15, cmdline: ["pass", "show", "mail"], cwd: $home}]},
+    {id: 4, title: "main.rs - nvim", cwd: $proj, at_prompt: false,
+     foreground_processes: [{pid: 16, cmdline: ["zsh"], cwd: $proj}, {pid: $npid, cmdline: ["nvim", "src/main.rs"], cwd: $proj}]},
+    {id: 5, title: "git push", cwd: $proj, at_prompt: false,
+     foreground_processes: [{pid: 18, cmdline: ["zsh"], cwd: $proj}, {pid: 19, cmdline: ["git", "push"], cwd: $proj}]}]}]}]' \
+  >"$term/$kpid_a.ls.json"
+jq -n --arg home "$term_home" '[{id: 1, is_focused: false, tabs: [{id: 1, title: "home", is_focused: true, windows: [
+  {id: 1, title: "~", cwd: $home, at_prompt: true, foreground_processes: [{pid: 21, cmdline: ["bash"], cwd: $home}]}]}]}]' \
+  >"$term/$kpid_b.ls.json"
+# What each window shows (get-text --extent): screen, last_cmd_output, all.
+printf 'build ok\n%s \n' "$ps1" >"$term/$kpid_a.1.screen"
+{
+  echo "running 3 tests"
+  echo "error: the API said no for key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx"
+  echo "token in use: ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+  echo "AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP"
+  echo "session eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU"
+  echo "connect: postgres://app:supersecretpw@db/app password=hunter2"
+  echo "curl -H 'Authorization: Bearer abcdef0123456789abcdef'"
+  echo "-----BEGIN OPENSSH PRIVATE KEY-----"
+  echo "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ"
+  echo "-----END OPENSSH PRIVATE KEY-----"
+  echo "test result: FAILED. 2 passed; 1 failed"
+} >"$term/$kpid_a.1.last_cmd_output"
+{
+  for i in $(seq 400); do echo "line $i of an older build log, long enough to fill the scrollback quickly"; done
+  echo "$ps1 pass show mail"
+  echo "hunter2-in-the-clear"
+  echo "login: me"
+  echo "$ps1 ls"
+  echo "Cargo.toml  src"
+} >"$term/$kpid_a.1.all"
+printf 'sudo nixos-rebuild switch\n[sudo] password for u: \n' >"$term/$kpid_a.2.screen"
+printf "%s git push\nPassword for 'https://github.com': \n" "$ps1" >"$term/$kpid_a.5.screen"
+printf '~ $ \n' >"$term/$kpid_b.1.screen"
+
+cat >"$bin/kitty" <<'EOF'
+#!/usr/bin/env bash
+# kitty @ --to unix:SOCK CMD …, from the files in $STUB_KITTY.
+[ "$1" = @ ] && [ "$2" = --to ] || exit 2
+sock="${3#unix:}"
+pid="$(basename "$sock" .sock)"
+pid="${pid#kitty-}"
+shift 3
+d="$STUB_KITTY"
+echo "$pid $*" >>"$d/calls"
+cmd="$1"
+shift
+match() { while [ $# -gt 0 ]; do [ "$1" != --match ] || { echo "${2#*:}"; return; }; shift; done; }
+case "$cmd" in
+ls)
+  jq --argjson f "$(cat "$d/focused")" '.[0].tabs[0].windows |= map(.is_focused = (.id == $f) | .is_active = (.id == $f))' "$d/$pid.ls.json" ;;
+get-text)
+  wid="$(match "$@")"
+  extent=""
+  while [ $# -gt 0 ]; do [ "$1" != --extent ] || extent="$2"; shift; done
+  cat "$d/$pid.$wid.$extent" 2>/dev/null || true ;;
+send-text)
+  wid="$(match "$@")"
+  if [ "${*: -1}" = --stdin ]; then
+    text="$(cat)"
+    echo "SENT $wid <<$text" >>"$d/calls"
+    # On the prompt: the screen's last line now holds it.
+    sed -i '$ s/$/'"$(printf '%s' "$text" | sed 's/[&/\]/\\&/g')"'/' "$d/$pid.$wid.screen"
+  elif [ "${*: -1}" = '\x15' ]; then
+    sed -i '$ s/❯ .*$/❯ /' "$d/$pid.$wid.screen"
+  fi ;;
+launch)
+  [ -z "${STUB_KITTY_LAUNCH_FAIL:-}" ] || { echo "launch failed" >&2; exit 1; }
+  cwd="" type="" into=""
+  args=("$@")
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+    --cwd) cwd="${args[i + 1]}" ;;
+    --type=*) type="${args[i]#--type=}" ;;
+    --match) into="${args[i + 1]}" ;;
+    esac
+  done
+  # The wrapper's arguments: … bash --noprofile --norc -c SCRIPT muse-run DIR N
+  dir="${args[-2]}" n="${args[-1]}"
+  (cd "$cwd" && bash -c "$(cat "$dir/$n.cmd")" >"$dir/$n.out" 2>&1 </dev/null; echo $? >"$dir/$n.exit")
+  wid=$(($(cat "$d/next" 2>/dev/null || echo 100) + 1))
+  echo "$wid" >"$d/next"
+  echo "LAUNCH $type into=$into cwd=$cwd" >>"$d/calls"
+  if [ "$type" = tab ]; then
+    jq --argjson w "$wid" --arg cwd "$cwd" '.[0].tabs += [{id: 9, title: "Muse", windows: [{id: $w, title: "Muse", cwd: $cwd,
+      foreground_processes: [{pid: 99, cmdline: ["sleep", "infinity"], cwd: $cwd}]}]}]' "$d/$pid.ls.json" >"$d/ls.tmp"
+  else
+    jq --argjson w "$wid" --arg cwd "$cwd" '(.[0].tabs[] | select(.title == "Muse") | .windows) += [{id: $w, title: "Muse", cwd: $cwd,
+      foreground_processes: [{pid: 99, cmdline: ["sleep", "infinity"], cwd: $cwd}]}]' "$d/$pid.ls.json" >"$d/ls.tmp"
+  fi
+  mv "$d/ls.tmp" "$d/$pid.ls.json"
+  echo "$wid" ;;
+close-window)
+  wid="$(match "$@")"
+  jq --argjson w "$wid" '.[0].tabs |= map(.windows |= map(select(.id != $w)) | select(.windows | length > 0))' \
+    "$d/$pid.ls.json" >"$d/ls.tmp" && mv "$d/ls.tmp" "$d/$pid.ls.json" ;;
+*) exit 1 ;;
+esac
+EOF
+cat >"$bin/nvim" <<'EOF'
+#!/usr/bin/env bash
+# nvim --server SOCK --remote-expr EXPR | --remote-send KEYS
+d="$STUB_KITTY"
+pid="$(basename "$2")"
+pid="${pid#nvim.}"
+pid="${pid%.0}"
+echo "nvim $pid $3 $4" >>"$d/nvim.calls"
+if [ "$3" = --remote-send ]; then
+  case "$4" in
+  *":e "*)
+    p="${4#*:e }"
+    p="${p%<CR>}"
+    case "$p" in +*) p="${p#* }" ;; esac
+    printf '%s' "$p" | sed 's/<lt>/</g; s/\\\(.\)/\1/g' >"$d/nvim.$pid.file" ;;
+  esac
+  exit 0
+fi
+file="$HOME/proj/src/main.rs"
+[ "$pid" = "$STUB_NVIM_A" ] || file="$HOME/proj/other.py"
+[ -z "${STUB_NVIM_FILE:-}" ] || file="$STUB_NVIM_FILE"
+case "$4" in
+*"nvim_buf_get_name(0)"*) jq -nc --arg f "$(cat "$d/nvim.$pid.file" 2>/dev/null)" '{f: $f}' ;;
+*'local what = "context"'*)
+  jq -nc --arg f "$file" '{file: $f, line: 42, col: 5, filetype: "rust", total: 120, first: 40, modified: true, diagnostic_count: 2,
+    lines: ["fn main() {", "    let api_key = \"abcdef123456\";", "    run(api_key)", "}"],
+    diagnostics: [{line: 42, col: 9, severity: "ERROR", message: "cannot find value `x`", source: "rust-analyzer"},
+                  {line: 50, col: 1, severity: "WARN", message: "unused import", source: "rust-analyzer"}]}' ;;
+*'local what = "diagnostics"'*)
+  jq -nc --arg f "$file" '{file: $f, line: 42, filetype: "rust", total: 120, diagnostic_count: 2,
+    diagnostics: [{line: 42, col: 9, severity: "ERROR", message: "cannot find value `x`", source: "rust-analyzer"},
+                  {line: 50, col: 1, severity: "WARN", message: "unused import"}]}' ;;
+*'local what = "selection"'*)
+  jq -nc --arg f "$file" '{file: $f, line: 42, filetype: "rust", total: 120, diagnostic_count: 0, first: 41, lines: ["    let x = 1;"]}' ;;
+*'local what = "file"'*)
+  jq -nc --arg f "$file" '{file: $f, line: 1, filetype: "rust", total: 3, diagnostic_count: 0, first: 1,
+    lines: ["-----BEGIN RSA PRIVATE KEY-----", "MIIEpAIBAAKCAQEA", "-----END RSA PRIVATE KEY-----"]}' ;;
+esac
+EOF
+chmod +x "$bin/kitty" "$bin/nvim"
+reset_calls
+echo kitty >"$STUB_FOCUS"
+tcalls() { cat "$term/calls" 2>/dev/null; }
+
+# The group, the core tools, the instructions.
+tools=$(python3 "$mcp" tools)
+expect_eq "terminal: its tools, in the terminal group" "editor_open editor_read terminal_list terminal_read terminal_run terminal_suggest" \
+  "$(jq -r '[.[] | select(._meta["nixbook/group"] == "terminal") | .name] | sort | join(" ")' <<<"$tools")"
+expect_eq "terminal: core but editor_open" "editor_read terminal_list terminal_read terminal_run terminal_suggest" \
+  "$(jq -r '[.[] | select(._meta["nixbook/group"] == "terminal" and ._meta["nixbook/core"]) | .name] | sort | join(" ")' <<<"$tools")"
+expect_eq "terminal: bundled together" terminal "$(jq -r '[.[] | select(._meta["nixbook/group"] == "terminal") | ._meta["nixbook/bundle"]] | unique | join(" ")' <<<"$tools")"
+expect_eq "terminal: the reading ones read only" "editor_read terminal_list terminal_read" \
+  "$(jq -r '[.[] | select(._meta["nixbook/group"] == "terminal" and .annotations.readOnlyHint) | .name] | sort | join(" ")' <<<"$tools")"
+expect_contains "terminal: the instructions say how" "$(python3 "$mcp" instructions)" "typing into a terminal with the input tools stays refused"
+
+# terminal_list: both kittys (not the one gone), ids PID:ID, the private ones.
+out=$(call terminal_list)
+expect_eq "terminal_list: every window of both kittys" "$kpid_a:1 $kpid_a:2 $kpid_a:3 $kpid_a:4 $kpid_a:5 $kpid_b:1" "$(jq -r 'map(.id) | join(" ")' <<<"$out")"
+expect_eq "terminal_list: the one in front, its prompt, last exit, project" "true true 101 ~/proj main cargo test" \
+  "$(jq -r '.[0] | "\(.focused) \(.at_prompt) \(.last_exit) \(.project) \(.branch) \(.last_command)"' <<<"$out")"
+expect_eq "terminal_list: sudo and pass in front, private" "sudo is in front: not read|pass is in front: not read" \
+  "$(jq -r '[.[1].private, .[2].private] | join("|")' <<<"$out")"
+expect_eq "terminal_list: no title of the private ones" null "$(jq -r '.[2].title' <<<"$out")"
+expect_eq "terminal_list: what runs in front" "nvim src/main.rs" "$(jq -r '.[3].command' <<<"$out")"
+
+# terminal_read: the last command's output by default, its secrets blacked out.
+out=$(call terminal_read)
+expect_contains "terminal_read: the last output by default" "$out" "kitty $kpid_a:1 (~/proj; \`cargo test\`, exit 101) last_output:"
+expect_contains "terminal_read: the output itself" "$out" "test result: FAILED. 2 passed; 1 failed"
+for secret in sk-ant-api03 ghp_abcdef AKIAABCDEF eyJhbGciOiJIUzI1NiJ9 supersecretpw hunter2 abcdef0123456789abcdef b3BlbnNzaC1rZXkt; do
+  expect_not_contains "terminal_read: no $secret" "$out" "$secret"
+done
+expect_contains "redact: a private key" "$out" "[private key redacted]"
+expect_contains "redact: an API key" "$out" "for key [key redacted]"
+expect_contains "redact: a GitHub token" "$out" "token in use: [token redacted]"
+expect_contains "redact: an AWS key" "$out" "AWS_ACCESS_KEY_ID=[AWS key redacted]"
+expect_contains "redact: a JWT" "$out" "session [JWT redacted]"
+expect_contains "redact: password=" "$out" "password=[redacted]"
+expect_contains "redact: URL credentials" "$out" "postgres://app:[redacted]@db"
+expect_contains "redact: an Authorization header" "$out" "Authorization: [redacted]"
+out=$(call terminal_read '{"what":"scrollback"}')
+expect_not_contains "terminal_read: what pass printed, hidden" "$out" "hunter2-in-the-clear"
+expect_contains "terminal_read: said hidden" "$out" "[the output of a secret tool: hidden]"
+expect_contains "terminal_read: up to the next prompt" "$out" "Cargo.toml  src"
+expect_contains "terminal_read: a long output, its end kept" "$out" "characters before]"
+expect_eq "terminal_read: capped" yes "$(awk -v n="${#out}" 'BEGIN { print (n <= 6200 ? "yes" : "no " n) }')"
+out=$(call terminal_read '{"what":"scrollback","lines":2}')
+expect_eq "terminal_read: the last lines" "$(printf '%s ls\nCargo.toml  src' "$ps1")" "$(tail -n 2 <<<"$out")"
+expect_contains "terminal_read: sudo in front, refused" "$(call terminal_read "{\"window_id\":\"$kpid_a:2\"}")" "refused: sudo is in front"
+expect_contains "terminal_read: pass in front, refused" "$(call terminal_read "{\"window_id\":\"$kpid_a:3\"}")" "refused: pass is in front"
+expect_contains "terminal_read: a password prompt on screen, refused" "$(call terminal_read "{\"window_id\":\"$kpid_a:5\"}")" "asking for a password"
+expect_contains "terminal_read: an id two kittys have" "$(call terminal_read '{"window_id":"1"}')" "several kitty windows have id 1"
+expect_contains "terminal_read: the other kitty's" "$(call terminal_read "{\"window_id\":\"$kpid_b:1\",\"what\":\"screen\"}")" "kitty $kpid_b:1 (~) screen:"
+echo firefox >"$STUB_FOCUS"
+expect_contains "terminal_read: no kitty in front" "$(call terminal_read)" "no kitty window is in front"
+echo kitty >"$STUB_FOCUS"
+
+# terminal_suggest: on the prompt, not run; the undo clears it.
+: >"$term/calls"
+out=$(python3 "$mcp" call --meta terminal_suggest '{"command":"cargo test -- --nocapture"}')
+expect_contains "terminal_suggest: put on the prompt" "$(jq -r '.content[0].text' <<<"$out")" "not run (the user presses Enter)"
+expect_contains "terminal_suggest: bracketed paste, no newline" "$(tcalls)" "send-text --match id:1 --bracketed-paste=enable --stdin"
+expect_contains "terminal_suggest: the text sent" "$(tcalls)" "SENT 1 <<cargo test -- --nocapture"
+expect_eq "terminal_suggest: read back" true "$(jq '._meta.verified' <<<"$out")"
+expect_eq "terminal_suggest: its undo" "terminal_suggest $kpid_a:1 cargo test -- --nocapture" \
+  "$(jq -r '._meta.undo | "\(.tool) \(.args.window_id) \(.args.clear)"' <<<"$out")"
+expect_contains "terminal_suggest: typing on the prompt, refused" "$(call terminal_suggest '{"command":"ls"}')" "the user is typing"
+out=$(call terminal_suggest "$(jq -c '._meta.undo.args' <<<"$out")")
+expect_contains "terminal_suggest: the undo clears it" "$out" "cleared the prompt"
+expect_eq "terminal_suggest: with ctrl+u" "$ps1 " "$(tail -n 1 "$term/$kpid_a.1.screen")"
+expect_contains "terminal_suggest: nothing to clear once gone" "$(call terminal_suggest '{"command":"x","clear":"x"}')" "isn't on that prompt any more"
+expect_contains "terminal_suggest: sudo, for the user to run" "$(call terminal_suggest '{"command":"sudo nixos-rebuild switch"}')" "on the prompt of kitty"
+sed -i '$ s/❯ .*$/❯ /' "$term/$kpid_a.1.screen"
+expect_contains "terminal_suggest: not a secret tool" "$(call terminal_suggest '{"command":"pass show mail"}')" "reads or asks for secrets"
+expect_contains "terminal_suggest: not nixbook's controls" "$(call terminal_suggest '{"command":"nixbook-desktop-mcp resume"}')" "nixbook's own control"
+expect_contains "terminal_suggest: one line" "$(call terminal_suggest '{"command":"ls\nrm -rf x"}')" "must be one line"
+expect_contains "terminal_suggest: not where something runs" "$(call terminal_suggest "{\"command\":\"ls\",\"window_id\":\"$kpid_a:4\"}")" "that terminal is busy (nvim src/main.rs)"
+expect_contains "terminal_suggest: not over sudo" "$(call terminal_suggest "{\"command\":\"ls\",\"window_id\":\"$kpid_a:2\"}")" "refused: sudo is in front"
+
+# terminal_run: in Muse's tab, reused; a plain process otherwise.
+: >"$term/calls"
+out=$(python3 "$mcp" call --meta terminal_run '{"command":"echo built; echo key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv; exit 3"}')
+reply=$(jq -r '.content[0].text' <<<"$out")
+expect_eq "terminal_run: exit, cwd (the front window's), in Muse's tab" "3 ~/proj true" "$(jq -r '"\(.exit) \(.cwd) \(.visible)"' <<<"$reply")"
+expect_contains "terminal_run: its output" "$(jq -r .output <<<"$reply")" "built"
+expect_contains "terminal_run: its secrets blacked out" "$(jq -r .output <<<"$reply")" "key [key redacted]"
+expect_eq "terminal_run: verified (it ran)" true "$(jq '._meta.verified' <<<"$out")"
+expect_contains "terminal_run: a new tab, in the background" "$(tcalls)" "launch --type=tab --keep-focus --tab-title Muse"
+expect_contains "terminal_run: the env marks it an agent's" "$(tcalls)" "--env NIXBOOK_META_AGENT_CHILD=1"
+expect_eq "terminal_run: the output file private, gone after" "" "$(find "$XDG_RUNTIME_DIR/nixbook-desktop-mcp/terminal" -name '*.out')"
+first=$(cat "$term/next")
+: >"$term/calls"
+out=$(call terminal_run '{"command":"pwd"}')
+expect_eq "terminal_run: the same tab again" "LAUNCH window into=window_id:$first cwd=$proj" "$(grep LAUNCH "$term/calls")"
+expect_contains "terminal_run: the one before closed" "$(tcalls)" "close-window --match id:$first"
+expect_eq "terminal_run: one window left in Muse's tab" 1 "$(jq '[.[0].tabs[] | select(.title == "Muse") | .windows[]] | length' "$term/$kpid_a.ls.json")"
+expect_eq "terminal_list: Muse's tab flagged" true "$(call terminal_list | jq '[.[] | select(.muse)] | length == 1')"
+out=$(call terminal_run "{\"command\":\"pwd\",\"cwd\":\"$term_home/proj/src\"}")
+expect_eq "terminal_run: in the folder asked" "$term_home/proj/src" "$(jq -r .output <<<"$out")"
+out=$(STUB_KITTY_LAUNCH_FAIL=1 call terminal_run '{"command":"echo plain"}')
+expect_eq "terminal_run: kitty failing, a plain process" "0 false plain" "$(jq -r '"\(.exit) \(.visible) \(.output)"' <<<"$out")"
+expect_contains "terminal_run: says why" "$(jq -r .note <<<"$out")" "run as a plain process"
+# shellcheck disable=SC2016 # expanded by the command's own shell
+out=$(NIXBOOK_AI_KEY=leaked call terminal_run '{"command":"echo child=$NIXBOOK_META_AGENT_CHILD key=${NIXBOOK_AI_KEY:-none}; tty || true","visible":false}')
+expect_eq "terminal_run: plain, the agent's env, no key, no terminal" "child=1 key=none
+not a tty" "$(jq -r .output <<<"$out")"
+# shellcheck disable=SC2016 # expanded by the command's own shell
+out=$(call terminal_run '{"command":"read -r x; echo got=$x","visible":false}')
+expect_eq "terminal_run: plain, no input" "got=" "$(jq -r .output <<<"$out")"
+start=$(date +%s)
+out=$(call terminal_run '{"command":"echo started; sleep 20","visible":false,"timeout":1}')
+expect_eq "terminal_run: a timeout stops it" "null true started" "$(jq -r '"\(.exit) \(.timed_out) \(.output)"' <<<"$out")"
+expect_eq "terminal_run: within a few seconds" yes "$([ $(($(date +%s) - start)) -lt 6 ] && echo yes || echo no)"
+mv "$XDG_RUNTIME_DIR/kitty-$kpid_a.sock" "$tmp/kitty-a.sock"
+mv "$XDG_RUNTIME_DIR/kitty-$kpid_b.sock" "$tmp/kitty-b.sock"
+out=$(call terminal_run '{"command":"echo nokitty"}')
+expect_eq "terminal_run: no kitty, a plain process in the home" "0 false ~ nokitty" "$(jq -r '"\(.exit) \(.visible) \(.cwd) \(.output)"' <<<"$out")"
+expect_eq "terminal_list: no kitty" "no kitty terminal is reachable (kitty with remote control on its socket: nixbook's kittyConfig)" "$(call terminal_list)"
+mv "$tmp/kitty-a.sock" "$XDG_RUNTIME_DIR/kitty-$kpid_a.sock"
+mv "$tmp/kitty-b.sock" "$XDG_RUNTIME_DIR/kitty-$kpid_b.sock"
+# One command at a time in Muse's tab.
+python3 -c 'import fcntl, sys, time; f = open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(3)' \
+  "$XDG_RUNTIME_DIR/nixbook-desktop-mcp/terminal/run.lock" "$tmp/locked" &
+lock_pid=$!
+for _ in $(seq 50); do
+  [ -e "$tmp/locked" ] && break
+  sleep 0.05
+done
+expect_contains "terminal_run: one at a time in Muse's tab" "$(call terminal_run '{"command":"true"}')" "still running another command"
+wait "$lock_pid"
+# Refused outright.
+for c in "sudo nixos-rebuild switch" "su -c id" "doas ls" "pkexec ls" "env FOO=1 sudo ls" "bash -c 'sudo ls'"; do
+  expect_contains "terminal_run: refused: $c" "$(call terminal_run "$(jq -nc --arg c "$c" '{command: $c}')")" "asks for the user's password"
+done
+for c in "pass show mail" "rbw get github" "secret-tool lookup app x" "gpg -d secrets.gpg" "ssh-add" "git credential fill" "mysql -p db"; do
+  expect_contains "terminal_run: refused: $c" "$(call terminal_run "$(jq -nc --arg c "$c" '{command: $c}')")" "reads or asks for secrets"
+done
+# shellcheck disable=SC2016 # literal backticks and $: what the tool prints
+for c in "cat ~/.ssh/id_ed25519" "echo alias >> ~/.zshrc" 'ls $HOME/.gnupg' "cat ~/.local/state/nixbook-shell/trust.json" "touch ~/.local/state/nixbook-shell/desktop-control-allowed"; do
+  expect_contains "terminal_run: refused: $c" "$(call terminal_run "$(jq -nc --arg c "$c" '{command: $c}')")" "keys, logins, the shell's rc files"
+done
+for c in "nixbook-desktop-mcp resume" "nixbook-muse-task start x" "qs -c nixbook-shell ipc call desktopControl resume" "nixbook-shell ipc call x y" "kitty @ ls" "kitten @ send-text x" "niri msg action quit"; do
+  expect_contains "terminal_run: refused: $c" "$(call terminal_run "$(jq -nc --arg c "$c" '{command: $c}')")" "nixbook's own control"
+done
+expect_contains "terminal_run: refused: unreadable" "$(call terminal_run '{"command":"echo \"unterminated"}')" "can't be read as the shell would"
+expect_contains "terminal_run: a folder outside the home" "$(call terminal_run '{"command":"ls","cwd":"/etc"}')" "isn't in the user's home"
+expect_contains "terminal_run: a hidden folder of the home" "$(call terminal_run "{\"command\":\"ls\",\"cwd\":\"$term_home/.config\"}")" "hidden folder of the home"
+expect_contains "terminal_run: timeout at most 600 s" "$(call terminal_run '{"command":"ls","timeout":601}')" "must be 1 to 600"
+# The journal: each command run, with its output's end; an agent's own entry merged.
+entry=$(python3 "$mcp" journal list | jq -c '[.[] | select(.tool == "terminal_run" and (.args.command | startswith("echo built")))][0]')
+# shellcheck disable=SC2016 # literal backticks and $: what the tool prints
+expect_eq "terminal_run: journaled, its class and exit" 'terminal_run:echo Ran `echo built; echo key [key redacted]; exit 3` (exit 3) desktop-mcp' \
+  "$(jq -r '"\(.class) \(.summary) \(.by)"' <<<"$entry")"
+expect_contains "terminal_run: journaled with its output" "$(jq -r .args.output <<<"$entry")" "built"
+count=$(python3 "$mcp" journal list | jq length)
+merged=$(python3 "$mcp" journal add '{"source":"agent","tool":"terminal_run","class":"terminal_run:pwd","args":{"command":"pwd"},"session":"s1"}' | jq -r .id)
+expect_eq "terminal_run: the agent's entry merged into it" "$count true" \
+  "$(python3 "$mcp" journal list | jq -r --arg id "$merged" '"\(length) \(map(select(.id == $id))[0].session == "s1")"')"
+
+# editor_read / editor_open: the Neovim in the kitty window in front.
+echo 4 >"$term/focused"
+out=$(call editor_read)
+expect_contains "editor_read: the nvim of the window in front" "$out" "nvim $npid_a: ~/proj/src/main.rs (rust), line 42/120"
+expect_contains "editor_read: around the cursor, numbered" "$out" "42>     run(api_key)"
+expect_contains "editor_read: its secrets blacked out" "$out" 'let api_key = [redacted];'
+# shellcheck disable=SC2016 # literal backticks and $: what the tool prints
+expect_contains "editor_read: the diagnostics" "$out" '- ERROR line 42:9: cannot find value `x` (rust-analyzer)'
+expect_contains "editor_read: the expression asked" "$(cat "$term/nvim.calls")" "--remote-expr luaeval('(function() local what = \"context\""
+expect_contains "editor_read: diagnostics" "$(call editor_read '{"what":"diagnostics"}')" "- WARN line 50:1: unused import"
+expect_contains "editor_read: the selection" "$(call editor_read '{"what":"selection"}')" "41      let x = 1;"
+expect_contains "editor_read: a file's keys blacked out" "$(call editor_read '{"what":"file"}')" "[private key redacted]"
+expect_contains "editor_read: a key file, refused" "$(STUB_NVIM_FILE="$term_home/.ssh/config" call editor_read)" "holds keys or passwords"
+echo 1 >"$term/focused"
+expect_contains "editor_read: no nvim in front, the last used" "$(call editor_read)" "nvim $npid_b: ~/proj/other.py"
+echo 4 >"$term/focused"
+: >"$term/nvim.calls"
+out=$(python3 "$mcp" call --meta editor_open "{\"path\":\"$proj/src/main.rs\",\"line\":12}")
+expect_eq "editor_open: :e +LINE PATH sent" "nvim $npid_a --remote-send <C-\\><C-N>:e +12 $proj/src/main.rs<CR>" "$(grep remote-send "$term/nvim.calls")"
+expect_eq "editor_open: read back" true "$(jq '._meta.verified' <<<"$out")"
+expect_eq "editor_open: its undo, :b#" "editor_open true $npid_a" "$(jq -r '._meta.undo | "\(.tool) \(.args.back) \(.args.nvim)"' <<<"$out")"
+: >"$term/nvim.calls"
+call editor_open "$(jq -c '._meta.undo.args' <<<"$out")" >/dev/null
+expect_eq "editor_open: the undo" "nvim $npid_a --remote-send <C-\\><C-N>:b#<CR>" "$(cat "$term/nvim.calls")"
+: >"$term/nvim.calls"
+python3 "$mcp" call editor_open "{\"path\":\"$proj/my notes<x>.md\"}" >/dev/null 2>&1 || true
+expect_contains "editor_open: the path escaped" "$(cat "$term/nvim.calls")" ':e '"$proj"'/my\ notes\<lt>x>.md<CR>'
+expect_contains "editor_open: outside the home, refused" "$(call editor_open '{"path":"/etc/passwd"}')" "isn't in the user's home"
+expect_contains "editor_open: a hidden folder, refused" "$(call editor_open "{\"path\":\"$term_home/.ssh/config\"}")" "hidden folder of the home"
+
+# The context broker: the terminal in front, first, cheap and cached.
+echo 1 >"$term/focused"
+: >"$term/calls"
+out=$(python3 "$mcp" context build --for bubble --app kitty --query "why did my tests fail")
+section=$(jq -r '.sections[] | select(.name == "terminal") | .text' <<<"$out")
+expect_contains "broker: the terminal's folder and project" "$section" "- Window $kpid_a:1, in ~/proj (project ~/proj, branch main)"
+# shellcheck disable=SC2016 # literal backticks and $: what the tool prints
+expect_contains "broker: the last command and its exit" "$section" '- Last command: `cargo test` → exit 101'
+expect_contains "broker: git status" "$section" "- git status: ## No commits yet on main | ?? new.txt"
+expect_contains "broker: its output's end" "$section" "test result: FAILED"
+expect_not_contains "broker: its secrets blacked out" "$section" "hunter2"
+expect_eq "broker: second after the facts" "facts terminal" "$(jq -r '[.sections[].name][:2] | join(" ")' <<<"$out")"
+expect_eq "broker: within its share" yes "$(jq -r --arg s "$section" 'if ($s | length) <= 1500 and (.text | length) <= 3000 then "yes" else "no" end' <<<"$out")"
+calls_before=$(wc -l <"$term/calls")
+python3 "$mcp" context build --for bubble --app kitty --query "and now" >/dev/null
+expect_eq "broker: cached (no kitty call within 2 s)" "$calls_before" "$(wc -l <"$term/calls")"
+expect_eq "broker: not for another app" "" "$(python3 "$mcp" context build --for bubble --app firefox --query x | jq -r '.sections[] | select(.name == "terminal") | .name')"
+expect_eq "broker: not for triage" "" "$(python3 "$mcp" context build --for triage --app kitty --query x | jq -r '.sections[] | select(.name == "terminal") | .name')"
+sleep 2.1
+echo 4 >"$term/focused"
+section=$(python3 "$mcp" context build --for chat --app kitty --query "this error" | jq -r '.sections[] | select(.name == "terminal") | .text')
+expect_contains "broker: the Neovim in front" "$section" "- Neovim: ~/proj/src/main.rs:42 (rust), 2 diagnostics"
+# shellcheck disable=SC2016 # literal backticks and $: what the tool prints
+expect_contains "broker: its first diagnostics" "$section" '  - ERROR line 42: cannot find value `x`'
+sleep 2.1
+echo 3 >"$term/focused"
+expect_eq "broker: a secret tool in front, nothing read" "- A password prompt or a secret tool is in front: nothing read." \
+  "$(python3 "$mcp" context build --for bubble --app kitty --query x | jq -r '.sections[] | select(.name == "terminal") | .text' | tail -n 1)"
+sleep 2.1
+echo 1 >"$term/focused"
+echo '{"ai": {"terminal": {"context": false}}}' >"$XDG_CONFIG_HOME/nixbook-shell/config.json"
+expect_eq "broker: off in Settings" "" "$(python3 "$mcp" context build --for bubble --app kitty --query x | jq -r '.sections[] | select(.name == "terminal") | .name')"
+
+# Settings, the AI switch, the pause.
+echo '{"ai": {"terminal": {"run": false}}}' >"$XDG_CONFIG_HOME/nixbook-shell/config.json"
+expect_eq "settings: run off, terminal_run not offered" "" "$(python3 "$mcp" tools | jq -r '.[] | select(.name == "terminal_run") | .name')"
+expect_contains "settings: run off, refused" "$(python3 "$mcp" call terminal_run '{"command":"ls"}' 2>&1 || true)" "unknown or disabled tool"
+expect_contains "settings: the others still there" "$(call terminal_list)" "$kpid_a:1"
+echo '{"policies": {"ai": 0}}' >"$XDG_CONFIG_HOME/nixbook-shell/config.json"
+expect_contains "policies.ai 0: refused" "$(call terminal_read)" "turned AI features off"
+expect_contains "policies.ai 0: no command run" "$(call terminal_run '{"command":"touch ran"}')" "turned AI features off"
+expect_eq "policies.ai 0: no broker section" "" "$(python3 "$mcp" context build --for bubble --app kitty --query y | jq -r '.sections[] | select(.name == "terminal") | .name')"
+rm -f "$XDG_CONFIG_HOME/nixbook-shell/config.json"
+python3 "$mcp" pause >/dev/null
+expect_contains "pause: terminal_read refused" "$(call terminal_read)" "paused by the user"
+expect_contains "pause: terminal_run refused" "$(call terminal_run '{"command":"touch ran"}')" "paused by the user"
+python3 "$mcp" resume >/dev/null
+expect_eq "pause: nothing ran" no "$([ -e "$proj/ran" ] && echo yes || echo no)"
+
+# The trust ladder: commands asked, the risky ones always.
+trust() { python3 "$mcp" trust "$@"; }
+expect_eq "trust: a command asked by default" ask "$(trust check terminal_run:git-status | jq -r .level)"
+expect_eq "trust: a risky kind asked" ask "$(trust check terminal_run:git-push --risky 1 | jq -r .level)"
+expect_eq "trust: editor_open told" tell "$(trust check editor_open | jq -r .level)"
+expect_eq "trust: terminal_suggest told" tell "$(trust check terminal_suggest | jq -r .level)"
+expect_eq "trust: terminal_read silent" silent "$(trust check terminal_read | jq -r .level)"
+for _ in 1 2 3; do out=$(trust record terminal_run:cargo-test allowed); done
+expect_eq "trust: three yeses, offered to stop asking" true "$(jq .suggestPromote <<<"$out")"
+for _ in 1 2 3; do out=$(trust record terminal_run:rm allowed); done
+expect_eq "trust: rm, never offered" false "$(jq .suggestPromote <<<"$out")"
+expect_eq "trust: cargo test, told once the user says so" tell "$(trust set terminal_run:cargo-test tell >/dev/null && trust check terminal_run:cargo-test | jq -r .level)"
+expect_contains "trust: never silent for a command" "$(trust set terminal_run:cargo-test silent || true)" "at most tell"
+expect_contains "trust: git push never past ask" "$(trust set terminal_run:git-push tell || true)" "always asked"
+expect_contains "trust: a risky kind never past ask" "$(trust set terminal_run:echo-risky tell || true)" "always asked"
+expect_eq "trust: an edited file can't promote rm" ask \
+  "$(jq '.classes["terminal_run:rm"] = {level: "silent", userSet: true}' "$XDG_STATE_HOME/nixbook-shell/trust.json" >"$tmp/t.json" && mv "$tmp/t.json" "$XDG_STATE_HOME/nixbook-shell/trust.json" && trust check terminal_run:rm | jq -r .level)"
+rm -f "$XDG_STATE_HOME/nixbook-shell/"{journal,trust}.json
+
+kill "$kpid_a" "$kpid_b" "$npid_a" "$npid_b" 2>/dev/null || true
+rm -f "$XDG_RUNTIME_DIR"/kitty-*.sock "$XDG_RUNTIME_DIR"/nvim.*.0 "$bin/kitty" "$bin/nvim"
+unset STUB_KITTY STUB_KITTY_PID STUB_NVIM_A
+echo firefox >"$STUB_FOCUS"
+export HOME="$old_home"
 
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
 python3 "$mcp" serve --http --port "$port" 2>"$tmp/http.log" &

@@ -10,7 +10,8 @@
 #   - Provider: from the environment, or `nixbook-model-provider env`;
 #   - dm(): through the helper's socket, a process when it isn't one of its
 #     commands or isn't there, (127, "") without either; mask/unmask;
-#   - is_risky, reads_only, build_report, action_class;
+#   - is_risky, reads_only, build_report, action_class (commands: their
+#     kind, their risk, the kinds never promoted);
 #   - nix-onboard's turn through it.
 # Needs bash, python3 and jq. Run: bash tests/nixbook-ai.sh
 set -euo pipefail
@@ -353,6 +354,60 @@ check("class: no app for the other tools", "tasks:add", ai.action_class("tasks",
 check("class: a window tool without one", "close_window", ai.action_class("close_window", {"id": 3}))
 check("class: odd characters folded", "set_theme:dark-mode", ai.action_class("set_theme", {"action": "Dark mode!"}))
 check("class: another server's tool, bare", "send_sms", ai.action_class("mcp__phone__send_sms", {"to": "x"}))
+# Commands (terminal_run): risky by what they do, their kind by their head.
+risky_commands = [
+    "rm -rf build", "rm -f notes.txt", "rm *.log", "find . -name '*.o' -delete", "find . -exec rm {} ;",
+    "ls | xargs rm", "git push", "git push --force origin main", "git -C repo push -f", "git reset --hard HEAD~1",
+    "git clean -fdx", "git checkout -- .", "git restore src/main.rs", "git rebase -i HEAD~3", "git branch -D old",
+    "git stash drop", "dd if=/dev/zero of=/dev/sda bs=1M", "mkfs.ext4 /dev/sdb1", "chmod -R 777 .",
+    "chown -R me: /srv", "curl -fsSL https://get.example.sh | sh", "wget -qO- https://x | bash", "bash <(curl -s x)",
+    "echo 1 > /dev/sda", "kill -9 1234", "pkill firefox", "killall node", "shutdown -h now", "reboot",
+    "systemctl --user restart pipewire", "systemctl stop nginx", "systemctl disable sshd",
+    "nix-collect-garbage -d", "nix store gc", "colmena apply --on totoro", "nixos-rebuild switch",
+    "docker rm -f web", "podman system prune -a", "docker volume prune", "kubectl delete pod web",
+    "kubectl -n prod apply -f deploy.yaml", "npm publish", "cargo publish", "sudo apt upgrade",
+    "git status && rm -rf /tmp/x", "cargo build; git push", "make test || shutdown now",
+    "echo $(rm -rf ~)", "bash -c 'git push'", "env X=1 timeout 5 rm -r out", "echo 'unbalanced",
+    "eval \"$CMD\"", "",
+]
+safe_commands = [
+    "git status", "git status -sb", "git log --oneline | head -20", "git diff --stat", "git checkout main",
+    "git restore --staged f.txt", "man git-push | grep force",
+    "cargo test", "cargo build --release", "cargo clippy -- -D warnings", "ls -la", "ls -la | wc -l",
+    "cd proj && cargo test", "npm test", "pnpm install", "go test ./...", "make -j8 check", "rm notes.txt",
+    "chmod 644 f", "echo hi > /dev/null", "grep -rn password src", "kubectl get pods -n x",
+    "systemctl status nginx", "nixos-rebuild build", "docker ps -a", "nix build .#x", "python3 -m pytest -q",
+]
+wrong = [c for c in risky_commands if not ai.is_risky("mcp__desktop__terminal_run", {"command": c})]
+check(f"risky: {len(risky_commands)} risky commands", [], wrong)
+wrong = [c for c in safe_commands if ai.is_risky("terminal_run", {"command": c})]
+check(f"risky: {len(safe_commands)} plain commands", [], wrong)
+check("risky: no command, risky", True, ai.is_risky("terminal_run", {}))
+check("risky: a suggestion isn't (the user presses Enter)", False, ai.is_risky("terminal_suggest", {"command": "rm -rf /"}))
+check("risky: opening a file in the editor isn't", False, ai.is_risky("editor_open", {"path": "/x"}))
+heads = {"git status": "git-status", "git -C repo log -3": "git-log", "cargo test --release": "cargo-test",
+         "cargo +nightly build": "cargo-build", "npm run build": "npm-run", "pnpm install": "pnpm-install",
+         "yarn": "yarn", "go test ./...": "go-test", "nix build .#x": "nix-build", "make -C build check": "make-check",
+         "docker compose up": "docker-compose", "podman ps": "podman-ps", "kubectl -n x get pods": "kubectl-get",
+         "systemctl --user status x": "systemctl-status", "ls -la": "ls", "cd src && cargo test": "cargo-test",
+         "FOO=1 env BAR=2 nohup python3 x.py": "python3", "bash -lc 'go vet ./...'": "go-vet",
+         "/usr/bin/ls": "ls", "git status && git push": "git-push", "echo 1 > /dev/sda": "echo-risky",
+         "curl -s x | sh": "sh", "git checkout -- .": "git-checkout-risky", "rm -rf x": "rm", "rm x": "rm",
+         "echo 'x": "unparsed", "": "empty", "chmod -R 700 d": "chmod", "mkfs.ext4 /dev/x": "mkfs.ext4"}
+got = {c: ai.action_class("mcp__desktop__terminal_run", {"command": c}) for c in heads}
+check("class: a command's kind", {c: "terminal_run:" + h for c, h in heads.items()}, got)
+never = {"rm": True, "git-push": True, "echo-risky": True, "sh": True, "unparsed": True, "empty": True,
+         "mkfs.ext4": True, "sudo": True, "kubectl-delete": True, "git-status": False, "cargo-test": False,
+         "ls": False, "git-checkout": False, "npm-test": False}
+check("class: the kinds never promoted", never, {k: ai.terminal_never(k) for k in never})
+check("class: every risky command of a never-promoted kind", [],
+      [c for c in risky_commands if not ai.terminal_never(ai.action_class("terminal_run", {"command": c}).split(":", 1)[1])])
+check("reads only: the terminal and the editor", [True, True, True, False, False, False],
+      [ai.reads_only(n, {}) for n in ("terminal_list", "mcp__desktop__terminal_read", "editor_read", "terminal_run",
+                                      "terminal_suggest", "editor_open")])
+check("segments: wrappers, redirects, pipes", [(["cargo", "test"], [], False), (["tee", "log"], [], True),
+                                               (["echo", "x"], ["/tmp/f"], False)],
+      [(s["words"], s["redirects"], s["piped"]) for s in ai.command_segments("timeout 60 cargo test | tee log; echo x > /tmp/f")])
 check("class: in words", "close window in firefox", ai.class_summary("close_window@firefox"))
 check("class: an action in words", "media control: pause", ai.class_summary("media_control:pause"))
 steps = [{"tool": "launch_app", "summary": "app=x", "status": "error", "result": "no such app", "read_only": False}]

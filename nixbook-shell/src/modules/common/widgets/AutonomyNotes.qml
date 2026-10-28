@@ -28,7 +28,9 @@ ColumnLayout {
     property bool square: false
 
     readonly property var orders: Autonomy.orders ? (root.message?.orders ?? []) : []
-    readonly property var told: root.message?.told ?? []
+    // A command it ran is its own line (TerminalNotes: Ran `cmd` (exit N)).
+    readonly property var told: (root.message?.told ?? []).filter(t => !(String(t.class ?? "").startsWith("terminal_run")
+        && (root.message?.terminalRuns ?? []).length > 0))
     readonly property var suggestions: Autonomy.trust
         ? (root.message?.trustSuggest ?? []).filter(s => !Autonomy.trustAnswered[s.class]) : []
     readonly property var answeredSuggestions: (root.message?.trustSuggest ?? []).filter(s => !!Autonomy.trustAnswered[s.class]

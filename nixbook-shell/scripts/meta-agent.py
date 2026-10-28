@@ -2078,6 +2078,11 @@ class Agent:
             return False
         if confirm == "actions":
             return True
+        # A command run is asked for, risky or not, unless the trust ladder
+        # (--trust) says the user let that kind of command through: without
+        # it, "risky steps only" would run a plain `cargo test` unasked.
+        if self.meta(name)["tool"] == "terminal_run" and not getattr(self.opts, "trust", False):
+            return True
         return nixbook_ai.is_risky(name, args, {name: self.meta(name)})
 
     # ── The trust ladder (--trust) ──

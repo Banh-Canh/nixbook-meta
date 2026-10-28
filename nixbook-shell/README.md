@@ -1613,6 +1613,55 @@ off screen is only captured through niri with `offscreen: true`, which the
 tool tells agents to avoid: niri copies its captures to the clipboard and
 notifies (the previous clipboard is put back, but cliphist records it).
 
+### Terminal & coding
+
+The `terminal` tool group (on by default; `ai.terminal = { read; suggest;
+run; runVisible; editor; context; }`, Settings → Desktop agents → Terminal &
+coding) gives agents kitty and Neovim through their own remote control,
+never by typing into the window (the `input` tools still refuse terminals).
+nixbook's `kittyConfig` turns on `allow_remote_control socket-only` with
+`listen_on unix:${XDG_RUNTIME_DIR}/kitty-{kitty_pid}.sock` (a socket in the
+0700 runtime dir, which the side panel's Bash sandbox hides); desktop-mcp
+finds the live `kitty-*.sock` sockets, merges their windows as `PID:ID`, and
+reaches Neovim through its own server socket (`nvim.PID.0`).
+
+- `terminal_list`, `terminal_read` (the last command's output by default,
+  else the screen; scrollback, selection, `lines`) and `editor_read`
+  (context ±60 lines, diagnostics, selection, file): read-only.
+- `terminal_suggest`: a bracketed paste on an idle, empty shell prompt,
+  never with Enter (the user runs it; may suggest `sudo`); undo clears the
+  line.
+- `terminal_run`: `bash -lc` in Muse's own kitty tab ("Muse", reused, one
+  command at a time; `runVisible`) or a plain process without a TTY; cwd in
+  the home, not a hidden folder; the environment without `NIXBOOK_AI_*`,
+  with `NIXBOOK_META_AGENT_CHILD=1` and `GIT_TERMINAL_PROMPT=0`; returns
+  `{exit, output, cwd, duration, visible}` and is journaled. Refused:
+  `sudo` and the like, secret readers, nixbook's own controls
+  (desktop-mcp, muse-task, meta-agent, `qs`/`nixbook-shell ipc`, `kitty @`,
+  `niri msg`, wtype/ydotool), mentions of `.ssh`, `.gnupg`,
+  `.password-store`, keyrings, shell rc files or nixbook's state, and lines
+  it can't parse (`nixbook_ai.command_segments`).
+- `editor_open`: `:e +LINE PATH` in that Neovim; undo `:b#`.
+
+Guards: a window with a secret tool or a password prompt in front is
+refused, lines a secret tool printed are hidden, and everything read goes
+through `redact_secrets` (private keys, API tokens, AWS keys, JWTs,
+Authorization headers, URL credentials, `password=`/`token=` values) before
+the privacy mask; output is capped to its tail (`terminalOutputMax`, 6000).
+Trust: `terminal_run:<head>` (`git-status`, `cargo-test`…) starts at ask
+and can only be promoted to tell; a risky command (`nixbook_ai.command_risk`:
+`rm -r/-f`, any `git push`, `reset --hard`, `dd`, `curl | sh`, `kill`,
+`nixos-rebuild switch`, publishing, a chained risky part, an unparsable
+line) keeps its own kind and is always asked. With kitty in front, the
+broker's `terminal` section (≤ 1500 chars) gives the folder, project and
+branch, `git status -sb`, what runs, the last command and exit, its output
+tail and Neovim's file and first diagnostics, so "why does this fail?"
+needs no tool call. `nixbook-desktop-mcp terminal [status]` shows what it
+sees. In the shell: `services/TerminalAccess.qml`,
+`modules/common/widgets/TerminalNotes.qml` (the approval card with the
+command and its folder; "Ran `cmd` (exit N)" with Show output and a link
+to Muse's tab).
+
 ### A desktop of their own
 
 So an agent can work while you work, it can be given its own desktop:

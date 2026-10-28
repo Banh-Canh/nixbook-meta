@@ -149,6 +149,9 @@ if kind == "desktop":
               "annotations": {"readOnlyHint": False}, "_meta": {"nixbook/group": "input"}},
              {"name": "status_json", "description": "A long JSON status", "inputSchema": obj(),
               "annotations": {"readOnlyHint": True}, "_meta": {"nixbook/group": "observe"}}]
+    if "TERM" in os.environ.get("STUB_DESKTOP", ""):
+        tools.append({"name": "terminal_run", "description": "Run a command", "inputSchema": obj(command="string"),
+                      "annotations": {"readOnlyHint": False}, "_meta": {"nixbook/group": "terminal"}})
     if "CORE" in os.environ.get("STUB_DESKTOP", ""):
         core = {"launch_app", "list_windows", "close_window"}
         for t in tools:
@@ -478,6 +481,15 @@ out=$(turn "AGENTTEST:closing" '{"type": "approval", "id": "c1", "allow": true}'
   agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm actions)
 expect_eq "confirm actions: every acting step asked, never one that reads" '"c1"' "$(jq -c 'select(.type == "approval_request") | .id' <<<"$out")"
 expect_eq "confirm actions: both run" "close_window list_windows" "$(jq -r .name "$tmp/desk-calls.log" | sort | paste -sd' ')"
+# A command run is asked for even when it isn't risky ("risky steps only"),
+# unless --trust says the user let that kind through.
+script termrun '[[{"type": "tool_use", "id": "r1", "name": "mcp__desktop__terminal_run", "input": {"command": "cargo test"}}],
+  [{"type": "text", "text": "ok"}]]'
+term_config=$(jq -c '.mcpServers.desktop.env.STUB_DESKTOP = "TERM"' <<<"$desk_config")
+out=$(turn "AGENTTEST:termrun" '{"type": "approval", "id": "r1", "allow": false}' |
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$term_config" --confirm destructive)
+expect_eq "confirm destructive: a plain command run is still asked (no --trust)" '"r1"' \
+  "$(jq -c 'select(.type == "approval_request") | .id' <<<"$out")"
 
 # -- The trust ladder (--trust) ---------------------------------------------------------------------
 # trusted ARGS…: a turn with the desktop's tools and --trust, its approvals after it.

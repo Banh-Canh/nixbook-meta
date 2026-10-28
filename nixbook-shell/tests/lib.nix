@@ -236,6 +236,32 @@ lib.runTests {
       }
     ];
   };
+  # -- Muse in the terminal and the editor (ai.terminal) -------------------
+  testTerminalDefaults = {
+    expr = shellLib.builtinDefaults.ai.terminal;
+    expected = {
+      read = true;
+      suggest = true;
+      run = true;
+      runVisible = true;
+      editor = true;
+      context = true;
+    };
+  };
+  testTerminalSettings = {
+    expr = shellLib.pinnedSettings (evalSettings {
+      ai.terminal.run = false;
+      ai.terminal.context = false;
+    });
+    expected = {
+      ai.terminal.run = false;
+      ai.terminal.context = false;
+    };
+  };
+  testWronglyTypedTerminalSettingFails = {
+    expr = fails (evalSettings { ai.terminal.read = "yes"; }).ai.terminal.read;
+    expected = true;
+  };
   testWronglyTypedMaxTasksFails = {
     expr = fails (evalSettings { ai.autonomy.maxTasks = "three"; }).ai.autonomy.maxTasks;
     expected = true;

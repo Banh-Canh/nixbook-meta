@@ -484,6 +484,27 @@ Singleton {
                         property bool errorDialog: true
                     }
                 }
+                // Muse in the terminal and the editor (nixbook-desktop-mcp's
+                // `terminal` tools, kitty's remote control and nvim's server):
+                // `read`, the kitty windows and what they show (the last
+                // command's output, the screen); `suggest`, a command put on
+                // the prompt for the user to run (never Enter); `run`, a command
+                // run for Muse, each one asked first unless trusted;
+                // `runVisible`, run in Muse's own kitty tab (else hidden, no
+                // terminal); `editor`, the nvim in front (file, cursor,
+                // selection, diagnostics) and opening a file at a line;
+                // `context`, what the terminal in front shows sent with a
+                // question (cwd, git status, the last command and its output).
+                // Password prompts and secret tools are never read, secrets are
+                // redacted.
+                property JsonObject terminal: JsonObject {
+                    property bool read: true
+                    property bool suggest: true
+                    property bool run: true
+                    property bool runVisible: true
+                    property bool editor: true
+                    property bool context: true
+                }
                 // The desktop agent fixing nixbook itself (services/SelfImprove.qml,
                 // nixbook-improve): fixes and polish only, each a PR with its
                 // changelog entry, merged when the user says so. Off until

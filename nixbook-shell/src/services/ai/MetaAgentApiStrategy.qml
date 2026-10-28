@@ -59,6 +59,7 @@ QtObject {
     function reset() {
         toolCalls = ({});
         toolNames = ({});
+        toolInputs = ({});
         finished = false;
         held = "";
         steps = [];
@@ -110,6 +111,8 @@ QtObject {
 
     // Tool call id -> tool name (a standing_order's result is a card).
     property var toolNames: ({})
+    // Tool call id -> its input (a terminal_run's command and folder).
+    property var toolInputs: ({})
     function _push(message, prop, value) {
         message[prop] = [...(message[prop] ?? []), value];
     }
@@ -123,6 +126,36 @@ QtObject {
         if (!r || typeof r !== "object" || r.error || (!r.id && !(r.questions ?? []).length)) return;
         _push(message, "orders", { id: String(r.id ?? ""), summary: String(r.summary ?? ""),
             routine: r.routine ?? null, questions: (r.questions ?? []).map(q => String(q)).slice(0, 4) });
+    }
+    // A command Muse ran (terminal_run: {exit, output, cwd, duration}): the
+    // message's `terminalRuns`, "Ran `cmd` (exit N)" with its output
+    // (TerminalNotes). A refusal or a "no" is kept too, without output.
+    function _terminalRun(message, id, text, isError) {
+        const input = toolInputs[id] ?? {};
+        const raw = unmask(String(text ?? ""));
+        // The JSON reply, maybe with words around it.
+        let r = null;
+        const start = raw.indexOf("{");
+        for (const end of [raw.length, raw.lastIndexOf("}") + 1]) {
+            if (r || start < 0 || end <= start) continue;
+            try {
+                r = JSON.parse(raw.slice(start, end));
+            } catch (e) {
+                r = null;
+            }
+        }
+        if (!r || typeof r !== "object") r = {};
+        const ran = !isError && !r.error && (typeof r.exit === "number" || typeof r.exit === "string");
+        _push(message, "terminalRuns", {
+            id: String(id ?? ""),
+            command: unmask(String(input.command ?? r.command ?? "")),
+            cwd: unmask(String(r.cwd ?? input.cwd ?? "")),
+            exit: ran ? Number(r.exit) : null,
+            output: ran ? String(r.output ?? "") : "",
+            duration: Number(r.duration ?? 0) || 0,
+            visible: input.visible !== false && r.visible !== false,
+            error: ran ? "" : brief(r.error ?? (raw || "not run"), 200)
+        });
     }
 
     function toolName(name) {
@@ -199,6 +232,7 @@ QtObject {
                 if (block.type !== "tool_use") continue;
                 toolCalls[block.id] = `**${toolLabel(block.name)}** ${brief(block.input, 300)}`;
                 toolNames[block.id] = toolName(block.name);
+                toolInputs[block.id] = block.input ?? {};
                 // Started while the message streamed, maybe done already.
                 const before = steps.find(x => x.id === block.id);
                 setStep(block.id, { tool: toolName(block.name), summary: brief(block.input, 80),
@@ -212,6 +246,8 @@ QtObject {
                 const text = brief(resultText(block.content), 400);
                 setStep(block.tool_use_id, { status: block.is_error ? "error" : "ok", result: brief(resultText(block.content), 120) });
                 if (!block.is_error && toolNames[block.tool_use_id] === "standing_order") _order(message, resultText(block.content));
+                if (toolNames[block.tool_use_id] === "terminal_run")
+                    _terminalRun(message, block.tool_use_id, resultText(block.content), block.is_error === true);
                 append(message, `\n\n<think>\n${call}\n\n${block.is_error ? "⚠ " : "→ "}${text}\n</think>\n\n`);
             }
         } else if (ev.type === "tool_started") {

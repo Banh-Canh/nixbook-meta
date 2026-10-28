@@ -109,7 +109,9 @@ Singleton {
         const out = [];
         if (root.pending) {
             const what = String(root.pending.tool ?? "").replace(/_/g, " ") + (root.pending.summary ? ` (${root.pending.summary})` : "");
-            out.push({ label: Translation.tr("Allow: %1").arg(what), main: true, run: () => root.approve(true) });
+            // A command: shown whole above the chips (TerminalNotes).
+            const label = TerminalAccess.runApproval(root.pending) ? Translation.tr("Allow: run it") : Translation.tr("Allow: %1").arg(what);
+            out.push({ label: label, main: true, run: () => root.approve(true) });
             out.push({ label: Translation.tr("No"), main: false, run: () => root.approve(false) });
             return out;
         }

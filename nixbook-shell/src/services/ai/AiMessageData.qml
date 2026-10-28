@@ -58,6 +58,10 @@ QtObject {
     property var orders: []
     property var told: []
     property var trustSuggest: []
+    // The commands Muse ran in this answer (terminal_run: {id, command,
+    // cwd, exit, output, duration, visible, error}): "Ran `cmd` (exit N)"
+    // with Show output (TerminalNotes).
+    property var terminalRuns: []
     property var annotations: []
     property var annotationSources: []
     property list<string> searchQueries: []

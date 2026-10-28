@@ -637,6 +637,23 @@ Scope {
                         fontFamily: root.font
                         square: root.square
                     }
+                    // Muse in the terminal: a command waiting for the OK (in
+                    // monospace, with its folder; Allow / No are the chips),
+                    // the commands it ran ("Ran `cmd` (exit N)", Show output,
+                    // Muse's tab).
+                    TerminalNotes {
+                        Layout.fillWidth: true
+                        readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+                        approval: root.quick ? QuickAi.pending : (root.chat?.approval ?? null)
+                        message: last?.role === "assistant" ? last : null
+                        visible: root.conversing && !threadList.visible
+                            && (TerminalAccess.runApproval(approval) !== null || (last?.terminalRuns ?? []).length > 0)
+                        fg: root.fg
+                        accent: root.accent
+                        bg: root.bg
+                        fontFamily: root.font
+                        square: root.square
+                    }
                     AnswerFeedbackRow {
                         Layout.fillWidth: true
                         readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
@@ -918,6 +935,9 @@ Scope {
                                         : Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")
                                             : Translation.tr("Listening… speak now"))
                                         : Voice.transcribing ? Translation.tr("Understanding…")
+                                        // kitty or Neovim in front: Muse sees it (ai.terminal).
+                                        : TerminalAccess.seesFront && (window.grab || root.conversing || Initiative.isAsk(root.item))
+                                            ? (TerminalAccess.frontIsEditor ? Translation.tr("Ask about this code…") : Translation.tr("Ask about this terminal…"))
                                         : window.grab ? Translation.tr("Message Muse… (Esc: put away, /new: start over)")
                                         : root.conversing || Initiative.isAsk(root.item) ? Translation.tr("Message Muse…")
                                         : Translation.tr("Answer Muse…")

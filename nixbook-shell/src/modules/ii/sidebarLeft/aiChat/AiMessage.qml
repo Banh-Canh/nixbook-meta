@@ -549,6 +549,16 @@ Rectangle {
             bg: Appearance.colors.colLayer1
         }
 
+        // The commands Muse ran: "Ran `cmd` (exit N)", Show output, Muse's tab.
+        TerminalNotes {
+            Layout.fillWidth: true
+            visible: root.messageData?.role === "assistant" && (root.messageData?.terminalRuns ?? []).length > 0
+            message: root.messageData
+            fg: root.persona ? "white" : Appearance.colors.colOnLayer1
+            accent: Appearance.colors.colPrimary
+            bg: Appearance.colors.colLayer1
+        }
+
         AnswerFeedbackRow {
             Layout.fillWidth: true
             chat: Ai.current

@@ -581,35 +581,48 @@ Inline w/ backslash and round brackets \\(e^{i\\pi} + 1 = 0\\)
             readonly property var approval: Ai.current?.approval ?? null
             Layout.fillWidth: true
             visible: approvalBar.approval !== null
-            implicitHeight: approvalRow.implicitHeight + 12
+            implicitHeight: approvalColumn.implicitHeight + 12
             radius: Appearance.rounding.small
             color: Appearance.colors.colSecondaryContainer
-            RowLayout {
-                id: approvalRow
+            ColumnLayout {
+                id: approvalColumn
                 anchors.fill: parent
                 anchors.margins: 6
                 spacing: 6
-                MaterialSymbol {
-                    text: "front_hand"
-                    iconSize: Appearance.font.pixelSize.normal
-                    color: Appearance.colors.colOnSecondaryContainer
-                }
-                StyledText {
+                // A command to run: shown whole, in monospace, with its folder.
+                TerminalNotes {
                     Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    textFormat: Text.PlainText
-                    text: Translation.tr("Muse asks before: %1").arg(String(approvalBar.approval?.tool ?? "").replace(/_/g, " ")
-                        + (approvalBar.approval?.summary ? ` (${approvalBar.approval.summary})` : ""))
-                    font.pixelSize: Appearance.font.pixelSize.small
-                    color: Appearance.colors.colOnSecondaryContainer
+                    approval: approvalBar.approval
+                    fg: Appearance.colors.colOnSecondaryContainer
+                    accent: Appearance.colors.colPrimary
+                    bg: Appearance.colors.colSecondaryContainer
                 }
-                DialogButton {
-                    buttonText: Translation.tr("Allow")
-                    onClicked: Ai.current?.approve(true)
-                }
-                DialogButton {
-                    buttonText: Translation.tr("No")
-                    onClicked: Ai.current?.approve(false)
+                RowLayout {
+                    id: approvalRow
+                    Layout.fillWidth: true
+                    spacing: 6
+                    MaterialSymbol {
+                        text: "front_hand"
+                        iconSize: Appearance.font.pixelSize.normal
+                        color: Appearance.colors.colOnSecondaryContainer
+                    }
+                    StyledText {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
+                        text: Translation.tr("Muse asks before: %1").arg(String(approvalBar.approval?.tool ?? "").replace(/_/g, " ")
+                            + (approvalBar.approval?.summary ? ` (${approvalBar.approval.summary})` : ""))
+                        font.pixelSize: Appearance.font.pixelSize.small
+                        color: Appearance.colors.colOnSecondaryContainer
+                    }
+                    DialogButton {
+                        buttonText: Translation.tr("Allow")
+                        onClicked: Ai.current?.approve(true)
+                    }
+                    DialogButton {
+                        buttonText: Translation.tr("No")
+                        onClicked: Ai.current?.approve(false)
+                    }
                 }
             }
         }
