@@ -700,6 +700,7 @@ expect_eq "media keys: within 300 ms either way" "" "$(jq -r 'select(.ms >= 300)
 # (get_status's `music`), not a screenshot.
 prev_focus=$(cat "$STUB_FOCUS")
 echo music >"$STUB_FOCUS"
+reset_calls # the stub player plays again (the pause above is forgotten)
 out=$(PATH="$tmp/mediabin:$PATH" STUB_MUSIC_WINDOW=1 timed press_keys '{"keys":["space"]}' get_status '{}')
 expect_eq "music app: the check reads the player" '{"tool":"get_status","args":{}}' \
   "$(sed -n 1p <<<"$out" | jq -c '.result._meta.observe')"
