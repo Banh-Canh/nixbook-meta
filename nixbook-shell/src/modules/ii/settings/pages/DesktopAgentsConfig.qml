@@ -139,6 +139,14 @@ ContentPage {
                     onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.conversation = checked
                 }
                 ConfigSwitch {
+                    configKey: "ai.voice.bargeIn"
+                    enabled: !nixManaged && Config.options.ai.quick.enable && (Config.options.ai.voice?.enable ?? true)
+                    buttonIcon: "front_hand"
+                    text: Translation.tr("Interrupt by speaking (\"stop\", \"wait\"…, or just speak up while it talks: it stops and listens)")
+                    checked: Config.options.ai.voice?.bargeIn ?? true
+                    onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.bargeIn = checked
+                }
+                ConfigSwitch {
                     configKey: "ai.fullAi.react"
                     enabled: !nixManaged && Config.options.ai.quick.enable
                     buttonIcon: "notifications_active"

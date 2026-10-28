@@ -324,6 +324,10 @@ Singleton {
                     // said, and Full AI mode), "always", "never". The style:
                     // "cute" or "natural" (MMS's own voice).
                     property string speak: "voice"
+                    // Speak up to interrupt: with the echo-cancelled
+                    // microphone it listens while it speaks, and "stop",
+                    // "wait"… (or any words of the user's) cut it short.
+                    property bool bargeIn: true
                     property string style: "cute"
                 }
                 // Muse in the side panel: nixbook-meta-agent (the shell's own

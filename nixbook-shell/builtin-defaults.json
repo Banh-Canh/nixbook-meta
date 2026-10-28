@@ -53,6 +53,7 @@
       "maxSeconds": 120,
       "conversation": true,
       "speak": "voice",
+      "bargeIn": true,
       "style": "cute"
     },
     "agent": {

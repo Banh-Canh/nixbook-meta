@@ -31,6 +31,30 @@ ColumnLayout {
     // A command it ran is its own line (TerminalNotes: Ran `cmd` (exit N)).
     readonly property var told: (root.message?.told ?? []).filter(t => !(String(t.class ?? "").startsWith("terminal_run")
         && (root.message?.terminalRuns ?? []).length > 0))
+    // The same kind of step grouped ("Did: add to queue ×4 — A, B, C…"):
+    // one line each instead of one per step. {verb, items, details}.
+    readonly property var toldGroups: {
+        const groups = [];
+        const by = {};
+        for (const t of root.told) {
+            const summary = String(t.summary ?? "");
+            const paren = summary.indexOf(" (");
+            const verb = paren > 0 ? summary.slice(0, paren) : summary;
+            // Its first argument's value ("query=K/DA MORE, …" → "K/DA MORE").
+            const what = paren > 0 ? summary.slice(paren + 2).replace(/\)$/, "").split(/, (?=[a-z_]+=)/)[0].replace(/^[a-z_]+=/, "") : "";
+            if (!(verb in by)) {
+                by[verb] = { verb: verb, items: [], details: [] };
+                groups.push(by[verb]);
+            }
+            by[verb].items.push(t);
+            if (what) by[verb].details.push(what);
+        }
+        return groups;
+    }
+    function entryOf(t) {
+        return t.id ? Autonomy.journal.find(e => e.id === t.id)
+            : Autonomy.journal.find(e => e.class === t.class && (!t.summary || e.summary === t.summary));
+    }
     readonly property var suggestions: Autonomy.trust
         ? (root.message?.trustSuggest ?? []).filter(s => !Autonomy.trustAnswered[s.class]) : []
     readonly property var answeredSuggestions: (root.message?.trustSuggest ?? []).filter(s => !!Autonomy.trustAnswered[s.class]
@@ -164,34 +188,48 @@ ColumnLayout {
         }
     }
 
-    // What it did, trusted to tell after: Undo.
+    // What it did, trusted to tell after: Undo (a group: every step of it).
     Repeater {
-        model: root.told
+        model: root.toldGroups
         delegate: RowLayout {
             id: did
             required property var modelData
-            // Its journal entry: by id, else the latest with this class and words.
-            readonly property var entry: did.modelData.id ? Autonomy.journal.find(e => e.id === did.modelData.id)
-                : Autonomy.journal.find(e => e.class === did.modelData.class && (!did.modelData.summary || e.summary === did.modelData.summary))
-            readonly property string undoState: did.entry ? (Autonomy.undoState[did.entry.id] ?? "") : ""
+            readonly property var items: did.modelData.items
+            readonly property int count: did.items.length
+            // The journal entries (by id, else the latest with this class and words).
+            readonly property var entries: did.items.map(t => root.entryOf(t)).filter(e => !!e)
+            readonly property var entry: did.entries.length > 0 ? did.entries[did.entries.length - 1] : null
+            readonly property string undoState: {
+                if (did.entries.length === 0) return "";
+                const states = did.entries.map(e => Autonomy.undoState[e.id] ?? "");
+                if (states.every(st => st === "done")) return "done";
+                return states.find(st => st.startsWith("error")) ?? (states.some(st => st === "done") ? "partly" : "");
+            }
+            // "add to queue ×4 — K/DA VILLAIN, K/DA MORE…"
+            readonly property string label: {
+                const head = did.count > 1 ? `${did.modelData.verb} ×${did.count}` : String(did.items[0].summary ?? did.modelData.verb);
+                if (did.count <= 1 || did.modelData.details.length === 0) return head;
+                const list = did.modelData.details.join(", ");
+                return `${head} — ${list.length > 120 ? list.slice(0, 119) + "…" : list}`;
+            }
             Layout.fillWidth: true
             spacing: 8
             StyledText {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 textFormat: Text.PlainText
-                text: did.undoState === "done" ? Translation.tr("Undone: %1").arg(did.modelData.summary)
-                    : did.undoState.startsWith("error") ? `${Translation.tr("Did: %1").arg(did.modelData.summary)} · ${did.undoState.replace(/^error: /, "")}`
-                    : Translation.tr("Did: %1").arg(did.modelData.summary)
+                text: did.undoState === "done" ? Translation.tr("Undone: %1").arg(did.label)
+                    : did.undoState.startsWith("error") ? `${Translation.tr("Did: %1").arg(did.label)} · ${did.undoState.replace(/^error: /, "")}`
+                    : Translation.tr("Did: %1").arg(did.label)
                 font.family: root.fontFamily
                 font.pixelSize: Appearance.font.pixelSize.smaller
                 color: root.fg
                 opacity: 0.8
             }
             StyledText {
-                visible: Autonomy.journalOn && did.undoState === "" && did.modelData.undo !== false
-                    && (did.entry ? Autonomy.canUndo(did.entry) : true)
-                text: Translation.tr("Undo")
+                visible: Autonomy.journalOn && did.undoState === "" && did.items.some(t => t.undo !== false)
+                    && (did.entries.length > 0 ? did.entries.some(e => Autonomy.canUndo(e)) : true)
+                text: did.count > 1 ? Translation.tr("Undo all") : Translation.tr("Undo")
                 font.family: root.fontFamily
                 font.pixelSize: Appearance.font.pixelSize.smaller
                 font.underline: true
@@ -201,8 +239,12 @@ ColumnLayout {
                     anchors.margins: -4
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        if (did.entry) Autonomy.undo(did.entry.id)
-                        else Autonomy.undo(did.modelData.id)
+                        // Newest first, so a later step never depends on an undone earlier one.
+                        const ids = did.entries.length > 0 ? did.entries.filter(e => Autonomy.canUndo(e)).map(e => e.id)
+                            : did.items.map(t => t.id).filter(id => !!id);
+                        // One after the other (the helper could run them side by side).
+                        const next = rest => { if (rest.length > 0) Autonomy.undo(rest[0], () => next(rest.slice(1))); };
+                        next(ids.reverse());
                     }
                 }
             }

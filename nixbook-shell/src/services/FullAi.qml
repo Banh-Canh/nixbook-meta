@@ -342,7 +342,7 @@ Singleton {
             talk.restart();
             // Said out loud: the report's outcome (and what needs the user),
             // unless the answer was read out as it streamed.
-            if (!Voice.streamedTurn) Voice.speak(Voice.lastAnswer() || root.said);
+            if (!Voice.streamedTurn) Voice.speakLastAnswer(root.said);
         }
     }
     Timer {

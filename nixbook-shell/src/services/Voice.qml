@@ -76,6 +76,46 @@ Singleton {
     // or says nothing for a while.
     property bool session: false
     readonly property bool conversation: Config.options.ai.voice?.conversation ?? true
+    // "Stop" / "wait" while it works or speaks: what it does is stopped and
+    // it listens (what follows the word, if anything, is the new order).
+    // Idle, the same words end the conversation (endWords).
+    readonly property var stopWords: /^(ok(ay)?\s+)?(stop( it| that)?|wait( a (second|sec|minute|moment))?|hold on|hang on|pause|cancel( that)?|listen( to me)?|shut up|attends?( une seconde)?|arr[eê]te(-toi)?|stop|pause|annule|[ée]coute(-moi)?|tais-toi|warte( mal)?|halt|stopp|moment( mal)?|h[öo]r (mal )?zu|abbrechen|d[uừ]ng( l[aạ]i)?|ch[oờ] (d[aã]|đ[aã]|ch[uú]t)|khoan( đ[aã])?|nghe (n[aà]y|t[oô]i))(?=[\s,.!:;—-]|$)[\s,.!:;—-]*/i
+    // Barge-in: with the echo-cancelled microphone, it keeps listening while
+    // it speaks (ai.voice.bargeIn), and the user speaking up cuts it short.
+    readonly property bool bargeIn: (Config.options.ai.voice?.bargeIn ?? true) && root.source === "nixbook-echo-cancel-source"
+    // Stops what it does and what it says, then listens.
+    function interrupt() {
+        QuickAi.stop();
+        root.stopSpeaking(true);
+        if (FullAi.active) relisten.restart();
+        else {
+            root.session = root.conversation;
+            if (!root.listening && !root.transcribing) root.start();
+        }
+    }
+    // Heard while it speaks: its own voice (an echo the canceller let
+    // through) when most of the words are in what it is saying.
+    function _echoOf(heard) {
+        const spoken = streamSpeaker.running && root.streamTarget ? root._plain(root.streamTarget)
+            : speaker.running ? speaker.text : "";
+        const said = {};
+        for (const w of root._norm(spoken).split(" ")) if (w.length > 1) said[w] = true;
+        const words = root._norm(heard).split(" ").filter(w => w.length > 1);
+        if (words.length === 0) return true;
+        return words.filter(w => said[w]).length / words.length >= 0.6;
+    }
+    // A stop word that means "stop and listen": alone, or followed by a
+    // pause ("stop, play jazz"); "wait / hold on / attends / warte / chờ /
+    // khoan" also run into the order. Not "pause the music", "listen to
+    // this", "stop the timer": orders of their own.
+    function _halt(text) {
+        const t = String(text ?? "").trim();
+        const m = t.match(root.stopWords);
+        if (!m) return null;
+        const rest = t.slice(m[0].length).trim();
+        if (rest.length === 0 || /[,.!:;—-]\s*$/.test(m[0])) return m;
+        return /^(ok(ay)?\s+)?(wait|hold on|hang on|attends?|warte|ch[oờ]|khoan)/i.test(t) ? m : null;
+    }
     readonly property var endWords: /^(ok\s+)?(stop|that'?s all|that is all|that'?s it|thanks?|thank you|no thanks|goodbye|bye|merci|c'?est tout|c'?est bon|stop merci|arr[eê]te|au revoir|danke|das (ist )?alles|tsch[uü]ss|c[aả]m [oơ]n|th[oô]i|xong r[oồ]i)[\s.!]*$/i
     function endSession() {
         root.session = false;
@@ -124,7 +164,7 @@ Singleton {
             root.streamTarget = null;
             // The answer is there: read out (Full AI mode reads its own,
             // FullAi.qml), then the user's turn again (a conversation).
-            if (!FullAi.active && root.wantsSpeech()) root.speak(root.lastAnswer());
+            if (!FullAi.active && root.wantsSpeech()) root.speakLastAnswer();
             else if (root.session) relisten.restart();
         }
         function onSpeakingChanged() {
@@ -169,6 +209,37 @@ Singleton {
     }
     // What to say of the last answer: a report's outcome (and what needs the
     // user), else the answer itself (the speaker keeps it short).
+    // The answers already read out (message ids): each is read once —
+    // streamed, at the end of its turn or as Full AI's outcome — and
+    // never again when it changes later or the user talks again.
+    property var _readIds: ({})
+    function _markRead(m) {
+        const chat = Initiative.chat;
+        if (!chat || !m) return;
+        for (const id of chat.messageIDs) if (chat.messageByID[id] === m) {
+            root._readIds = Object.assign({}, root._readIds, { [id]: true });
+            return;
+        }
+    }
+    function _lastAnswerId() {
+        const chat = Initiative.chat;
+        const ids = chat?.messageIDs ?? [];
+        for (let i = ids.length - 1; i >= 0; i--) {
+            const m = chat.messageByID[ids[i]];
+            if (!m || m.role === "user") return "";
+            if (m.role === "assistant") return ids[i];
+        }
+        return "";
+    }
+    // Reads the last answer out unless it was already (else `fallback`, if
+    // given and not said); true when something is said.
+    function speakLastAnswer(fallback) {
+        const id = root._lastAnswerId();
+        if (id && root._readIds[id]) return false;
+        const text = root.lastAnswer() || String(fallback ?? "");
+        if (id) root._readIds = Object.assign({}, root._readIds, { [id]: true });
+        return root.speak(text);
+    }
     function lastAnswer() {
         const chat = Initiative.chat;
         if (!chat) return "";
@@ -189,7 +260,7 @@ Singleton {
     // (ai.voice.speak "never", no text).
     function speak(text) {
         if (root.speakMode === "never" || !String(text ?? "").trim()) return false;
-        // Never the same thing twice: what was said in the last two minutes
+        // Never the same thing twice: what was said in the last half hour
         // (streamed or not) is left out — the end of a turn, Full AI's
         // outcome line and a revised answer each used to say it again.
         const rest = root._unsaid(text);
@@ -215,7 +286,7 @@ Singleton {
     }
     function _unsaid(t) {
         const now = Date.now();
-        root._said = root._said.filter(x => now - x.t < 120000);
+        root._said = root._said.filter(x => now - x.t < 1800000);
         return root._sentencesOf(t).filter(x => {
             const n = root._norm(x);
             return n.length < 16 || !root._said.some(y => y.n === n);
@@ -232,7 +303,9 @@ Singleton {
     function _holdMic() {
         root.speaking = true;
         if (stream.running && stream.continuous) {
-            stream.write("hold\n");
+            // Barge-in: the echo-cancelled microphone stays open (the user
+            // can speak up); otherwise it doesn't hear itself.
+            if (!root.bargeIn) stream.write("hold\n");
             return false;
         }
         if (root.listening) {
@@ -345,6 +418,10 @@ Singleton {
     function _feed() {
         const m = root.streamTarget;
         if (!m || !root.streamTurn) return;
+        // Read out before (an earlier turn), now only changed: not again.
+        if (root.streamFed === 0 && (() => { const chat = Initiative.chat;
+                for (const id of (chat?.messageIDs ?? [])) if (chat.messageByID[id] === m) return !!root._readIds[id];
+                return false; })()) return;
         const plain = root._plain(m);
         const complete = m.answered || m.done;
         // Not while something else is said (a question for an OK), nor into
@@ -377,6 +454,7 @@ Singleton {
                 streamSpeaker.base = root.streamFed;
                 root.streamFed = plain.length;
                 root.streamFedText = plain;
+                root._markRead(m);
                 root.streamedTurn = true;
                 streamSpeaker.pending = fresh;
                 streamSpeaker.closeAfter = false;
@@ -482,6 +560,12 @@ Singleton {
             root._spoken(code, streamSpeaker.wanted, again, err, speaker.running);
             // More came while it ended (a fix after the checks): read on.
             if (streamSpeaker.wanted) root._feed();
+            // The turn over and said: that answer is let go (later changes
+            // to it, or the user talking again, never read it again).
+            if (!Initiative.thinking && !streamSpeaker.running) {
+                root.streamTarget = null;
+                root.streamTurn = false;
+            }
         }
     }
     Process {
@@ -523,14 +607,15 @@ Singleton {
     function toggle() {
         // Full AI mode: Mod+T mutes or unmutes the always-open microphone.
         if (FullAi.active) {
-            // Talking: Mod+T only cuts it short.
-            if (root.speaking) root.stopSpeaking();
+            // Talking or working: Mod+T stops it and listens; else mutes.
+            if (root.speaking || QuickAi.busy) root.interrupt();
             else FullAi.toggleMic();
             return;
         }
         if (root.listening) root.stop();
         else {
-            // Talking over it: it stops.
+            // Working or talking: it stops, and listens.
+            if (Initiative.thinking || QuickAi.busy) QuickAi.stop();
             root.stopSpeaking();
             root.session = root.conversation;
             root.start();
@@ -655,6 +740,18 @@ Singleton {
     function deliver(text) {
         root.lastText = text;
         root.delivered();
+        if (!Initiative.thinking && !root.speaking) {
+            root.streamTarget = null;
+            root.streamTurn = false;
+        }
+        // "Stop" / "wait…" while it works or speaks: stopped, and it listens;
+        // what came after the word is the new order.
+        const halt = (Initiative.thinking || QuickAi.busy || root.speaking) ? root._halt(text) : null;
+        if (halt) {
+            root.interrupt();
+            text = text.trim().slice(halt[0].length).trim();
+            if (text.length < 2) return;
+        }
         // "That's all": the conversation ends, nothing sent (not Full AI
         // mode: only Escape leaves it).
         if (root.session && !FullAi.active && root.endWords.test(text.trim())) {
@@ -833,6 +930,15 @@ Singleton {
                     root.heard = true;
                     break;
                 case "partial":
+                    // While it speaks: its own voice is ignored; the user
+                    // speaking up (two words that aren't its own, or a stop
+                    // word) cuts it short and is heard out.
+                    if (root.speaking) {
+                        const t = String(ev.text ?? "");
+                        if (root._echoOf(t)) break;
+                        if (t.trim().split(/\s+/).length < 2 && !root.stopWords.test(t.trim())) break;
+                        root.stopSpeaking(true);
+                    }
                     root.heard = true;
                     root.partial = ev.text ?? "";
                     break;
@@ -846,6 +952,8 @@ Singleton {
                     }
                     root.heard = false;
                     root.partial = "";
+                    // Its own words heard back while it speaks: dropped.
+                    if (root.speaking && root._echoOf(ev.text ?? "")) break;
                     if ((ev.text ?? "").trim().length > 0) root.deliver(ev.text.trim());
                     break;
                 case "nothing":

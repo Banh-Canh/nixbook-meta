@@ -670,8 +670,8 @@ Singleton {
             + (desktop || !(Config.options.ai.includeSystemContext ?? true) ? ""
                 : "\n\n(machine_help isn't available now: the desktop tools are off; answer from the summary and your own knowledge.)")
             + (bubble
-                ? "\n\nYou are Muse, answering in your speech bubble on the user's desktop (they may be talking to you out loud): answer like a chat, in one to three short sentences, plain words, no headings or tables."
-                : "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short.")
+                ? "\n\nYou are Muse, answering in your speech bubble on the user's desktop (they may be talking to you out loud): answer like a chat, in one to three short sentences, plain words, no headings or tables. While you work, don't narrate each step or say the same thing twice: at most one short line before you start, then your answer once at the end (what was done, or what went wrong)."
+                : "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short, and don't narrate each step while you work.")
             + (privacy ? " " + root.privacyPrompt : "")
             + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
             + (desktop ? " You can see and drive the user's desktop with the desktop tools." : "")
