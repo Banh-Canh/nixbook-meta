@@ -112,10 +112,12 @@ cmd_run() {
   key=$(lookup_key)
   [ -n "$key" ] || fail_run "no API key saved (Settings > Desktop agents > Model provider)"
   # Only the provider's key: nothing of another vendor's from the
-  # environment (it would be sent along, or used instead).
-  while IFS= read -r v; do
+  # environment (it would be sent along, or used instead). ${!PREFIX@}, not
+  # `compgen -e`: Nix's script bash is the non-interactive build, without
+  # the completion builtins ("compgen: command not found").
+  for v in "${!ANTHROPIC_@}" "${!CLAUDE_CODE_@}"; do
     unset "$v"
-  done < <(compgen -e | grep -E '^(ANTHROPIC_|CLAUDE_CODE_)' || true)
+  done
   export NIXBOOK_AI_BASE_URL=$base NIXBOOK_AI_KEY=$key NIXBOOK_AI_MODEL=$model
   export NIXBOOK_AI_SMALL_MODEL=${small:-$model} NIXBOOK_AI_BIG_MODEL=${big:-$model}
   export NIXBOOK_AI_LABEL=$label NIXBOOK_AI_PROVIDED=1

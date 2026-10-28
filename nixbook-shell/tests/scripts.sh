@@ -45,6 +45,14 @@ nix_to_json() { nix-instantiate --eval --strict --json --expr "$(cat)"; }
 # Same JSON value (numbers compared numerically, key order ignored)?
 same_json() { jq -en --argjson a "$1" --argjson b "$2" '$a == $b' >/dev/null; }
 
+# -- The packaged scripts run under Nix's non-interactive bash, which has no
+# completion builtins: `compgen -e` there was "command not found" and broke
+# every model call (nixbook-model-provider run).
+# shellcheck disable=SC2016 # the pattern is the text to find
+uses=$(grep -nE '(^|[^[:alnum:]_-])compgen[[:space:]]' "$scripts"/*.sh "$scripts"/*.py 2>/dev/null |
+  grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+expect_eq "scripts: no completion builtins (missing from Nix's script bash)" "" "$uses"
+
 # -- config-merge.jq: JSON -> Nix printers -------------------------------------
 
 cat >"$tmp/tricky.json" <<'EOF'
