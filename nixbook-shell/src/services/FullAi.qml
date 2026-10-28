@@ -91,12 +91,28 @@ Singleton {
     // are said — never ahead of the voice), what it thinks or does
     // ("thought": a thought cloud), what it hears ("heard": the user's words)
     // and how to talk to it ("status").
+    // What fits the balloon: whitespace squashed (an agent's answer has
+    // blank lines where its steps were: they ate the six lines and left
+    // "…"), and the latest sentences — what is being said now, or how it
+    // ended — not the beginning cut short.
+    function tailOf(text, max = 220) {
+        const t = String(text ?? "").replace(/\s+/g, " ").trim();
+        if (t.length <= max) return t;
+        const parts = t.match(/[^.!?…]+[.!?…]*\s*/g) ?? [t];
+        let out = "";
+        for (let i = parts.length - 1; i >= 0; i--) {
+            if (out.length > 0 && out.length + parts[i].length > max) break;
+            out = parts[i] + out;
+        }
+        out = out.trim();
+        return out.length > max ? "…" + out.slice(out.length - max + 1) : out;
+    }
     readonly property var balloon: {
         if (!root.active) return { text: "", kind: "status" };
         const saying = Voice.saying;
         if (Voice.listening && Voice.partial.length > 0) return { text: `“${Voice.partial}”`, kind: "heard" };
         if (saying !== null && saying !== undefined)
-            return saying.length > 0 ? { text: saying, kind: "say" } : { text: "…", kind: "thought" };
+            return saying.trim().length > 0 ? { text: root.tailOf(saying), kind: "say" } : { text: "…", kind: "thought" };
         if (root.question) return { text: root.question.text, kind: "ask" };
         if (root.reacting) return { text: root.reactingLine, kind: "thought" };
         if (QuickAi.busy) {
@@ -104,7 +120,7 @@ Singleton {
             if (step) return { text: `${step.tool.replace(/_/g, " ")}${step.summary ? " · " + step.summary : ""}…`, kind: "thought" };
             return { text: Translation.tr("Thinking…"), kind: "thought" };
         }
-        if (root.said.length > 0) return { text: root.said, kind: "say" };
+        if (root.said.length > 0) return { text: root.tailOf(root.said), kind: "say" };
         if (!root.micOn) return { text: Translation.tr("Mic off. Mod+T to talk to me again."), kind: "status" };
         return { text: Translation.tr("I'm listening. What should I do?"), kind: "status" };
     }
@@ -319,7 +335,8 @@ Singleton {
             const failed = QuickAi.error.length > 0 || (r && r.ko > 0 && r.ok === 0);
             root.flash = failed ? "sad" : (r || QuickAi.answer.length > 0 ? "happy" : "");
             const text = r?.summary || QuickAi.answer || QuickAi.error;
-            root.said = String(text ?? "").replace(/\n[\s\S]*/, "").slice(0, 220);
+            // How it ended (the answer's last sentences), not its opening line.
+            root.said = root.tailOf(text);
             flashOff.restart();
             saidOff.restart();
             talk.restart();
