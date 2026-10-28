@@ -72,6 +72,9 @@ Singleton {
 
             property JsonObject ai: JsonObject {
                 property string model: "config-assistant"
+                // ai.voice.speak before Muse's voice was muted (the bubble's
+                // speaker button, `voice toggleMute`): what unmuting gives back.
+                property string speakBeforeMute: ""
             }
 
             property JsonObject cheatsheet: JsonObject {

@@ -192,6 +192,26 @@ Singleton {
     // mascot); not when nothing would say them.
     readonly property bool hideBubble: (Config.options.ai.quick?.bubble ?? "always") === "needed"
         && (root.speakMode !== "never" || FullAi.active)
+    // Muse's voice off (ai.voice.speak "never"): one click on the bubble's
+    // speaker, or `voice toggleMute`. Unmuting gives back the mode it had
+    // ("When I talk" if none). Not while the setting is set in Nix.
+    readonly property bool muted: root.speakMode === "never"
+    readonly property bool muteLocked: NixManaged.isPinned("ai.voice.speak")
+    function setMuted(on) {
+        if (root.muteLocked || !Config.options.ai.voice || on === root.muted) return false;
+        if (on) {
+            Persistent.states.ai.speakBeforeMute = root.speakMode;
+            Config.options.ai.voice.speak = "never";
+            root.stopSpeaking();
+        } else {
+            const before = Persistent.states.ai.speakBeforeMute;
+            Config.options.ai.voice.speak = before === "always" || before === "voice" ? before : "voice";
+        }
+        return true;
+    }
+    function toggleMute() {
+        return root.setMuted(!root.muted);
+    }
     function wantsSpeech() {
         const yes = root.speakMode === "always" || (root.speakMode === "voice" && root.voiceTurn);
         root.voiceTurn = false;
@@ -1074,6 +1094,10 @@ Singleton {
         // Says it out loud (the answers' voice), and stops it.
         function say(text: string): void { root.speak(text); }
         function hush(): void { root.stopSpeaking(); }
+        // Muse's voice off / back on (ai.voice.speak never / what it was).
+        function mute(): void { root.setMuted(true); }
+        function unmute(): void { root.setMuted(false); }
+        function toggleMute(): string { root.toggleMute(); return root.muted ? "muted" : "speaking: " + root.speakMode; }
         // A recording sent as if it had just been said (16 kHz mono WAV;
         // the file is deleted afterwards).
         function transcribe(path: string): void { root.transcribeFile(path); }

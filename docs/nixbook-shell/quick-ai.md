@@ -372,6 +372,13 @@ _Voice_ picks **Cute** (higher and bouncier, the default) or **Natural** (MMS's
 own voice). The microphone doesn't take it for you, and `Mod+T` or `Esc` cuts
 it short. The voices are MMS's (CC-BY-NC: for personal use).
 
+**Muting it in one click**: the speaker button at the top of Muse's bubble
+turns its voice off (the same as _Read the answers out_: _Never_; the answers
+stay in writing, Full AI mode's mascot included) and, clicked again, back on
+with the mode you had. From a key or a script:
+`nixbook-shell ipc call voice toggleMute` (or `mute` / `unmute`). Hidden when
+`ai.voice.speak` is set in Nix.
+
 **A conversation** (_Talk back and forth_, on by default): after `Mod+T`, once the
 answer has been said, the microphone opens again by itself, so you just go on
 talking. When a step waits for your OK, say "yes" / "oui" or "no" / "non". It ends

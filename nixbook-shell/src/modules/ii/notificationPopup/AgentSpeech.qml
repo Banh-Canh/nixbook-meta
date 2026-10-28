@@ -428,6 +428,14 @@ Scope {
                             onClicked: Initiative.fresh()
                         }
                         HeaderButton {
+                            visible: !Voice.muteLocked
+                            text: Voice.muted ? "volume_off" : "volume_up"
+                            color: Voice.speaking ? root.accent : root.fg
+                            tip: Voice.muted ? Translation.tr("Muse's voice is off: click to hear the answers again")
+                                : Translation.tr("Mute Muse's voice (answers in writing only)")
+                            onClicked: Voice.toggleMute()
+                        }
+                        HeaderButton {
                             visible: !(root.item?.accept)
                             text: "open_in_full"
                             tip: Translation.tr("Continue in the side panel")
