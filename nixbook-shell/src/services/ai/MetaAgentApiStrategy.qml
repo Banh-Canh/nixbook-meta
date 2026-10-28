@@ -55,6 +55,12 @@ QtObject {
     property string doing: ""
     // The turn's final answer, before its checks (the `answer` event).
     property string answer: ""
+    // The text block streaming now (where it began in the message), and the
+    // one before it: a block saying the same again ("Got it — let me look"
+    // before two searches in a row) is taken out once it ends.
+    property int textRaw: -1
+    property int textShown: -1
+    property string lastText: ""
 
     function reset() {
         toolCalls = ({});
@@ -70,6 +76,28 @@ QtObject {
         running = ({});
         doing = "";
         answer = "";
+        textRaw = -1;
+        textShown = -1;
+        lastText = "";
+    }
+    // Case, punctuation and spacing aside.
+    function _sameText(a, b) {
+        const norm = t => String(t ?? "").toLowerCase().replace(/[\s.,;:!?'"’“”«»()\[\]{}…—–*_-]+/g, " ").trim();
+        const x = norm(a);
+        return x.length > 0 && x === norm(b);
+    }
+    function _textEnded(message) {
+        if (textRaw < 0) return;
+        flush(message);
+        const said = message.rawContent.slice(textRaw);
+        if (_sameText(said, lastText)) {
+            message.rawContent = message.rawContent.slice(0, textRaw);
+            message.content = message.content.slice(0, textShown);
+        } else if (said.trim().length > 0) {
+            lastText = said;
+        }
+        textRaw = -1;
+        textShown = -1;
     }
     function _ran(id) {
         if (!(id in running)) return;
@@ -220,6 +248,11 @@ QtObject {
             const e = ev.event ?? {};
             if (e.type === "content_block_start" && e.content_block?.type === "thinking")
                 append(message, "\n\n<think>\n");
+            else if (e.type === "content_block_start" && e.content_block?.type === "text") {
+                textRaw = message.rawContent.length;
+                textShown = message.content.length;
+            } else if (e.type === "content_block_stop" && textRaw >= 0)
+                _textEnded(message);
             else if (e.type === "content_block_delta" && e.delta?.type === "text_delta")
                 appendText(message, e.delta.text);
             else if (e.type === "content_block_delta" && e.delta?.type === "thinking_delta")
