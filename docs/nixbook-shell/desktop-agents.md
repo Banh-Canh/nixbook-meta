@@ -117,7 +117,9 @@ but aren't offered.
     never restarts or closes it itself.
 - **Discord**: the `discord` tool reads and writes messages through Discord's
   own client in Vesktop (Vencord's modules), not its window: `find` a channel,
-  a person or a DM (→ ids), `channels` (the servers and DMs, or a server's
+  a person or a DM (→ ids; when nobody matches, the contacts of that name come
+  with it, their nickname and notes: write someone's Discord name there, e.g.
+  "Discord: Alesio", and the agent searches that next), `channels` (the servers and DMs, or a server's
   channels), `read` the last messages (≤ 50: author, time, text, id, replies,
   reactions, your mentions), `send` (≤ 2000 characters, `reply_to` a message)
   and `react`. **Every send and reaction is asked first** (they speak in your

@@ -16216,6 +16216,27 @@ def discord_message_line(m):
          "message": {"type": "string"}, "emoji": {"type": "string"}}, ["action"]),
     destructive=True,
 )
+def discord_contact_hint(query):
+    """On a Discord search that found nobody: the matching contacts'
+    nickname and notes, where people keep someone's Discord name (Alan's
+    note says "Alesio"): the agent searches that next."""
+    try:
+        found = accounts_call("contacts", "list", "--query", query, "--limit", "3").get("contacts") or []
+    except Exception:  # noqa: BLE001 — no accounts backend: no hint
+        return ""
+    lines = []
+    for c in found[:3]:
+        bits = [f"nickname: {c['nickname']}"] if c.get("nickname") else []
+        if c.get("notes"):
+            bits.append("notes: " + " ".join(str(c["notes"]).split())[:300])
+        if bits:
+            lines.append(f"- {c.get('name') or '?'}: " + "; ".join(bits))
+    if not lines:
+        return ""
+    return ("\nDiscord names often aren't real names. The user's contacts matching it (their Discord name may be "
+            "here; search that):\n" + "\n".join(lines))
+
+
 def t_discord(ctx, args):
     action = as_str(args, "action", max_len=20)
 
@@ -16232,8 +16253,11 @@ def t_discord(ctx, args):
         return [text(f"Discord: logged in as {r.get('user')}; open: "
                      f"{discord_channel(r['current']) if r.get('current') else 'no channel'}")]
     if action == "find":
-        res = app("find", query=as_str(args, "query", max_len=100)).get("results") or []
-        return [text("\n".join(f"- {h.get('kind')} {discord_channel(h)}" for h in res) or "nothing found")]
+        query = as_str(args, "query", max_len=100)
+        res = app("find", query=query).get("results") or []
+        if res:
+            return [text("\n".join(f"- {h.get('kind')} {discord_channel(h)}" for h in res))]
+        return [text("nothing found" + discord_contact_hint(query))]
     if action == "channels":
         guild = opt("guild", 100)
         if guild:
