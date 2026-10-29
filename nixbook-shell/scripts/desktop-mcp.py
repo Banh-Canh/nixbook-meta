@@ -103,11 +103,12 @@ DEFAULT_CONFIG = {
     # what it wrote).
     # smartClipboard: run would take the action offered for what the user
     # copied, offer would show chips the user never asked for.
+    # addressee: what the room said near the open microphone (Full AI).
     # predict: "Next up" offers are the user's to take (accept runs the step
     # as the user's own), and offerNow would let an agent make one up.
     "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay", "quickAi",
                             "voice", "fullAi", "mascot", "smartClipboard", "journal", "trust", "orders", "reactor",
-                            "meeting", "predict"],
+                            "meeting", "predict", "addressee"],
     # Functions no agent calls on any target: the user's answers (a
     # background task's approval or question, an offer taken, an Undo, a
     # trust level, a standing order turned on), and fanOut (an order split

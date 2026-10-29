@@ -416,6 +416,12 @@ Singleton {
                     // "wait"… (or any words of the user's) cut it short.
                     property bool bargeIn: true
                     property string style: "cute"
+                    // Full AI mode's always-open microphone: what is acted on.
+                    // "smart": what is said to Muse (its name, a reply to it,
+                    // else the small model judges; not the user's call nor
+                    // someone else in the room); "name": only when called by
+                    // name (or answering its question); "all": every sentence.
+                    property string addressee: "smart"
                 }
                 // Muse in the side panel: nixbook-meta-agent (the shell's own
                 // agent, on the model provider: Meta's Model API by default),

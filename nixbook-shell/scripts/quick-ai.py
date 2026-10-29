@@ -21,6 +21,8 @@ answer, one JSON object per line on stdout:
   {"type": "delta", "text"}        (streamed text, when the server streams)
   {"type": "answer", "text"}       (the whole answer, always last)
   {"type": "replies", "replies"}   (mode reply: the suggestions)
+  {"type": "addressee", "addressed", "confidence", "order", "ms"}
+                                   (mode addressee: was it said to Muse?)
   {"type": "error", "error"}
   {"type": "done", "ms"}
 What the desktop knows for the request (the time, weather, next events, the
@@ -454,6 +456,102 @@ def react(req, started, p):
     return 0
 
 
+# ── Was it said to Muse? (services/Addressee.qml) Full AI mode's microphone
+# stays open, so it hears the room too; plain code decides most sentences
+# (its name, a reply to it, a call, someone else's name), this the rest: the
+# small model, as little thinking as the server allows (Meta's fast chat
+# endpoint first), a few hundred tokens, no retry, a few seconds at most.
+# When it can't say, it is not for Muse: an action is never taken on a guess.
+ADDRESSEE_SYSTEM = (
+    "You are Muse, the assistant built into the user's computer. Its microphone is always open, so it hears "
+    "everything said in the room: words said TO you, but also the user talking to someone else in the room, on a "
+    "phone or video call, to themselves, reading aloud, or a TV. Decide whether the LAST words heard were said "
+    "TO you, as an order or a question for you, or a reply to what you just said or asked. Signs they were: an "
+    "order or a question for a computer (open, play, show, close, what's the weather, remind me…), an answer to "
+    "your last words, the conversation with you going on. Signs they weren't: a call in progress, chit-chat with "
+    "another person, a question only a person in the room could answer, talking about you in the third person, "
+    "thinking aloud, half a sentence. When you aren't sure, they weren't for you. order: the words as an order "
+    "for you, in their language, fillers and your name taken out; empty when they weren't for you. confidence: "
+    "how sure you are of `addressed`, 0 to 1. Answer with the JSON alone."
+)
+ADDRESSEE_SCHEMA = {"type": "object", "properties": {
+    "addressed": {"type": "boolean"}, "confidence": {"type": "number"}, "order": {"type": "string"}},
+    "required": ["addressed", "confidence"]}
+
+
+def addressee_prompt(req):
+    """The rolling transcript, the focused window, the call, the examples
+    the user corrected before, and the last words: plain text (masked by
+    the caller)."""
+    parts = []
+    app, title = str(req.get("app") or "")[:80], str(req.get("title") or "")[:160]
+    if app or title:
+        parts.append(f"The window in front: {app}{' — ' + title if title else ''}")
+    parts.append(f"A call is in progress{' in ' + str(req.get('callApp'))[:60] if req.get('callApp') else ''}: yes"
+                 if req.get("call") else "No call is in progress.")
+    lines = []
+    for x in (req.get("transcript") or [])[-14:]:
+        if not isinstance(x, dict) or not str(x.get("text") or "").strip():
+            continue
+        ago = int(x.get("ago") or 0)
+        if x.get("who") == "muse":
+            lines.append(f"- {ago} s ago, you said: {str(x['text'])[:300]}")
+        else:
+            tag = {"yes": " [taken as for you]", "no": " [taken as not for you]"}.get(x.get("verdict"), "")
+            lines.append(f"- {ago} s ago, heard{tag}: {str(x['text'])[:300]}")
+    if lines:
+        parts.append("What was heard and said lately, oldest first:\n" + "\n".join(lines))
+    spoke = req.get("museSpokeAgo")
+    if isinstance(spoke, (int, float)) and spoke >= 0:
+        parts.append(f"You last spoke {int(spoke)} s ago.")
+    examples = [str(x)[:200] for x in (req.get("examples") or []) if str(x).strip()][-6:]
+    if examples:
+        parts.append("The user told you these were for you, though you thought they weren't:\n"
+                     + "\n".join("- " + x for x in examples))
+    parts.append("The last words heard (decide for these): " + str(req.get("heard") or "")[:600])
+    return "\n\n".join(parts)
+
+
+def addressee(req, started, p):
+    """{"type": "addressee", addressed, confidence, order, ms}, then the
+    record of what was sent (after: the shell acts on the line at once)."""
+    heard = str(req.get("heard") or "").strip()
+    if not heard:
+        emit("addressee", addressed=False, confidence=0, order="", ms=0)
+        return 0
+    r = nixbook_ai.routing()
+    model = str(req.get("model") or "small")
+    effort = "minimal" if r["effortMinimal"] else "low"
+    prompt = mask(addressee_prompt(req))
+    model_id = p.model(model)
+    emit("start", provider=p.label, model=model_id)
+    # No retry: a second try comes too late to be an answer to what was said.
+    # Each endpoint gets `timeout` (the fast one, then the Messages API when
+    # it isn't there); the shell's own 4 s deadline caps the whole.
+    nixbook_ai.RETRIES = 0
+    try:
+        d = nixbook_ai.answer(ADDRESSEE_SYSTEM + "\n\n" + PRIVACY, prompt, model=model, effort=effort,
+                              schema=ADDRESSEE_SCHEMA, timeout=float(req.get("timeout") or 2.0), max_tokens=300,
+                              provider=p, fast=True)
+    except Exception as e:  # noqa: BLE001 — not for Muse, said why
+        emit("error", error=str(e) or e.__class__.__name__)
+        emit("addressee", addressed=False, confidence=0, order="", failed=True,
+             ms=int((time.monotonic() - started) * 1000))
+        emit("done", ms=int((time.monotonic() - started) * 1000))
+        return 1
+    d = nixbook_ai.unmask_json(d) if isinstance(d, dict) else {}
+    try:
+        conf = max(0.0, min(1.0, float(d.get("confidence") or 0)))
+    except (TypeError, ValueError):
+        conf = 0.0
+    yes = d.get("addressed") is True
+    emit("addressee", addressed=yes, confidence=round(conf, 2), order=str(d.get("order") or "").strip()[:600] if yes else "",
+         ms=int((time.monotonic() - started) * 1000))
+    nixbook_ai.sent_note("Full AI: was it for Muse?", f"{p.label.lower()}:{model_id}", prompt)
+    emit("done", ms=int((time.monotonic() - started) * 1000))
+    return 0
+
+
 def ask(path, argv=None):
     started = time.monotonic()
     try:
@@ -478,6 +576,8 @@ def ask(path, argv=None):
         return scan(req, started, p)
     if req.get("mode") == "react":
         return react(req, started, p)
+    if req.get("mode") == "addressee":
+        return addressee(req, started, p)
     try:
         mode, system, messages, prompt = build(req)
         model = p.model(model_alias(req))

@@ -111,6 +111,8 @@ cmd_shell() {
   bash nixbook-shell/tests/scripts.sh || failed=1
   section "nixbook-shell smart clipboard (what a copied text is)"
   bash nixbook-shell/tests/smart-clipboard.sh || failed=1
+  section "nixbook-shell Full AI mode: was it said to Muse? (plain-code rules)"
+  bash nixbook-shell/tests/addressee.sh || failed=1
   section "nixbook-shell desktop control MCP server"
   bash nixbook-shell/tests/desktop-mcp.sh || failed=1
   section "nixbook-shell Electron apps' bridge (nixbook-electron-app)"

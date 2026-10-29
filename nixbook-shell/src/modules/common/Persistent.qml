@@ -85,6 +85,10 @@ Singleton {
                 // the others, until "Got it". Its caption window's place
                 // (-1: the default, top centre).
                 property bool meetingConsentShown: false
+                // Full AI mode's "Was that for me?" taps (services/
+                // Addressee.qml): the last words it wrongly took for
+                // someone else's, given to the model as examples.
+                property list<string> addresseeExamples: []
                 property real meetingCaptionsX: -1
                 property real meetingCaptionsY: -1
             }

@@ -812,10 +812,18 @@ Singleton {
 
     // The bubble's field is emptied (what was said is sent, or cancelled).
     signal delivered()
-    // What was said: sent in the bubble, as if typed there.
-    function deliver(text) {
+    // What was said: sent in the bubble, as if typed there. Full AI mode's
+    // always-open microphone hears the room too: only what was said to
+    // Muse goes on (services/Addressee.qml decides, then calls this again
+    // with `judged`, its name taken out of the order).
+    function deliver(text, judged = false) {
         root.lastText = text;
         root.delivered();
+        if (!judged && Addressee.active) {
+            Addressee.hear(text);
+            relisten.restart();
+            return;
+        }
         // Nothing old attached when the user talks: a finished answer, or
         // one of another conversation.
         const t = root.streamTarget;
@@ -1022,6 +1030,9 @@ Singleton {
                         const t = String(ev.text ?? "");
                         if (root._echoOf(t)) break;
                         if (t.trim().split(/\s+/).length < 2 && !root.stopWords.test(t.trim())) break;
+                        // Full AI mode: not on another person's words, nor
+                        // the user's call (Addressee).
+                        if (!Addressee.mayInterrupt(t)) break;
                         root.stopSpeaking(true);
                     }
                     root.heard = true;

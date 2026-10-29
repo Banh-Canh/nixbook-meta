@@ -89,8 +89,9 @@ Singleton {
     }
     // The balloon: what it says ("say": a speech bubble, the words as they
     // are said — never ahead of the voice), what it thinks or does
-    // ("thought": a thought cloud), what it hears ("heard": the user's words)
-    // and how to talk to it ("status").
+    // ("thought": a thought cloud), what it hears ("heard": the user's words;
+    // "overheard": words it took for someone else's, dimmed) and how to talk
+    // to it ("status").
     // What fits the balloon: whitespace squashed (an agent's answer has
     // blank lines where its steps were: they ate the six lines and left
     // "…"), and the latest sentences — what is being said now, or how it
@@ -114,6 +115,12 @@ Singleton {
         if (saying !== null && saying !== undefined)
             return saying.trim().length > 0 ? { text: root.tailOf(saying), kind: "say" } : { text: "…", kind: "thought" };
         if (root.question) return { text: root.question.text, kind: "ask" };
+        // Heard, being judged (was it for Muse? services/Addressee.qml),
+        // then, when it wasn't, shown dimmed a few seconds with "Was that
+        // for me?".
+        if (Addressee.judgingText) return { text: `“${Addressee.judgingText}”`, kind: "heard" };
+        if (Addressee.overheard)
+            return { text: Translation.tr("👂 “%1” (not for me?)").arg(root.tailOf(Addressee.overheard.text, 160)), kind: "overheard" };
         if (root.reacting) return { text: root.reactingLine, kind: "thought" };
         if (QuickAi.busy) {
             const step = [...QuickAi.steps].reverse().find(s => s.status === "run") ?? QuickAi.steps[QuickAi.steps.length - 1];
@@ -129,6 +136,9 @@ Singleton {
     // Yes / No on the balloon while a yes/no question waits (clickable: the
     // overlay takes clicks there only).
     readonly property bool yesNo: root.lineKind === "ask" && (root.question?.yesNo ?? false)
+    // "Was that for me?" under words taken for someone else's (clickable
+    // too): Addressee.claim() sends them after all.
+    readonly property bool forMe: root.lineKind === "overheard"
     readonly property string hint: Translation.tr("Mod+Shift+T: leave Full AI · Mod+T: mic %1").arg(root.micOn ? Translation.tr("off") : Translation.tr("on"))
 
     // A new line in the balloon, said out loud in its cute voice (Voice.speak,

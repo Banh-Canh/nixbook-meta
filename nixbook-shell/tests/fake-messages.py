@@ -23,6 +23,8 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
     the order says CLOSE), then, once the tool result comes back, the text;
   - a "replies" task: a JSON object of three replies;
   - KIROSHITEST in it: Kiroshi's scan (its brief, labels, each item's options);
+  - Full AI mode's "were the last words for Muse?" (FORYOU: yes, LOWCONF:
+    yes but unsure, SLOWADDR: 6 s late, else no);
   - text with FAIL500: an HTTP 500; NOEFFORT: a 400 while output_config is
     sent; BIGTOKENS: a 400 naming max_tokens above 8192; PRIVATE: an answer
     naming the masked person back;
@@ -280,6 +282,24 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer test-key":
             return self.send(401, {"error": {"message": "bad key"}})
         text = text_of(body)
+        if "The last words heard (decide for these)" in text:
+            # Full AI mode: were the last words said to Muse? FORYOU: yes
+            # (sure), LOWCONF: yes but unsure, SLOWADDR: too late, else no.
+            last = text.split("The last words heard (decide for these):")[-1]
+            if "FAIL500" in last:
+                return self.send(500, {"error": {"message": "boom"}})
+            if "SLOWADDR" in last:
+                time.sleep(6)
+            if "FORYOU" in last:
+                d = {"addressed": True, "confidence": 0.92, "order": "open the calendar"}
+            elif "LOWCONF" in last:
+                d = {"addressed": True, "confidence": 0.4, "order": "maybe"}
+            else:
+                d = {"addressed": False, "confidence": 0.85, "order": ""}
+            content = json.dumps(d)
+            if self.path.startswith("/v1/chat/completions"):
+                return self.send(200, {"choices": [{"message": {"role": "assistant", "content": content}}]})
+            return self.send(200, {"content": [{"type": "text", "text": content}]})
         if self.path.startswith("/v1/chat/completions") and "Something just happened" not in text:
             # The OpenAI-style endpoint: only for CHATOK requests (else the
             # server has none, as many Messages API servers).

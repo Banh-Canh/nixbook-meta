@@ -265,8 +265,14 @@ Singleton {
         return ""
     }
     property int _missed: 0
+    // A call app holding the microphone now ("" when none), the companion
+    // listening or not: Full AI mode's always-open microphone leaves what the
+    // user says in a call to the call (services/Addressee.qml).
+    property string callNow: ""
+    readonly property bool inCall: root.running || root.callNow !== ""
     function _sawOutputs(outputs) {
         const app = root._callIn(outputs)
+        root.callNow = app
         if (root.running) {
             // Listening because of a call: over once its app has let the
             // microphone go for 20 s.
@@ -290,13 +296,14 @@ Singleton {
     }
     Timer {
         // Every 15 s while it could offer, every 10 s while a call it
-        // follows goes on.
-        interval: root.running ? 10000 : 15000
+        // follows goes on; every 5 s in Full AI mode (is the user on a call?).
+        interval: root.running ? 10000 : FullAi.active ? 5000 : 15000
         repeat: true
+        triggeredOnStart: FullAi.active
         running: (root.offers && !root.running && !GlobalStates.screenLocked && !Idle.screensOff)
-            || (root.active && (root.callApp !== "" || root.eventEnd > 0))
+            || (root.active && (root.callApp !== "" || root.eventEnd > 0)) || FullAi.active
         onTriggered: {
-            if (!root.running) root._checkCalendar()
+            if (!root.running && root.offers) root._checkCalendar()
             // The event over (5 min of grace) and no call app holding on.
             if (root.active && root.eventEnd > 0 && Date.now() > root.eventEnd + 5 * 60000 && !root.callApp) {
                 root.stop()

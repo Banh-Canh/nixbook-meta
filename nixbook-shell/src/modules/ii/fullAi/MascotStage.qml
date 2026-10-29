@@ -26,12 +26,18 @@ Item {
     property string line: ""
     // "say" (a speech bubble with its tail), "thought" (a dimmer cloud in
     // italics, little circles trailing to the mascot), "heard" (the user's
-    // words, in quotes), "status" (how to talk to it).
+    // words, in quotes), "overheard" (words it took for someone else's,
+    // dimmed), "status" (how to talk to it).
     property string lineKind: "say"
     // Yes / No under a question (FullAi.yesNo): `chose(yes)` on a click;
     // `choicesArea` is what the overlay lets clicks through to.
     property bool yesNo: false
     signal chose(bool yes)
+    // "Was that for me?" under overheard words: `claimed()` on a click.
+    property bool forMe: false
+    signal claimed()
+    readonly property bool showChoices: root.yesNo || root.forMe
+    readonly property bool overheard: root.lineKind === "overheard"
     readonly property Item choicesArea: choices
     readonly property bool thinking: root.lineKind === "thought" || root.lineKind === "status"
     property string hint: ""
@@ -277,14 +283,15 @@ Item {
         visible: opacity > 0
         opacity: root.line.length > 0 ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 180 } }
-        width: Math.min(maxW, Math.max(balloonText.implicitWidth, root.yesNo ? choices.implicitWidth : 0) + 28)
-        height: balloonText.implicitHeight + 20 + (root.yesNo ? choices.implicitHeight + 8 : 0)
+        width: Math.min(maxW, Math.max(balloonText.implicitWidth, root.showChoices ? choices.implicitWidth : 0) + 28)
+        height: balloonText.implicitHeight + 20 + (root.showChoices ? choices.implicitHeight + 8 : 0)
         radius: root.thinking ? height / 2 : 16
-        color: root.lineKind === "heard" ? Qt.alpha(Appearance.m3colors.m3secondaryContainer, 0.95)
+        color: root.overheard ? Qt.alpha(Appearance.m3colors.m3surfaceContainer, 0.7)
+            : root.lineKind === "heard" ? Qt.alpha(Appearance.m3colors.m3secondaryContainer, 0.95)
             : root.thinking ? Qt.alpha(Appearance.m3colors.m3surfaceContainer, 0.88)
             : Qt.alpha(Appearance.m3colors.m3surfaceContainerHigh, 0.97)
-        border.width: root.thinking ? 1 : root.lineKind === "ask" ? 3 : 2
-        border.color: root.thinking ? Qt.alpha(mascot.outline, 0.45)
+        border.width: root.thinking || root.overheard ? 1 : root.lineKind === "ask" ? 3 : 2
+        border.color: root.thinking || root.overheard ? Qt.alpha(mascot.outline, 0.45)
             : root.lineKind === "ask" ? Appearance.colors.colPrimary : mascot.outline
         Behavior on color { ColorAnimation { duration: 160 } }
         x: Math.max(8, Math.min(root.width - width - 8, onLeft ? actor.x - width - 14 : actor.x + root.mw + 14))
@@ -329,7 +336,8 @@ Item {
             elide: Text.ElideRight
             font.pixelSize: root.lineKind === "say" ? Appearance.font.pixelSize.normal : Appearance.font.pixelSize.small
             font.italic: root.lineKind !== "say"
-            color: root.lineKind === "heard" ? Appearance.m3colors.m3onSecondaryContainer
+            color: root.overheard ? Qt.alpha(Appearance.m3colors.m3onSurface, 0.55)
+                : root.lineKind === "heard" ? Appearance.m3colors.m3onSecondaryContainer
                 : root.thinking ? Qt.alpha(Appearance.m3colors.m3onSurface, 0.72) : Appearance.m3colors.m3onSurface
             // A pop when a new kind of line appears, not at every sentence
             // revealed as it is said.
@@ -341,12 +349,12 @@ Item {
         }
         Row {
             id: choices
-            visible: root.yesNo
+            visible: root.showChoices
             spacing: 8
             x: 14
             y: balloonText.y + balloonText.height + 8
             Repeater {
-                model: [true, false]
+                model: root.yesNo ? [true, false] : []
                 delegate: Rectangle {
                     id: chip
                     required property bool modelData
@@ -369,6 +377,28 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.chose(chip.modelData)
                     }
+                }
+            }
+            Rectangle {
+                visible: root.forMe && !root.yesNo
+                width: forMeText.implicitWidth + 24
+                height: forMeText.implicitHeight + 10
+                radius: height / 2
+                // Solid: the balloon under it is dimmed.
+                color: forMeMouse.containsMouse ? Appearance.colors.colSecondaryContainerHover : Appearance.colors.colSecondaryContainer
+                StyledText {
+                    id: forMeText
+                    anchors.centerIn: parent
+                    text: Translation.tr("Was that for me?")
+                    color: Appearance.colors.colOnSecondaryContainer
+                    font.pixelSize: Appearance.font.pixelSize.small
+                }
+                MouseArea {
+                    id: forMeMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.claimed()
                 }
             }
         }

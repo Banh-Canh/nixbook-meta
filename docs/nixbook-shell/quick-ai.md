@@ -236,6 +236,8 @@ something failed. The mascot is the mode's only sign on screen.
   [Instant triage](desktop-agents.md#instant-triage)).
 - **The microphone stays open**, also while the agent works: give the next order
   whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
+  Since it hears the whole room, it only acts on
+  [what is said to it](#only-what-is-said-to-muse).
 - **It talks**: what it says in its balloon (what it does, its questions, the
   outcome) is said out loud in its cute voice, the words appearing as they are
   said (never ahead of the voice), and each answer only once.
@@ -284,6 +286,46 @@ my sister writes, tell me at once"), it saves it, as a routine or as a
 Desktop agents > About you lists and deletes them). Settings > Desktop agents >
 Talk to your desktop > **Forget what Full AI learned** clears its learned
 reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
+
+### Only what is said to Muse
+
+Full AI mode's microphone never closes, so it also hears someone else in the
+room, you on a call, you thinking aloud. Muse follows the conversation and only
+acts on what you say **to it**. Each sentence heard is judged at once, in plain
+code, in English, French, German and Vietnamese:
+
+1. **Its name**, at the start, after a greeting or at the end ("Muse, open
+   Firefox", "hey Muse…", "dis Muse…", "Hallo Muse…", "Muse ơi…", "what time is
+   it, Muse?"; also as recognisers write it, "Mews", "Muze", "hey music"): for
+   it, the name taken out of the order. The name alone ("hey Muse!") calls it:
+   it answers "Yes?" and your next words are for it. Talking _about_ it ("Muse is
+   slow today", "ask Muse") isn't calling it.
+2. **Someone else called**: "Paul, …", "Maman, …", "Schatz, …", "mẹ ơi", "…,
+   Paul?", "ok Google": not for it.
+3. **An answer to it**: the step waiting for your OK, its own question, "stop"
+   or "wait" while it talks or works.
+4. **A call**: while you are on a call (the meeting companion listening, or a
+   call app holding the microphone: Zoom, Teams, Discord, Meet…), only its name
+   or a short answer to its question reaches it.
+5. **A reply**: speaking while it talks, within 8 seconds after it spoke, or
+   while you two are talking back and forth (you spoke to it in the last 25
+   seconds and it answered). "Hmm", "euh", "äh" alone are nobody's.
+6. Otherwise **the small model decides**, in about a second: the last few things
+   heard and said (masked for the provider like everything else), the window in
+   front and whether a call is on. Only a confident yes is acted on; when it is
+   slow (4 seconds at most) or fails, the words are taken as not for it, never
+   as an order.
+
+Words it takes for someone else's are **never sent**: they show dimmed in the
+mascot's balloon ("👂 … (not for me?)") with **Was that for me?** for about six
+seconds. Tap it to send them after all; the last few you corrected are shown to
+the model the next time. Settings > Desktop agents > Talk to your desktop >
+**In Full AI mode, act on** (`ai.voice.addressee`): _What's said to Muse_
+(`smart`, the default), _Only when called by name_ (`name`: the name, an answer
+to its question or a stop word; no model) or _Everything heard_ (`all`: every
+sentence is an order, as before). With the AI features off or local only, only
+the name counts. Outside Full AI mode nothing changes: what you say after the
+`Mod+T` key, or type, is always for it.
 
 ### Muse on the desktop
 

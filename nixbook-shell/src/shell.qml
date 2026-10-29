@@ -56,6 +56,7 @@ ShellRoot {
         Kiroshi.load()
         NixOnboarding.load()
         FullAi.load()
+        Addressee.load()
         MascotState.load()
         SmartClipboard.load()
         // Autonomy and reactivity: the journal and trust (journal IPC), the

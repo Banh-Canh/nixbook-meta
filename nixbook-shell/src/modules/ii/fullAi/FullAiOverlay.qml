@@ -41,7 +41,8 @@ Scope {
             property Region choicesInput: Region {
                 item: stageLoader.item ? stageLoader.item.choicesArea : null
             }
-            mask: FullAi.yesNo && stageLoader.item && !MakeWay.capture ? window.choicesInput : window.noInput
+            // And on "Was that for me?" under words it took for someone else's.
+            mask: (FullAi.yesNo || FullAi.forMe) && stageLoader.item && !MakeWay.capture ? window.choicesInput : window.noInput
 
             Item {
                 id: keys
@@ -60,6 +61,8 @@ Scope {
                         lineKind: FullAi.lineKind
                         yesNo: FullAi.yesNo
                         onChose: yes => FullAi.answer(yes)
+                        forMe: FullAi.forMe
+                        onClaimed: Addressee.claim()
                         level: Voice.level
                         talking: FullAi.mood === "speaking"
                     }

@@ -411,6 +411,48 @@ printf 'Bonjour, voici la commande. ```\nrm -rf /\n``` Elle est prête.' | sp --
 expect_eq "speak --stream: the voice from the first sentence, code left out" "tts fr Bonjour, voici la commande.|tts fr Elle est prête." \
   "$(grep '^tts' "$tmp/speak.log" | paste -sd'|')"
 
+# Full AI mode's always-open microphone: were the last words said to Muse?
+# (services/Addressee.qml; its plain-code rules have tests of their own,
+# addressee.sh). The small model on the fast endpoint, minimal reasoning,
+# the rolling transcript masked, a verdict line, no retry, a deadline.
+rm -f "$caps"
+: >"$tmp/requests.log"
+: >"$tmp/sent.log"
+addr='{"mode": "addressee", "heard": "FORYOU can you show me tomorrow", "lang": "en", "app": "firefox", "title": "Inbox",
+  "call": false, "museSpokeAgo": 30, "examples": ["put some music on"],
+  "transcript": [{"ago": 40, "who": "user", "text": "Julien is coming at eight", "verdict": "no"},
+                 {"ago": 30, "who": "muse", "text": "The music is paused.", "verdict": ""}]}'
+t0=$(date +%s%N)
+ask addr1 "$addr"
+ms=$((($(date +%s%N) - t0) / 1000000))
+expect_eq "addressee: for Muse, its order" '{"addressed":true,"confidence":0.92,"order":"open the calendar"}' \
+  "$(event addr1 addressee '| {addressed, confidence, order}')"
+expect_eq "addressee: the small model on the fast endpoint, minimal reasoning" '"small-model" "minimal" "/v1/chat/completions"' \
+  "$(jq -c 'select(.body.messages | tostring | contains("FORYOU")) | "\(.body.model | tojson) \(.body.reasoning_effort | tojson) \(.path | tojson)"' -r "$tmp/requests.log" | head -n1)"
+req=$(grep -F FORYOU "$tmp/requests.log" | head -n1)
+expect_contains_ "addressee: the transcript, oldest first, its verdicts" "$req" 'heard [taken as not for you]: ⟦Person 1⟧ is coming at eight\n- 30 s ago, you said: The music is paused.'
+expect_contains_ "addressee: the window in front, no call" "$req" 'The window in front: firefox — Inbox\n\nNo call is in progress.'
+expect_contains_ "addressee: the user's corrections as examples" "$req" 'though you thought they weren'"'"'t:\n- put some music on'
+if grep -F FORYOU "$tmp/requests.log" | grep -q Julien; then fail "addressee: a name left unmasked"; else pass "addressee: masked on the way"; fi
+expect_eq "addressee: recorded as sent, after the verdict" "Full AI: was it for Muse?|custom:small-model" "$(cat "$tmp/sent.log")"
+if [ "$ms" -lt 1200 ]; then pass "addressee: answered in ${ms} ms (fake model, under 1.2 s)"; else fail "addressee: too slow (${ms} ms)"; fi
+ask addr2 '{"mode": "addressee", "heard": "did you feed the cat", "call": true, "callApp": "Discord", "lang": "en"}'
+expect_eq "addressee: not for Muse, no order" '{"addressed":false,"order":""}' "$(event addr2 addressee '| {addressed, order}')"
+expect_contains_ "addressee: the call said" "$(grep -F 'feed the cat' "$tmp/requests.log" | head -n1)" "A call is in progress in Discord: yes"
+ask addr3 '{"mode": "addressee", "heard": "LOWCONF hmm the calendar", "lang": "en"}'
+expect_eq "addressee: an unsure yes keeps its confidence (the shell's threshold decides)" '0.4' "$(event addr3 addressee .confidence)"
+t0=$(date +%s%N)
+ask addr4 '{"mode": "addressee", "heard": "SLOWADDR open it", "lang": "en", "timeout": 1}'
+ms=$((($(date +%s%N) - t0) / 1000000))
+expect_eq "addressee: too slow is not for Muse" '{"addressed":false,"failed":true}' "$(event addr4 addressee '| {addressed, failed}')"
+if [ "$ms" -lt 4000 ]; then pass "addressee: the deadline kept (${ms} ms)"; else fail "addressee: the deadline missed (${ms} ms)"; fi
+: >"$tmp/requests.log"
+ask addr5 '{"mode": "addressee", "heard": "FAIL500 open it", "lang": "en"}'
+expect_eq "addressee: a server error is not for Muse" '{"addressed":false,"failed":true}' "$(event addr5 addressee '| {addressed, failed}')"
+expect_eq "addressee: no retry (too late to be an answer)" "1" "$(jq -c 'select(.path == "/v1/messages" and (.body | tostring | contains("FAIL500")))' "$tmp/requests.log" | wc -l)"
+ask addr6 '{"mode": "addressee", "heard": "", "lang": "en"}'
+expect_eq "addressee: nothing heard, nothing asked" '{"addressed":false}' "$(event addr6 addressee '| {addressed}')"
+
 # Failures.
 python3 -I "$script" ask "$tmp/none.json" >"$tmp/none.out" 2>/dev/null || true
 expect_eq "no request: an error" '"error"' "$(jq -c '.type' "$tmp/none.out" | head -n1)"
