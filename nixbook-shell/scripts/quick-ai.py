@@ -527,6 +527,12 @@ def addressee(req, started, p):
     if not heard:
         emit("addressee", addressed=False, confidence=0, order="", ms=0)
         return 0
+    # Private listening (ai.voice.privateListening): what the room said
+    # never goes to the model; the shell doesn't ask, and this holds if it
+    # ever did. Not for Muse (its "Was that for me?" chip sends it).
+    if req.get("private"):
+        emit("addressee", addressed=False, confidence=0, order="", private=True, ms=0)
+        return 0
     r = nixbook_ai.routing()
     model = str(req.get("model") or "small")
     effort = "minimal" if r["effortMinimal"] else "low"

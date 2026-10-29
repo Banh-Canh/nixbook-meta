@@ -65,6 +65,8 @@ Scope {
                         onClaimed: Addressee.claim()
                         level: Voice.level
                         talking: FullAi.mood === "speaking"
+                        // Where the mic's audio goes, on the mascot itself.
+                        micState: FullAi.micState
                     }
                 }
                 Connections {

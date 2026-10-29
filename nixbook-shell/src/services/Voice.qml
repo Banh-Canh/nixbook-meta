@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import QtQuick
@@ -19,6 +20,14 @@ import QtQuick
  *     has spoken and then been quiet for ai.voice.pauseSeconds (or the key
  *     again, or ai.voice.maxSeconds), and transcribes with whisper.cpp
  *     (`nixbook-voice-transcribe`, nothing leaves the computer).
+ * Private listening (ai.voice.privateListening, on by default; the rules in
+ * VoiceRoute, voice_route.js): only what the user starts (Mod+T, the
+ * bubble's mic, `voice start`) may use Meta. What listens on its own —
+ * Full AI mode's always-open microphone, the mic opening again after an
+ * answer, after a "stop", for a yes or a no — records and transcribes on
+ * this computer, and the words go on (as text, through the privacy mask)
+ * only once the plain-code rules (Addressee.qml) say they were for Muse.
+ * No capture at all while the screen is locked or the screens are off.
  * It all happens in Muse's speech bubble (the Mod+C one, AgentSpeech.qml):
  * listening calls it up, the words show in its field as they come, and
  * what was said is sent there (Initiative.reply: a plain command done at
@@ -50,11 +59,28 @@ Singleton {
     // The microphone last recorded: "nixbook-echo-cancel-source" (no sound of
     // the computer's own, programs.nixbook-shell.voice.echoCancel) or "default".
     property string source: ""
-    readonly property string engine: {
-        const set = Config.options.ai.voice?.engine ?? "auto";
-        if (set === "meta" || set === "local") return set;
-        return (ModelProvider.status?.kind === "meta" && ModelProvider.status?.keySaved) ? "meta" : "local";
+    // The engine ai.voice.engine names (what Mod+T uses).
+    readonly property bool metaReady: ModelProvider.status?.kind === "meta" && (ModelProvider.status?.keySaved ?? false)
+    readonly property string engine: VoiceRoute.settingEngine(Config.options.ai.voice?.engine ?? "auto", root.metaReady)
+    readonly property bool privateListening: Config.options.ai.voice?.privateListening ?? true
+    // The engine of a capture: what the user started (`solicited`) may go
+    // to Meta; what listens on its own stays here with private listening.
+    function engineFor(solicited) {
+        return VoiceRoute.captureEngine({ setting: Config.options.ai.voice?.engine ?? "auto", metaReady: root.metaReady,
+            privateListening: root.privateListening, solicited: !!solicited });
     }
+    // The capture now (or the last one): started by the user, and on which
+    // engine.
+    property bool turnSolicited: false
+    property string turnEngine: ""
+    // No capture at all while the user is away (locked, screens off).
+    readonly property bool micAllowed: VoiceRoute.micAllowed({ locked: GlobalStates.screenLocked, screensOff: Idle.screensOff })
+    // Where heard audio goes right now: "meta", "local", or "" (nothing
+    // captured).
+    readonly property string audioGoes: root.listening || root.transcribing ? root.turnEngine : ""
+    // What the mascot and the bubble show: "off" | "paused" | "meta" | "local".
+    readonly property string micState: VoiceRoute.micState({ micOn: !FullAi.active || FullAi.micOn, allowed: root.micAllowed,
+        capturing: root.audioGoes !== "", captureEngine: root.audioGoes, nextEngine: root.engineFor(false) })
     // The languages hinted to Meta: ai.voice.language, else the interface's
     // and English.
     readonly property string languages: {
@@ -68,6 +94,9 @@ Singleton {
     // can take shorter ones).
     readonly property real maxSeconds: Math.max(5, Math.min(600, Config.options.ai.voice?.maxSeconds ?? 120))
     readonly property real pauseSeconds: Math.max(0.5, Math.min(10, Config.options.ai.voice?.pauseSeconds ?? 1.8))
+    // This turn's limit (VoiceRoute.maxSeconds: 30 s for what listens on
+    // its own here, an order is short and whisper.cpp reads it all).
+    property real turnMax: root.maxSeconds
 
     // A conversation by voice (ai.voice.conversation): once Mod+T started it,
     // the microphone opens again when the answer is done (or when a step
@@ -96,8 +125,10 @@ Singleton {
     // Heard while it speaks: its own voice (an echo the canceller let
     // through) when most of the words are in what it is saying.
     function _echoOf(heard) {
+        // Done speaking (this computer's recording is judged once the user
+        // pauses, after it): what it said last.
         const spoken = streamSpeaker.running && root.streamTarget ? root._plain(root.streamTarget)
-            : speaker.running ? speaker.text : "";
+            : speaker.running ? speaker.text : root.lastSpoken;
         const said = {};
         for (const w of root._norm(spoken).split(" ")) if (w.length > 1) said[w] = true;
         const words = root._norm(heard).split(" ").filter(w => w.length > 1);
@@ -128,9 +159,11 @@ Singleton {
         id: relisten
         interval: 300
         onTriggered: {
+            // Away (locked, screens off): nothing; it listens again on return.
+            if (!root.micAllowed) return;
             // Not while it talks (the speaker reopens it), but Full AI mode's
             // stream, which opens held.
-            if (root.speaking && !(FullAi.active && root.engine === "meta")) return;
+            if (root.speaking && !(FullAi.active && root.engineFor(false) === "meta")) return;
             // Full AI mode: always listening (orders keep coming while the
             // agent works), unless muted.
             if (FullAi.active) {
@@ -314,7 +347,11 @@ Singleton {
     // OK here and for what Full AI learns from the answer (FullAi.userSaid).
     readonly property var yesWords: /^(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|please|oui|ouais|vas-?y|d'?accord|ja|klar|mach|c[oó]|[dđ][uư][oợ]c|l[aà]m [dđ]i)\b/i
     readonly property var noWords: /^(no|nope|don'?t|stop|cancel|non|nein|kh[oô]ng|annule|laisse)\b/i
+    // The last ~2000 characters it said, for telling its own voice heard
+    // back (_echoOf) once it has stopped.
+    property string lastSpoken: ""
     function _remember(t) {
+        root.lastSpoken = (root.lastSpoken + " " + String(t ?? "")).slice(-2000);
         const now = Date.now();
         const add = root._sentencesOf(t).map(x => root._norm(x)).filter(n => n.length >= 16).map(n => ({ n: n, t: now }));
         root._said = root._said.concat(add).slice(-200);
@@ -328,6 +365,14 @@ Singleton {
             // Barge-in: the echo-cancelled microphone stays open (the user
             // can speak up); otherwise it doesn't hear itself.
             if (!root.bargeIn) stream.write("hold\n");
+            return false;
+        }
+        // This computer's recording, echo-cancelled (barge-in): kept open,
+        // what it hears is judged once the user pauses — a stop word or the
+        // name cuts it short, its own voice is dropped (no live partials to
+        // act on sooner: Mod+T or Escape stop it at once).
+        if (root.listening && rec.running && root.bargeIn) {
+            rec.overSpeech = true;
             return false;
         }
         if (root.listening) {
@@ -694,11 +739,18 @@ Singleton {
             if (Initiative.thinking || QuickAi.busy) QuickAi.stop();
             root.stopSpeaking();
             root.session = root.conversation;
-            root.start();
+            // The user's key: this turn may go to Meta (ai.voice.engine).
+            root.start(true);
         }
     }
-    function start() {
+    // `solicited`: the user started this capture (Mod+T, the bubble's mic,
+    // `voice start`); else it listens on its own (Full AI mode, a
+    // conversation's next turn): this computer only, with private listening.
+    function start(solicited = false) {
         if (root.listening || root.transcribing) return;
+        // Away (locked, screens off): no capture; Full AI mode listens again
+        // on return.
+        if (!root.micAllowed) return;
         if (!QuickAi.available) return QuickAi.refuse();
         if (!root.available) {
             Quickshell.execDetached(["notify-send", "-a", "Quick AI", "-t", "4000", Translation.tr("Voice input is off"),
@@ -713,12 +765,22 @@ Singleton {
         root.heard = false;
         root.level = 0;
         root.partial = "";
-        if (root.engine === "meta") {
-            // The last stream still closing: started again once it has.
-            if (stream.running) {
-                stream.again = true;
-                return;
-            }
+        // Full AI mode's microphone is always the always-open one, however
+        // it was opened (`voice start` included): never Meta with private
+        // listening.
+        solicited = !!solicited && !FullAi.active;
+        const eng = root.engineFor(solicited);
+        // The last stream still closing: started again once it has (with
+        // the same say on where it goes).
+        if (stream.running) {
+            stream.again = true;
+            stream.againSolicited = !!solicited;
+            return;
+        }
+        root.turnSolicited = !!solicited;
+        root.turnEngine = eng;
+        root.turnMax = VoiceRoute.maxSeconds({ maxSeconds: root.maxSeconds, engine: eng, solicited: !!solicited });
+        if (eng === "meta") {
             // Full AI mode: one stream for the whole session (each sentence
             // sent when the user pauses, nothing to reopen between orders).
             stream.continuous = FullAi.active;
@@ -741,10 +803,36 @@ Singleton {
         rec.loud = 0;
         rec.quiet = 0;
         rec.wanted = true;
+        rec.overSpeech = root.speaking;
+        rec.startedAt = Date.now();
+        rec.stopped = false;
         rec.file = `${root.dir}/rec-${Date.now()}.wav`;
+        rec.limit = root.turnMax;
         root.listening = true;
         rec.running = true;
         maxTimer.restart();
+    }
+    // This computer's listening failing in a row (ffmpeg or whisper.cpp
+    // refusing): each time a little later, then the microphone off (Full AI
+    // mode), so a broken recorder doesn't respawn every 300 ms for good.
+    property int localFailures: 0
+    function _localFailed(why) {
+        root.localFailures++;
+        if (root.localFailures >= 6) {
+            root.localFailures = 0;
+            if (FullAi.active) FullAi.micOn = false;
+            root.endSession();
+            root.error = Translation.tr("Listening on this computer keeps failing: microphone off (%1)").arg(why);
+            return;
+        }
+        if (FullAi.active || root.session) {
+            relisten.interval = Math.min(8000, 300 * Math.pow(2, root.localFailures));
+            relisten.restart();
+        }
+    }
+    function _localWorked() {
+        root.localFailures = 0;
+        relisten.interval = 300;
     }
     // Stops recording; what was said is transcribed and sent.
     function stop() {
@@ -758,6 +846,7 @@ Singleton {
         }
         root.listening = false;
         maxTimer.stop();
+        rec.stopped = true;
         if (rec.running) rec.signal(2); // SIGINT: ffmpeg finishes the file
     }
     // Stops without sending anything.
@@ -804,6 +893,10 @@ Singleton {
         if (root.listening || root.transcribing || !root.available) return;
         QuickAi.askQuestion("", "voice");
         root.error = "";
+        // Handed over by the user (`voice transcribe`): for Muse, here.
+        root.turnSolicited = true;
+        root.turnEngine = "local";
+        rec.overSpeech = false;
         transcriber.file = path;
         transcriber.wanted = true;
         root.transcribing = true;
@@ -813,17 +906,24 @@ Singleton {
     // The bubble's field is emptied (what was said is sent, or cancelled).
     signal delivered()
     // What was said: sent in the bubble, as if typed there. Full AI mode's
-    // always-open microphone hears the room too: only what was said to
-    // Muse goes on (services/Addressee.qml decides, then calls this again
-    // with `judged`, its name taken out of the order).
+    // always-open microphone hears the room too, and so does the mic opening
+    // again on its own with private listening (a conversation's next turn):
+    // only what was said to Muse goes on (services/Addressee.qml decides,
+    // then calls this again with `judged`, its name taken out of the order).
     function deliver(text, judged = false) {
         root.lastText = text;
         root.delivered();
-        if (!judged && Addressee.active) {
+        if (!judged && Addressee.judges(root.turnSolicited)) {
             Addressee.hear(text);
             relisten.restart();
             return;
         }
+        // Said after the user's own key: for Muse (what follows in the
+        // conversation is judged against it).
+        if (!judged) Addressee.noteAddressed();
+        // Talking to Muse keeps the screens on (the mic closes when they go
+        // off): Idle.talking, for a few minutes after each turn.
+        Idle.noteTalking();
         // Nothing old attached when the user talks: a finished answer, or
         // one of another conversation.
         const t = root.streamTarget;
@@ -877,7 +977,7 @@ Singleton {
 
     Timer {
         id: maxTimer
-        interval: root.maxSeconds * 1000
+        interval: root.turnMax * 1000
         onTriggered: root.stop()
     }
 
@@ -901,6 +1001,14 @@ Singleton {
         property real peak: -30
         property int loud: 0
         property real quiet: 0
+        // Muse spoke during this recording (barge-in kept it open): what it
+        // heard is checked for its own voice and a stop word (transcriber).
+        property bool overSpeech: false
+        property real startedAt: 0
+        // Ended on purpose (stop(), the pause, the key), not by itself.
+        property bool stopped: false
+        // This recording's limit (s).
+        property real limit: 120
         // The recorder never outlives the shell (an orphan would go on
         // listening): stopped when the shell dies (pdeathsig), and after
         // 31 s whatever happens. direct=1: each frame's level written at
@@ -909,7 +1017,7 @@ Singleton {
             + 'exec setpriv --pdeathsig INT timeout -s INT "$2" ffmpeg -hide_banner -loglevel error -nostdin '
             + '-f pulse -i "$src" -ac 1 -ar 16000 '
             + '-af "astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=/dev/stdout:direct=1" '
-            + '-y "$1"', "_", rec.file, String(Math.ceil(root.maxSeconds) + 1)]
+            + '-y "$1"', "_", rec.file, String(Math.ceil(rec.limit) + 1)]
         stdout: SplitParser {
             onRead: (line) => {
                 if (line.startsWith("SOURCE=")) {
@@ -956,7 +1064,10 @@ Singleton {
                     }
                 }
                 // Nothing said for 8 s: given up (the card stays, saying so).
-                if (!root.heard && rec.frames > 160) root.stop();
+                // Not Full AI mode's always-open microphone: a new recording
+                // every 8 s would cut off whoever starts talking at the turn
+                // (it waits up to its 30 s, then starts again).
+                if (!root.heard && rec.frames > 160 && !FullAi.active) root.stop();
             }
         }
         // The SIGINT stop: ffmpeg exits 255. Whatever the code, the file is
@@ -965,7 +1076,16 @@ Singleton {
             root.listening = false;
             root.level = 0;
             maxTimer.stop();
+            // Gone at once, nothing recorded (no PulseAudio, ffmpeg
+            // refusing): a failure, retried later and later.
+            if (rec.wanted && !rec.stopped && rec.frames < 5 && Date.now() - rec.startedAt < 1500) {
+                Quickshell.execDetached(["rm", "-f", rec.file]);
+                if (FullAi.active || root.session) root._localFailed(Translation.tr("the recorder stopped (%1)").arg(code));
+                else root.error = Translation.tr("The microphone couldn't be opened (%1)").arg(code);
+                return;
+            }
             if (!rec.wanted || !root.heard) {
+                if (rec.wanted) root._localWorked();
                 if (rec.wanted && FullAi.active) relisten.restart();
                 else if (rec.wanted && root.session) root.endSession();
                 else if (rec.wanted) root.error = Translation.tr("I didn't hear anything");
@@ -991,8 +1111,10 @@ Singleton {
         property int quickExits: 0
         onStarted: stream.startedAt = Date.now()
         property bool held: false
-        // start() came while it was still closing.
+        // start() came while it was still closing (and whether the user
+        // started it: Meta or this computer, decided again then).
         property bool again: false
+        property bool againSolicited: false
         // The meter against the room's own noise, as for the local engine.
         property int frames: 0
         property real floor: -50
@@ -1080,7 +1202,9 @@ Singleton {
             // ended (the server, the hour): listening again at once.
             stream.quickExits = Date.now() - stream.startedAt < 3000 ? stream.quickExits + 1 : 0;
             if (stream.again || (stream.wanted && FullAi.active && FullAi.micOn)) {
+                reopen.solicited = stream.again && stream.againSolicited;
                 stream.again = false;
+                stream.againSolicited = false;
                 if (stream.quickExits >= 6) {
                     stream.quickExits = 0;
                     if (FullAi.active) FullAi.micOn = false;
@@ -1095,7 +1219,10 @@ Singleton {
     Timer {
         id: reopen
         interval: 150
-        onTriggered: root.start()
+        // A stream reopened on its own (Full AI mode's, ended by the
+        // server) is not the user's: this computer, with private listening.
+        property bool solicited: false
+        onTriggered: root.start(reopen.solicited)
     }
 
     Process {
@@ -1111,25 +1238,71 @@ Singleton {
             if (!transcriber.wanted) return;
             const text = transcript.text.trim();
             if (code !== 0) {
-                root.error = Translation.tr("Transcription failed: %1").arg(transcriptErr.text.trim().split("\n").pop() || code);
-                // Full AI mode listens on.
-                if (FullAi.active) relisten.restart();
+                const why = transcriptErr.text.trim().split("\n").pop() || String(code);
+                root.error = Translation.tr("Transcription failed: %1").arg(why);
+                // Full AI mode (a conversation) listens on, later and later
+                // while it keeps failing.
+                if (FullAi.active || root.session) root._localFailed(why);
                 return;
             }
+            root._localWorked();
             if (text.length === 0) {
                 if (FullAi.active) relisten.restart();
                 else root.error = Translation.tr("I didn't catch that");
                 return;
             }
+            // Heard while Muse spoke (barge-in on this computer's
+            // recording): its own voice is dropped; a stop word or its name
+            // cuts it short; other words count only once it has finished
+            // (the echo canceller lets odd bits through, never taken as an
+            // order while it talks).
+            if (rec.overSpeech) {
+                rec.overSpeech = false;
+                const echo = root._echoOf(text);
+                const stops = root._halt(text) !== null || AddresseeRules.calledByName(text) !== null;
+                if (echo || (!stops && root.speaking)) {
+                    if (FullAi.active || root.session) relisten.restart();
+                    return;
+                }
+            }
             root.deliver(text);
         }
+    }
+
+    // ── Away: no microphone at all ──
+    // Locked or the screens off: every capture closes (this computer's
+    // included) and nothing opens until the user is back; Full AI mode,
+    // still on, listens again then. A conversation outside it ends.
+    onMicAllowedChanged: {
+        if (!root.micAllowed) {
+            const wasListening = root.listening || root.transcribing;
+            stream.again = false;
+            root.pauseListening();
+            if (transcriber.running) {
+                transcriber.wanted = false;
+                transcriber.signal(15);
+            }
+            root.transcribing = false;
+            if (!FullAi.active && (root.session || wasListening)) root.endSession();
+            return;
+        }
+        if (FullAi.active && FullAi.micOn) relisten.restart();
+    }
+    // Private listening turned on while a stream of the room goes to Meta
+    // (Full AI mode, a conversation's next turn): closed at once, opened
+    // again on this computer.
+    onPrivateListeningChanged: {
+        if (!root.privateListening || !stream.running || root.turnSolicited) return;
+        root.pauseListening();
+        if (FullAi.active && FullAi.micOn) relisten.restart();
     }
 
     IpcHandler {
         target: "voice"
         // Listen (again: stop and send what was said).
         function toggle(): void { root.toggle(); }
-        function start(): void { root.start(); }
+        // The user's (a key bound to it): may go to Meta (ai.voice.engine).
+        function start(): void { root.start(true); }
         // Stop and send what was said.
         function stop(): void { root.stop(); }
         // Stop without sending.
@@ -1145,7 +1318,9 @@ Singleton {
         // the file is deleted afterwards).
         function transcribe(path: string): void { root.transcribeFile(path); }
         function status(): string {
-            return JSON.stringify({ available: root.available, engine: root.engine, listening: root.listening,
+            return JSON.stringify({ available: root.available, engine: root.engine, privateListening: root.privateListening,
+                turnEngine: root.turnEngine, turnSolicited: root.turnSolicited, audioGoes: root.audioGoes, mic: root.micState,
+                micAllowed: root.micAllowed, listening: root.listening,
                 session: root.session, source: root.source, speaking: root.speaking, speak: root.speakMode,
                 transcribing: root.transcribing, heard: root.heard, level: root.level, partial: root.partial,
                 error: root.error, last: root.lastText });

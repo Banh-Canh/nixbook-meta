@@ -896,6 +896,44 @@ Scope {
                         }
                     }
 
+                    // A conversation's next turn heard on this computer and
+                    // taken for someone else's (private listening,
+                    // Addressee.qml): never sent, unless the user taps
+                    // "Was that for me?" (Full AI mode shows it by the mascot).
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: !!Addressee.overheard && !FullAi.active
+                        spacing: 6
+                        StyledText {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: Translation.tr("👂 “%1” (not for me?)").arg(String(Addressee.overheard?.text ?? "").slice(0, 160))
+                            color: Qt.alpha(root.fg, 0.55)
+                            font.italic: true
+                            font.pixelSize: Appearance.font.pixelSize.small
+                        }
+                        Rectangle {
+                            implicitWidth: forMeText.implicitWidth + 20
+                            implicitHeight: forMeText.implicitHeight + 8
+                            radius: implicitHeight / 2
+                            color: forMeMouse.containsMouse ? Appearance.colors.colSecondaryContainerHover : Appearance.colors.colSecondaryContainer
+                            StyledText {
+                                id: forMeText
+                                anchors.centerIn: parent
+                                text: Translation.tr("Was that for me?")
+                                color: Appearance.colors.colOnSecondaryContainer
+                                font.pixelSize: Appearance.font.pixelSize.small
+                            }
+                            MouseArea {
+                                id: forMeMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Addressee.claim()
+                            }
+                        }
+                    }
+
                     // The answer, typed: Enter sends (Shift+Enter: a new line),
                     // Escape puts it away. Not for a routine to say yes to.
                     // Ctrl+V of an image, a file dropped or the clip button
@@ -962,7 +1000,12 @@ Scope {
                                         onClicked: Voice.toggle()
                                     }
                                     StyledToolTip {
-                                        text: Voice.speaking ? Translation.tr("Stop it and talk (Mod+T)") : Translation.tr("Talk (Mod+T)")
+                                        // Where the voice goes (Voice.audioGoes / engine).
+                                        text: Voice.audioGoes === "meta" ? Translation.tr("Sending your voice to Meta (Mod+T: done)")
+                                            : Voice.audioGoes === "local" ? Translation.tr("Listening on this computer (Mod+T: done)")
+                                            : Voice.speaking ? Translation.tr("Stop it and talk (Mod+T)")
+                                            : Voice.engine === "meta" ? Translation.tr("Talk (Mod+T): transcribed by Meta")
+                                            : Translation.tr("Talk (Mod+T): transcribed on this computer")
                                         extraVisibleCondition: micMouse.containsMouse
                                     }
                                 }
@@ -977,10 +1020,16 @@ Scope {
                                     color: root.fg
                                     placeholderTextColor: Qt.alpha(root.fg, 0.5)
                                     font.family: root.font
-                                    placeholderText: FullAi.active ? (Voice.listening ? Translation.tr("Listening… (Esc leaves Full AI)")
+                                    // Listening: where the voice goes too (this
+                                    // computer, or Meta for what Mod+T started).
+                                    placeholderText: FullAi.active ? (Voice.listening ? (Voice.audioGoes === "meta" ? Translation.tr("Listening, sent to Meta… (Esc leaves Full AI)")
+                                                : Translation.tr("Listening on this computer… (Esc leaves Full AI)"))
                                             : Translation.tr("Full AI: talk to it (Mod+T: mic)"))
-                                        : Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")
-                                            : Translation.tr("Listening… speak now"))
+                                        : Voice.listening ? (Voice.audioGoes === "meta"
+                                            ? (Voice.session ? Translation.tr("Listening, sent to Meta… (say \"that's all\" to stop)")
+                                                : Translation.tr("Listening, sent to Meta… speak now"))
+                                            : (Voice.session ? Translation.tr("Listening on this computer… (say \"that's all\" to stop)")
+                                                : Translation.tr("Listening on this computer… speak now")))
                                         : Voice.transcribing ? Translation.tr("Understanding…")
                                         // kitty or Neovim in front: Muse sees it (ai.terminal).
                                         : TerminalAccess.seesFront && (window.grab || root.conversing || Initiative.isAsk(root.item))

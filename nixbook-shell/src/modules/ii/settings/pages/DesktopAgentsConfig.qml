@@ -188,7 +188,24 @@ ContentPage {
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
                 font.pixelSize: Appearance.font.pixelSize.small
-                text: Translation.tr("Meta: your voice is streamed to Muse Voice Transcribe while you speak, the words show as they come and it knows when you've finished; nothing heavy runs here. This computer: whisper.cpp, nothing leaves it, but it needs a decent GPU or CPU. Auto: Meta when it is the model provider (now: %1).").arg(Voice.engine === "meta" ? Translation.tr("Meta") : Translation.tr("this computer"))
+                text: Translation.tr("Meta: your voice is streamed to Muse Voice Transcribe while you speak, the words show as they come and it knows when you've finished; nothing heavy runs here. This computer: whisper.cpp, nothing leaves it, but it needs a decent GPU or CPU. Auto: Meta when it is the model provider (now: %1). With private listening, this is only for what you start (Mod+T).").arg(Voice.engine === "meta" ? Translation.tr("Meta") : Translation.tr("this computer"))
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.voice.privateListening"
+                    enabled: !nixManaged && Config.options.ai.quick.enable && (Config.options.ai.voice?.enable ?? true)
+                    buttonIcon: "hearing"
+                    text: Translation.tr("Private listening")
+                    checked: Config.options.ai.voice?.privateListening ?? true
+                    onCheckedChanged: if (Config.options.ai.voice) Config.options.ai.voice.privateListening = checked
+                }
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Nothing the microphone hears leaves this computer unless it was said to Muse: Full AI mode and the mic opening again after an answer listen here (whisper.cpp), and only what is for Muse goes on, as text. Mod+T and the meeting companion, which you start, keep the choice above. The mic closes while the screen is locked or off.")
             }
             ConfigSelectionArray {
                 configKey: "ai.voice.speak"
@@ -237,7 +254,7 @@ ContentPage {
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
                 font.pixelSize: Appearance.font.pixelSize.small
-                text: Translation.tr("Full AI mode's microphone stays open, so it hears the room too. \"What's said to Muse\": its name (\"Muse, …\", \"hey Muse\"), an answer to it, or a reply right after it spoke; not someone else called by name, nor you on a call; when it can't tell, a quick check with the small model. Words it thinks weren't for it show dimmed by the mascot with \"Was that for me?\" for a few seconds: tap it to send them after all (it learns from that). Outside Full AI mode, what you say after Mod+T or type is always for it.")
+                text: Translation.tr("Full AI mode's microphone stays open, so it hears the room too. \"What's said to Muse\": its name (\"Muse, …\", \"hey Muse\"), an answer to it, or a reply right after it spoke; not someone else called by name, nor you on a call; when it can't tell, a quick check with the small model — not with private listening: then what it can't tell stays here, as not for it. Words it thinks weren't for it show dimmed by the mascot with \"Was that for me?\" for a few seconds: tap it to send them after all (it learns from that). Outside Full AI mode, what you say after Mod+T or type is always for it. \"Everything heard\" sends every sentence on (as text, even with private listening).")
             }
             ConfigSelectionArray {
                 configKey: "ai.quick.bubble"

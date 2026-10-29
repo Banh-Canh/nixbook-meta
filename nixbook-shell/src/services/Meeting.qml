@@ -145,6 +145,22 @@ Singleton {
         root.micOn = !root.micOn
         runner.write(root.micOn ? "mic on\n" : "mic off\n")
     }
+    // Locked: the user has left the computer, so their microphone ("You")
+    // is closed until they are back; the call's own sound goes on being
+    // captioned (the companion was started by them, and is still shown).
+    property bool _micOffWhileLocked: false
+    Connections {
+        target: GlobalStates
+        function onScreenLockedChanged() {
+            if (GlobalStates.screenLocked && root.active && root.micOn) {
+                root._micOffWhileLocked = true
+                root.toggleMic()
+            } else if (!GlobalStates.screenLocked && root._micOffWhileLocked) {
+                root._micOffWhileLocked = false
+                if (root.active && !root.micOn) root.toggleMic()
+            }
+        }
+    }
     function toggleTranslate() {
         if (!root.active) return
         root.translateOn = !root.translateOn

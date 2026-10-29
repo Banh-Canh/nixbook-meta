@@ -237,7 +237,12 @@ something failed. The mascot is the mode's only sign on screen.
 - **The microphone stays open**, also while the agent works: give the next order
   whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
   Since it hears the whole room, it only acts on
-  [what is said to it](#only-what-is-said-to-muse).
+  [what is said to it](#only-what-is-said-to-muse), and with
+  [private listening](#private-listening) (the default) it listens on this
+  computer only: nothing it hears leaves it unless it was said to Muse. The
+  badge under the mascot says where your voice goes: _Only on this computer_
+  (an ear), _Sending to Meta_ (a cloud, only with private listening off),
+  _Mic paused_ (screen locked or off) or _Mic off_.
 - **It talks**: what it says in its balloon (what it does, its questions, the
   outcome) is said out loud in its cute voice, the words appearing as they are
   said (never ahead of the voice), and each answer only once.
@@ -255,7 +260,10 @@ something failed. The mascot is the mode's only sign on screen.
   your new order. With the echo-cancelled microphone (`voice.echoCancel`) it
   also listens while it talks, so just speaking up cuts it short; its own voice
   heard back is ignored. `Mod+T` stops it too. Settings > Desktop agents >
-  _Interrupt by speaking_ (`ai.voice.bargeIn`).
+  _Interrupt by speaking_ (`ai.voice.bargeIn`). Listening on this computer
+  (private listening) there are no words as you say them: what you said while
+  it talked is read once you pause, and only "stop", "wait" or its name cut it
+  short then; `Mod+T` or `Esc` stop it at once.
 - The conversation is still in the speech bubble.
 
 **It reacts to what happens** (_Full AI reacts to what happens_, on by default;
@@ -310,11 +318,13 @@ code, in English, French, German and Vietnamese:
 5. **A reply**: speaking while it talks, within 8 seconds after it spoke, or
    while you two are talking back and forth (you spoke to it in the last 25
    seconds and it answered). "Hmm", "euh", "äh" alone are nobody's.
-6. Otherwise **the small model decides**, in about a second: the last few things
-   heard and said (masked for the provider like everything else), the window in
-   front and whether a call is on. Only a confident yes is acted on; when it is
-   slow (4 seconds at most) or fails, the words are taken as not for it, never
-   as an order.
+6. Otherwise, with [private listening](#private-listening) on (the default),
+   **not for it**: the room's words never go to a model, and _Was that for
+   me?_ is how you send them. With it off, **the small model decides**, in
+   about a second: the last few things heard and said (masked for the provider
+   like everything else), the window in front and whether a call is on. Only a
+   confident yes is acted on; when it is slow (4 seconds at most) or fails, the
+   words are taken as not for it, never as an order.
 
 Words it takes for someone else's are **never sent**: they show dimmed in the
 mascot's balloon ("👂 … (not for me?)") with **Was that for me?** for about six
@@ -331,8 +341,40 @@ someone in the room goes to the model instead. Settings > Desktop agents > Talk 
 (`smart`, the default), _Only when called by name_ (`name`: the name, an answer
 to its question or a stop word; no model) or _Everything heard_ (`all`: every
 sentence is an order, as before). With the AI features off or local only, only
-the name counts. Outside Full AI mode nothing changes: what you say after the
-`Mod+T` key, or type, is always for it.
+the name counts. Outside Full AI mode, what you say after the `Mod+T` key, or
+type, is always for it; with private listening, the turns after it in a
+conversation (the mic opening again by itself) are judged the same way, a
+_Was that for me?_ in the bubble for what it let go.
+
+### Private listening
+
+_Private listening_ (Settings > Desktop agents > Talk to your desktop,
+`ai.voice.privateListening`, on by default): **nothing the microphone hears
+leaves this computer unless it was said to Muse.**
+
+| What listens                                                  | Where the audio goes                                                                                        |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Full AI mode's always-open microphone                         | This computer (whisper.cpp), whatever _Voice transcribed by_ says                                           |
+| The mic opening again by itself (a conversation, a yes or no) | This computer                                                                                               |
+| `Mod+T`, the bubble's mic (one turn, started by you)          | _Voice transcribed by_: Meta streamed, or this computer                                                     |
+| The [meeting companion](#meeting-companion) (started by you)  | Meta (live captions), the whole time shown: the captions window says "sent to Meta"                         |
+| Screen locked, or screens off                                 | Nowhere: no capture at all (the meeting companion keeps the call's sound but closes your microphone locked) |
+
+What this computer heard goes on only when the plain-code rules above say it
+was for Muse, and then only as text, through the privacy mask; what they can't
+tell is not for it (no model judges the room). Tapping _Was that for me?_ is
+your consent to send it. The meeting companion and "take notes" by voice need
+its name ("Muse, take notes") when the words were heard this way, since that
+sends the call to Meta. Agents can't point music recognition at the
+microphone either (only the widget's own button can). Full AI mode listens
+again when you're back from a locked screen or screens off, and talking to
+Muse keeps the screens on for five minutes after the last thing said to it.
+
+The cost: whisper.cpp runs here for each sentence (a decent GPU or CPU; up to
+30 s per sentence heard this way), the words don't show as you speak, and
+barge-in works only at the end of what you said (see _Interrupt it by voice_).
+Turn it off to stream Full AI mode to Meta again; the mascot's badge then says
+_Sending to Meta_.
 
 ### Muse on the desktop
 
@@ -540,7 +582,11 @@ with the mode you had. From a key or a script:
 answer has been said, the microphone opens again by itself, so you just go on
 talking. When a step waits for your OK, say "yes" / "oui" or "no" / "non". It ends
 when you say "that's all", "thanks", "c'est tout", "merci"…, press `Esc`, put the
-bubble away, or say nothing for 8 seconds.
+bubble away, or say nothing for 8 seconds. With
+[private listening](#private-listening), the microphone that opens again by
+itself listens on this computer, and what it hears goes on only when it is for
+Muse; the bubble's field says _Listening on this computer…_ or _Listening, sent
+to Meta…_ while it listens.
 
 Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 
@@ -558,6 +604,9 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 - **Auto** (the default): Meta when it is the model provider, otherwise this
   computer.
 
+With private listening on, this choice is for what you start (`Mod+T`, the
+bubble's mic); what listens on its own always uses this computer.
+
 ## Meeting companion
 
 Muse listens to a call and helps while it goes on. **Any call, whatever the
@@ -572,8 +621,12 @@ detection below only decides when it offers itself and when it stops alone.
   Teams, Meet in the browser, Discord, Vesktop, Slack…) taking the microphone —
   or **Take notes now** in Settings > Desktop agents > Meeting companion. It
   never starts silently: the bar shows a red icon and a small window says
-  _Listening to the call_ with the time the whole time, with **Stop**. The
-  first time, it reminds you to tell the others you're taking AI notes.
+  _Listening to the call · sent to Meta_ with the time the whole time, with
+  **Stop**. The first time, it reminds you to tell the others you're taking AI
+  notes. An offer never starts it: only your click, key or words do (with
+  private listening, words heard by Full AI mode's microphone need its name,
+  "Muse, take notes"). Locking the screen closes your microphone's line until
+  you're back; the call's own sound goes on being captioned.
 - **Live captions**: what you hear (the default output's monitor) and, unless
   you leave it out with the window's microphone button, your own microphone
   (labelled _You_; the echo-cancelled one when there is one) are streamed to

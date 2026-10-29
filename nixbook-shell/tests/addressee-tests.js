@@ -241,6 +241,36 @@ check(
 );
 check("empty", decide("   ").verdict, "no");
 
+// Private listening (ai.voice.privateListening): no model, what the rules
+// can't tell is not for Muse; everything they decide stays as it was.
+no("I think we should repaint the kitchen", "private", { private: true });
+no("so what do you think about it", "private", { private: true });
+yes("Muse, open Firefox", "open Firefox", { private: true });
+yes("and the next one", "and the next one", {
+  private: true,
+  spokeAt: NOW - 2000,
+});
+yes("yes", "yes", { private: true, pending: true });
+no("Paul, can you pass the salt?", "other-person", { private: true });
+no("what do you mean", "call", { private: true, inCall: true });
+check(
+  "private listening: never 'ask the model'",
+  [
+    "open the calendar",
+    "hmm the calendar maybe",
+    "tomorrow at nine",
+    "c'est quoi déjà",
+    "wie spät ist es",
+    "mấy giờ rồi",
+  ].some((t) => decide(t, { private: true }).verdict === "ask"),
+  false,
+);
+check(
+  "private listening off: the model still decides the unclear",
+  decide("I think we should repaint the kitchen", { private: false }).verdict,
+  "ask",
+);
+
 // Speed: plain code, no model.
 const t0 = Date.now();
 for (let i = 0; i < 20000; i++)

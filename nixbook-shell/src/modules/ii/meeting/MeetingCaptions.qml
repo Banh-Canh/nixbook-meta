@@ -129,7 +129,8 @@ Scope {
                             }
                         }
                         StyledText {
-                            text: Meeting.active ? Translation.tr("Listening to the call")
+                            // Where the audio goes, said while it goes there.
+                            text: Meeting.active ? Translation.tr("Listening to the call · sent to Meta")
                                 : Meeting.ending ? Translation.tr("Writing the summary…")
                                 : Translation.tr("Call notes")
                             font.weight: Font.DemiBold

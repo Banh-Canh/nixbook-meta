@@ -89,7 +89,8 @@
       "speak": "voice",
       "bargeIn": true,
       "style": "cute",
-      "addressee": "smart"
+      "addressee": "smart",
+      "privateListening": true
     },
     "agent": {
       "allowedTools": ["WebSearch", "WebFetch"],

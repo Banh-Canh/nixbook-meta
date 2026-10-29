@@ -16,8 +16,11 @@ import QtQuick
  * unmutes the microphone, Mod+Shift+T (or Escape in the bubble) leaves.
  * With ai.quick.bubble "needed" the bubble stays out of sight
  * (Initiative.quiet): the mascot's balloon and its voice answer.
- * The microphone stays open the whole time, also while the agent works: a
- * new order takes over (Muse's agent, in the speech bubble's session, which
+ * The microphone stays open the whole time, also while the agent works
+ * (on this computer with private listening, ai.voice.privateListening:
+ * whisper.cpp, nothing heard leaves it unless said to Muse; closed while
+ * the screens are off, open again on return; the mascot's badge shows
+ * where it goes, Voice.micState): a new order takes over (Muse's agent, in the speech bubble's session, which
  * keeps the conversation and goes on in the side panel when expanded).
  * It reacts to what happens (ai.fullAi.react): a notification, a download,
  * the battery, a screen or an audio output plugged in, the network lost,
@@ -129,8 +132,16 @@ Singleton {
         }
         if (root.said.length > 0) return { text: root.tailOf(root.said), kind: "say" };
         if (!root.micOn) return { text: Translation.tr("Mic off. Mod+T to talk to me again."), kind: "status" };
-        return { text: Translation.tr("I'm listening. What should I do?"), kind: "status" };
+        if (root.micState === "paused") return { text: Translation.tr("Mic closed while you're away. Back soon?"), kind: "status" };
+        // Where what it hears goes (private listening: this computer).
+        if (root.micState === "local")
+            return { text: Translation.tr("Listening on this computer. Say “Muse, …” to me."), kind: "status" };
+        return { text: Translation.tr("I'm listening (sent to Meta). What should I do?"), kind: "status" };
     }
+    // The microphone, shown on the mascot (the mode's only sign on screen):
+    // "local" (listening on this computer), "meta" (sending to Meta),
+    // "paused" (away), "off" (muted).
+    readonly property string micState: Voice.micState
     readonly property string line: root.balloon.text
     readonly property string lineKind: root.balloon.kind
     // Yes / No on the balloon while a yes/no question waits (clickable: the
@@ -408,7 +419,7 @@ Singleton {
         function toggle(): void { root.toggle(); }
         function mic(): void { if (root.active) root.toggleMic(); }
         function status(): string {
-            return JSON.stringify({ active: root.active, micOn: root.micOn, mood: root.mood, line: root.line, screen: root.screenName,
+            return JSON.stringify({ active: root.active, micOn: root.micOn, mic: root.micState, mood: root.mood, line: root.line, screen: root.screenName,
                 react: root.reactOn, queued: root.queue.length, reacting: root.reacting });
         }
         // An event as if it had happened (tests): {event, app, title, text…}.

@@ -431,6 +431,15 @@ Singleton {
                     // someone else in the room); "name": only when called by
                     // name (or answering its question); "all": every sentence.
                     property string addressee: "smart"
+                    // Private listening: nothing heard leaves the computer
+                    // unless it was said to Muse. What listens on its own
+                    // (Full AI mode, the mic opening again after an answer)
+                    // uses this computer's whisper.cpp whatever `engine`
+                    // says, and only what the plain-code rules take for
+                    // Muse goes on, as text (no model judging the room).
+                    // Mod+T and the meeting companion, started by the user,
+                    // keep `engine`.
+                    property bool privateListening: true
                 }
                 // Muse in the side panel: nixbook-meta-agent (the shell's own
                 // agent, on the model provider: Meta's Model API by default),
