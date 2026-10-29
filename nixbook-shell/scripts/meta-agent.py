@@ -789,7 +789,7 @@ class Privacy:
         if not self.applies(tool_name):
             return args
         raw = json.dumps(args, ensure_ascii=False)
-        if "⟦" not in raw:
+        if not nixbook_ai.maybe_hidden(raw):
             return args
         back = nixbook_ai._json_through("unmask", args)
         if not isinstance(back, dict):
@@ -1951,6 +1951,14 @@ class Gate:
         return self.passed or not is_ambiguous(self.verdict)
 
 
+def asks_user(text):
+    """Whether an answer ends by asking the user something (its last line a
+    question), its report aside."""
+    plain, _ = nixbook_ai.strip_report(str(text or ""))
+    lines = [ln.strip() for ln in plain.strip().splitlines() if ln.strip()]
+    return bool(lines) and lines[-1].rstrip("*_ )»\"'").endswith(("?", "？"))
+
+
 def is_ambiguous(reading):
     return bool(reading) and reading.get("ambiguous") is True and len(reading.get("readings") or []) >= 2 \
         and bool(str(reading.get("question") or "").strip())
@@ -2939,7 +2947,10 @@ class Agent:
                 self.cancel = None
             if not error and not self.schema:
                 self.emit({"type": "answer", "text": self.shown(result)})
-            if self.opts.verify and not error and not self.schema and self.acted():
+            # An answer that asks the user something (which chat, whether to
+            # send) waits for them: not a task left undone to push through
+            # (the check's "not done yet" made it send what it had asked about).
+            if self.opts.verify and not error and not self.schema and self.acted() and not asks_user(result):
                 check = self.verify(text)
                 if check is not None:
                     self.emit({"type": "verify", "met": check["met"], "note": check["note"], "by": check["by"]})

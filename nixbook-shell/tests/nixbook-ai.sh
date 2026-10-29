@@ -22,6 +22,8 @@ server_pid=""
 trap '[ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null; rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/run" "$tmp/cfg"
+# The placeholders (⟦Person N⟧) here; the pseudonyms have tests of their own.
+export NIXBOOK_PRIVACY_PSEUDONYMS=0
 export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_STATE_HOME="$tmp/state" XDG_CACHE_HOME="$tmp/cache"
 export NIXBOOK_AI_RETRY_DELAY=0.05
 

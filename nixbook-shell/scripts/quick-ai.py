@@ -80,8 +80,9 @@ SYSTEM = (
     "the user writes or speaks in ({lang} when it isn't clear), unless the task says otherwise."
 )
 PRIVACY = (
-    "Text in ⟦…⟧ (⟦Person 2⟧, ⟦Email 1⟧) is a private detail the user's computer hid from you: keep the "
-    "placeholder exactly as it is in your answer."
+    "People's names may be stand-ins the user's computer chose: write a person's name exactly as you were "
+    "given it, never another name for them. Text in ⟦…⟧ (⟦Person 2⟧, ⟦Email 1⟧) is a private detail the "
+    "user's computer hid from you: keep the placeholder exactly as it is in your answer."
 )
 LANGS = {"en": "English", "fr": "French", "de": "German", "vi": "Vietnamese", "es": "Spanish",
          "it": "Italian", "ja": "Japanese", "zh": "Chinese", "pt": "Portuguese"}
@@ -477,18 +478,15 @@ def ask(path, argv=None):
         purpose = f"Quick AI: {mode}" + (" (screen)" if req.get("image") else "")
         nixbook_ai.sent_note(purpose, f"{p.label.lower()}:{model}", prompt)
         # Replies come as JSON: only the suggestions are shown.
-        # A placeholder split between two pieces ("⟦Person" + " 7 first⟧")
-        # is held back until whole, else it is shown and said as it is.
+        # A placeholder or a pseudonym split between two pieces ("⟦Person" +
+        # " 7 first⟧", "Bri" + "sa") is held back until whole, else it is
+        # shown and said as it is.
         held = [""]
 
         def stream(piece):
             if mode == "reply":
                 return
-            s = held[0] + piece
-            open_ = s.rfind("⟦")
-            held[0] = s[open_:] if open_ >= 0 and "⟧" not in s[open_:] and len(s) - open_ < 40 else ""
-            if held[0]:
-                s = s[:open_]
+            s, held[0] = nixbook_ai.split_held(held[0] + piece)
             if s:
                 emit("delta", text=unmask(s))
         text = answer_text(req, p, system, messages, stream)

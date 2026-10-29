@@ -46,6 +46,8 @@ expect_contains() {
 }
 
 mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/state" "$run" "$tmp/cfg/nixbook-shell" "$tmp/data" "$tmp/home"
+# The placeholders (⟦Person N⟧) here; the pseudonyms have tests of their own.
+export NIXBOOK_PRIVACY_PSEUDONYMS=0
 export XDG_STATE_HOME="$tmp/state" XDG_RUNTIME_DIR="$run" XDG_CONFIG_HOME="$tmp/cfg" XDG_DATA_HOME="$tmp/data" XDG_CACHE_HOME="$tmp/cache"
 export HOME="$tmp/home" NIXBOOK_AI_RETRY_DELAY=0.05 NIXBOOK_MUSE_TASK_SPAWN=plain
 unset NIXBOOK_META_AGENT NIXBOOK_SHELL_CONFIG

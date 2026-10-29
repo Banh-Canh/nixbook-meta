@@ -1054,6 +1054,59 @@ def dm(argv, stdin=None, timeout=30, env=None):
     return p.returncode, p.stdout or ""
 
 
+# The pseudonyms desktop-mcp gave (its privacy-map.json: the keys that
+# aren't ⟦…⟧): a text holding one needs unmasking too, not only one with a
+# placeholder. Read again when the file changes.
+_PSEUDO = {"key": None, "re": None}
+
+
+def _pseudo_re():
+    path = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "nixbook-shell",
+                        "privacy-map.json")
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    if _PSEUDO["key"] != key:
+        try:
+            with open(path, encoding="utf-8") as f:
+                tokens = (json.load(f) or {}).get("tokens") or {}
+        except (OSError, ValueError, AttributeError):
+            tokens = {}
+        alts = sorted((k for k in tokens if isinstance(k, str) and k and not k.startswith("⟦")), key=len, reverse=True)
+        _PSEUDO.update(key=key, re=re.compile(r"(?<![\w@.])(" + "|".join(re.escape(a) for a in alts) + r")(?![\w@])",
+                                              re.I) if alts else None)
+    return _PSEUDO["re"]
+
+
+def maybe_hidden(text):
+    """Whether TEXT may hold something masked: a ⟦…⟧ placeholder or a
+    pseudonym given to a hidden person."""
+    if not text:
+        return False
+    if "⟦" in text:
+        return True
+    r = _pseudo_re()
+    return bool(r and r.search(text))
+
+
+# The end of a streamed piece that may be half a placeholder ("⟦Person" +
+# " 7 first⟧") or half a pseudonym ("Bri" + "sa"): held back until the next.
+_TRAILING_WORD = re.compile(r"[^\W\d_][\w'’-]*$")
+
+
+def split_held(s):
+    """(what can be shown now, what to hold back) of a streamed text."""
+    open_ = s.rfind("⟦")
+    if open_ >= 0 and "⟧" not in s[open_:] and len(s) - open_ < 40:
+        return s[:open_], s[open_:]
+    m = _TRAILING_WORD.search(s)
+    if m and len(m.group()) < 40 and _pseudo_re() is not None:
+        return s[:m.start()], m.group()
+    return s, ""
+
+
 def mask(text):
     """The privacy mask (names, emails… → ⟦Person 1⟧): the text as it may
     leave the computer; the text itself when desktop-mcp can't."""
@@ -1064,7 +1117,7 @@ def mask(text):
 
 
 def unmask(text):
-    if not text or "⟦" not in text:
+    if not maybe_hidden(text):
         return text
     code, out = dm(["privacy", "unmask"], stdin=text)
     return out if code == 0 else text
@@ -1089,7 +1142,7 @@ def mask_json(value):
 
 
 def unmask_json(value):
-    if "⟦" not in json.dumps(value, ensure_ascii=False):
+    if not maybe_hidden(json.dumps(value, ensure_ascii=False)):
         return value
     back = _json_through("unmask", value)
     return value if back is None else back
@@ -1106,7 +1159,8 @@ def sent_note(purpose, model, text, web=False):
 # The tools that both read and write (calendar, tasks, contacts, widget,
 # equalizer, layouts…) say which with their `action`: these only read.
 READ_ACTIONS = {"list", "lists", "upcoming", "get", "search", "find", "show", "status", "layout", "day", "events",
-                "read", "next", "agenda", "info", "count", "check", "history"}
+                "read", "next", "agenda", "info", "count", "check", "history", "channels", "guilds", "dms", "members",
+                "lookup", "query", "sessions", "playlists"}
 # The really risky steps, the only ones asked about by default (confirm
 # "destructive"): data deleted, words sent to other people in the user's
 # name, credentials, money. Closing a window, adding an event, clicking

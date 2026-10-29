@@ -49,6 +49,8 @@ mkdir -p "$tmp/bin" "$tmp/scripts" "$tmp/work" "$tmp/ro" "$tmp/rw/.git" "$tmp/st
 printf 'line one\nline two\n' >"$tmp/ro/a.txt"
 printf 'foo and more\n' >"$tmp/rw/b.txt"
 printf 'TOPSECRET\n' >"$tmp/home/secret.txt"
+# The placeholders (⟦Person N⟧) here; the pseudonyms have tests of their own.
+export NIXBOOK_PRIVACY_PSEUDONYMS=0
 export XDG_STATE_HOME="$tmp/state"
 # Never the user's own desktop-mcp helper (its socket) nor settings.
 mkdir -p "$tmp/run" "$tmp/cfg/nixbook-shell"
@@ -825,6 +827,11 @@ cut = ma.api_messages(msgs, keep_turns=3)
 print(json.dumps([ctx, imgs, len(cut), "ask 6" in json.dumps(cut[0])], separators=(",", ":")))
 PY
 )
+asks=$(PYTHONDONTWRITEBYTECODE=1 python3 -c "
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('ma', sys.argv[1]); ma = importlib.util.module_from_spec(spec); spec.loader.exec_module(ma)
+print(ma.asks_user('Found a group.\\nIs that where you want the hello?'), ma.asks_user('Sent it.'), ma.asks_user('Which one? **Work** or home?'))" "$script")
+expect_eq "verify: none when the answer asks the user (it waits for them)" "True False True" "$asks"
 expect_eq "lighten: contexts from turn 8, images from turn 4, the last 3 turns when too long" \
   '[[8],[4,5,6,7,8],9,true]' "$lighten"
 sid=$(jq -r 'select(.type == "result") | .session_id' <<<"$out" | head -n1)

@@ -411,9 +411,18 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 
 ## Privacy
 
-Text goes through the [privacy mask](./desktop-agents.md) on the way out (names,
-emails and the like become placeholders such as `⟦Person 1⟧`) and the answer is
-unmasked on this computer. A model may not write a name of its own for a
+Text goes through the [privacy mask](./desktop-agents.md) on the way out and the
+answer is unmasked on this computer. **People become stand-in names**: each
+hidden person is shown to the model as a fake name, always the same one and
+never one of your contacts' (Alan AMOYEL might be "Aurelio Ashdown" to it). Given
+a placeholder like `⟦Person 1⟧`, models tended to write a name of their own in
+its place ("Looking for Julie…"); given a name, they keep it, and every word of
+it (the first name, the surname alone, any case) comes back to the real one for
+you and for the tools, so a Discord search for the stand-in finds the real
+person. A stand-in is never learned as a stranger to hide. Emails, phones,
+addresses, logins and the like stay placeholders such as `⟦Email 1⟧`. Settings >
+Desktop agents > Private details > **People as stand-in names** (on by default;
+off: placeholders for people too). A model may not write a name of its own for a
 placeholder: while your message names a hidden person, a people tool (Discord,
 contacts, messages, memory…) asked about a name that appears nowhere in the
 conversation is refused before it runs, and the model is told to use the

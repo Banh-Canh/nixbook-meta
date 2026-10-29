@@ -205,11 +205,21 @@ QtObject {
         steps = list;
     }
 
+    // A placeholder or a pseudonym split between two chunks ("⟦Person" +
+    // " 7 first⟧", "Bri" + "sa"): held back until whole, so the real name
+    // is shown, never the fake one (the last word waits for the next chunk).
     function append(message, text) {
         let s = held + text;
         const open = s.lastIndexOf("⟦");
         held = open >= 0 && s.indexOf("⟧", open) < 0 && s.length - open < 40 ? s.slice(open) : "";
         if (held.length > 0) s = s.slice(0, open);
+        else {
+            const tail = /[A-Za-z\u00C0-\u024F\u1E00-\u1EFF][A-Za-z\u00C0-\u024F\u1E00-\u1EFF0-9_'’-]*$/.exec(s);
+            if (tail && tail[0].length < 40) {
+                held = tail[0];
+                s = s.slice(0, tail.index);
+            }
+        }
         s = unmask(s);
         message.rawContent += s;
         message.content += s;

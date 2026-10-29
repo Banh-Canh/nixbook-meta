@@ -41,6 +41,8 @@ expect_eq() {
 # (its arguments in its text), prefs; calls logged.
 mkdir -p "$tmp/bin" "$tmp/run" "$tmp/cfg/nixbook-shell"
 # Never the user's own desktop-mcp helper (its socket) nor settings.
+# The placeholders (⟦Person N⟧) here; the pseudonyms have tests of their own.
+export NIXBOOK_PRIVACY_PSEUDONYMS=0
 export XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$tmp/cfg" XDG_CACHE_HOME="$tmp/cache" NIXBOOK_AI_RETRY_DELAY=0.05
 cat >"$tmp/bin/nixbook-desktop-mcp" <<EOF
 #!/usr/bin/env bash
