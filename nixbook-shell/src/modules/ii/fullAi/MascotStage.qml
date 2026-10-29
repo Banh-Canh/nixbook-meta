@@ -192,6 +192,7 @@ Item {
             mood: root.mood
             level: root.level
             talking: root.talking
+            lip: lipSync.value
             // Eyes on where it goes; on the user (straight) when listening.
             lookX: root.flying ? Math.max(-1, Math.min(1, (root.to.x - root.from.x) / 200)) : (root.mood === "listening" ? 0 : root.restLook)
             lookY: root.mood === "thinking" ? -1 : root.flying ? -0.3 : 0.2
@@ -200,6 +201,26 @@ Item {
             stretchY: root.flying ? 1.08 : 1
             Behavior on stretchX { enabled: !landing.running; NumberAnimation { duration: 140 } }
             Behavior on stretchY { enabled: !landing.running; NumberAnimation { duration: 140 } }
+        }
+    }
+
+    // Its life outside the tasks (services/MascotState.qml): the same
+    // reactions as the desktop mascot had (a notification: it perks up; a
+    // task done: it celebrates; an error: it shakes…) and its mouth moving
+    // with the voice.
+    LipSync {
+        id: lipSync
+        live: root.visible
+    }
+    Connections {
+        target: MascotState
+        function onReaction(kind) {
+            if (!root.visible) return;
+            if (kind === "hop") mascot.hop();
+            else if (kind === "celebrate") mascot.celebrate();
+            else if (kind === "shake") mascot.shake();
+            else if (kind === "stretch") mascot.stretch();
+            else if (kind === "perk") mascot.perk();
         }
     }
 

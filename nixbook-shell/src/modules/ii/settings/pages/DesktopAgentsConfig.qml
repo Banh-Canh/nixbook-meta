@@ -316,8 +316,8 @@ ContentPage {
                     configKey: "ai.mascot.enable"
                     enabled: !nixManaged
                     buttonIcon: "smart_toy"
-                    text: Translation.tr("Show Muse on the desktop")
-                    checked: Config.options.ai.mascot?.enable ?? true
+                    text: Translation.tr("Show Muse on the desktop outside Full AI mode too (in Full AI mode its mascot is always there)")
+                    checked: Config.options.ai.mascot?.enable ?? false
                     onCheckedChanged: if (Config.options.ai.mascot) Config.options.ai.mascot.enable = checked
                 }
                 ConfigSwitch {

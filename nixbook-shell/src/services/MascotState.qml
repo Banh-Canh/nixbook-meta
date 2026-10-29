@@ -43,7 +43,9 @@ Singleton {
 
     readonly property int policy: Config.options?.policies?.ai ?? 1
     readonly property var cfg: Config.options?.ai?.mascot ?? ({})
-    readonly property bool enabled: (root.cfg.enable ?? true) && root.policy !== 0
+    // On the desktop outside Full AI mode too (off by default: the mascot
+    // is Full AI mode's; its reactions play on the Full AI stage then).
+    readonly property bool enabled: (root.cfg.enable ?? false) && root.policy !== 0
     readonly property string corner: ["bottomRight", "bottomLeft", "topRight", "topLeft"].includes(root.cfg.corner)
         ? root.cfg.corner : "bottomRight"
     readonly property bool quipsOn: root.enabled && root.policy === 1 && (root.cfg.quips ?? true)
@@ -73,8 +75,10 @@ Singleton {
     readonly property bool fullscreen: root.screenName !== "" && WM.fullscreenOnMonitor(root.screenName)
     readonly property bool shown: root.enabled && !root.hiddenByUser && !GlobalStates.screenLocked
         && !FullAi.active && !root.fullscreen
+    // A mascot on screen to react: the desktop one, or Full AI mode's.
+    readonly property bool live: root.policy !== 0 && (root.shown || FullAi.active)
     // Nothing animates while nobody can see it.
-    readonly property bool asleep: Idle.screensOff || !root.shown
+    readonly property bool asleep: Idle.screensOff || !root.live
 
     // ── Mood ──
     // A short one after something happened: happy, worried, sad, or one

@@ -181,55 +181,10 @@ Scope {
                 }
             }
 
-            // Lip-sync: the sentence playing (Voice.saying grows as each
-            // starts) read out at a speaking pace, the mouth open on vowels,
-            // half on consonants, shut on spaces and punctuation; past the
-            // text, a soft babble until the next sentence (the voice still
-            // on it). Nothing reported yet: shut (it is still being made).
-            QtObject {
+            // Lip-sync (LipSync.qml, shared with the Full AI stage).
+            LipSync {
                 id: lipSync
-                property string queue: ""
-                property int fed: 0
-                property real mouth: 0
-                property bool babble: false
-                readonly property real value: Voice.speaking && stage.live ? lipSync.mouth : -1
-                readonly property var vowels: /[aeiouyàâäéèêëîïôöùûüÿœæăắằẳẵặâấầẩẫậêếềểễệôốồổỗộơớờởỡợưứừửữựíìỉĩịóòỏõọúùủũụýỳỷỹỵ]/i
-            }
-            Connections {
-                target: Voice
-                function onSayingChanged() {
-                    const s = Voice.saying;
-                    if (s === null || s === undefined) {
-                        lipSync.queue = "";
-                        lipSync.fed = 0;
-                        lipSync.babble = false;
-                        return;
-                    }
-                    // A new answer started over.
-                    if (s.length < lipSync.fed) lipSync.fed = 0;
-                    if (s.length > lipSync.fed) {
-                        lipSync.queue += s.slice(lipSync.fed);
-                        lipSync.fed = s.length;
-                        lipSync.babble = true;
-                    }
-                }
-            }
-            Timer {
-                running: Voice.speaking && stage.live
-                interval: 70
-                repeat: true
-                onTriggered: {
-                    const q = lipSync.queue;
-                    if (q.length === 0) {
-                        lipSync.mouth = lipSync.babble ? 0.15 + Math.random() * 0.5 : 0;
-                        return;
-                    }
-                    const c = q.charAt(0);
-                    lipSync.queue = q.slice(1);
-                    lipSync.mouth = lipSync.vowels.test(c) ? 0.65 + Math.random() * 0.35
-                        : /[\s.,!?;:…\-]/.test(c) ? 0.04 : 0.28;
-                }
-                onRunningChanged: if (!running) lipSync.mouth = 0
+                live: stage.live
             }
 
             Connections {

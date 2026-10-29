@@ -287,9 +287,10 @@ reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
 
 ### Muse on the desktop
 
-Outside Full AI mode the same mascot lives small in a corner of the screen you
-are on (`ai.mascot`, on by default; Settings > Desktop agents > **Muse on the
-desktop**). It is there so Muse feels present, and everything it does is plain
+The mascot is Full AI mode's: there it reacts to what happens as below, its
+mouth moving with the voice. To have it outside Full AI mode too, small in a
+corner of the screen you are on, turn on Settings > Desktop agents > **Muse on
+the desktop** (`ai.mascot.enable`, off by default). Everything it does is plain
 code, with no model:
 
 | What happens                                                                                                              | What it does                                      |
@@ -322,8 +323,8 @@ browsing) are never mentioned; names are hidden from the model by the privacy
 mask and shown on screen as they are. **Say something now** in Settings tries
 one at once.
 
-`nixbook-shell ipc call mascot show|hide|toggle|react MOOD|quip|say TEXT|status`
-drives it (for demos and tests; agents can't: `mascot` is in desktop-mcp's
+The IPC target drives it, `nixbook-shell ipc call mascot
+show|hide|toggle|react MOOD|quip|say TEXT|status` (for demos and tests; agents can't: `mascot` is in desktop-mcp's
 `shellIpcDenyTargets`). `react` takes a mood (`happy`, `worried`, `sleepy`,
 `thinking`…, a few seconds) or a move (`hop`, `celebrate`, `shake`, `stretch`,
 `perk`).
@@ -378,7 +379,8 @@ take come first. Each kind has its switch (`ai.clipboard.kinds.<kind>`);
 need translated, `ai.clipboard.currency` the one amounts convert to (empty:
 from your language). State in `$XDG_STATE_HOME/nixbook-shell/smart-clipboard.json`.
 
-`nixbook-shell ipc call smartClipboard status|classify TEXT|offer TEXT|run|runChip N|dismiss|reset`
+Its IPC target, `nixbook-shell ipc call smartClipboard
+status|classify TEXT|offer TEXT|run|runChip N|dismiss|reset`
 (`classify` shows what a text is with no side effect; `offer` shows its chips
 as if just copied, for demos). Agents can't: `smartClipboard` is in
 desktop-mcp's `shellIpcDenyTargets`.
