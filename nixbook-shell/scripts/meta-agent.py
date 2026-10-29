@@ -31,6 +31,8 @@ to do behind the options below (all off by default).
   --output-format text|json|stream-json
   --input-format text|stream-json      stream-json: one turn per stdin line
   --include-partial-messages           stream-json: the deltas too
+  --finish                   a `finish` tool: the answer given with the last
+                             steps, the turn ending when they succeed
   --quiet-steps              with the deltas: only a turn's first line and
                              its answer are streamed, not the words between
                              its steps (shown and read out otherwise)
@@ -162,7 +164,7 @@ MULTI_FLAGS = {"--allowedTools", "--allowed-tools", "--disallowedTools", "--disa
 BOOL_FLAGS = {"-p", "--print", "--verbose", "--include-partial-messages", "--strict-mcp-config",
               "--no-session-persistence", "--privacy", "--restricted", "--safe-mode", "--continue", "-c",
               "--dangerously-skip-permissions", "--fork-session", "--replay-user-messages", "--debug", "-d",
-              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools", "--quiet-steps"}
+              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools", "--quiet-steps", "--finish"}
 
 MAX_TOKENS = int(os.environ.get("NIXBOOK_AI_MAX_TOKENS") or 16000)
 CUT_MAX_TOKENS = 32000  # the most a reply cut by the output limit is asked again with
@@ -191,6 +193,18 @@ SKIP_DIRS = {".git", "node_modules", ".direnv", "__pycache__", ".devenv", "resul
 STRUCTURED = nixbook_ai.STRUCTURED
 # The tool the verification round (--verify) answers through.
 VERIFY = "verification"
+# --finish: the answer given beside the last steps, shown when they all
+# succeed — no model call only to say "done".
+FINISH = "finish"
+FINISH_SPEC = {"name": FINISH, "description": "Your final answer to the user, called in the SAME message as the "
+               "steps that complete the request (beside them, not after): it is shown as soon as they all succeed, "
+               "with no further step; if one fails or isn't allowed, you see why and go on. Not when you need to "
+               "see a result first (to read something, or to choose what to do next).",
+               "input_schema": {"type": "object", "properties": {"answer": {"type": "string", "description":
+                                "One to three short sentences, as you would answer once it's done"}},
+                                "required": ["answer"]}}
+FINISHED = "Shown to the user: your answer stands."
+NOT_FINISHED = "Not shown: a step above failed or wasn't allowed. Deal with it, then answer."
 FIX_TURNS = 4
 VERIFY_SPEC = {"name": VERIFY, "description": "Only when the computer asks you to check ([verify]): say whether what "
                "the user asked for is done (met) and what you saw (note, one line).",
@@ -198,6 +212,14 @@ VERIFY_SPEC = {"name": VERIFY, "description": "Only when the computer asks you t
                                 "required": ["met", "note"]}}
 # The built-ins that only read.
 READ_BUILTINS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
+# Words too common to tell which waiting tools a request needs (prefetch).
+PREFETCH_SKIP = set("""about after again also back been before being both call could does done each
+even every find from give have here into just keep know last like look made make many more most much
+must need next only other over said same show some still such take than that their them then there
+these they this those time tool tools used user uses using very want what when where which while will
+with would your the and for you can get set list name names item items open close start stop
+please thing things okay right now""".split())
+
 # The MCP server whose tools are always given up front (--lazy-mcp): the
 # desktop's own (nixbook-desktop-mcp), the agent's hands and eyes.
 DESKTOP_SERVER = "desktop"
@@ -495,6 +517,7 @@ class Options:
         self.lazy_mcp = 0
         self.learn = False
         self.quiet_steps = False
+        self.finish = False
         self.resolve = False
         self.verify = False
         self.trust = False
@@ -629,6 +652,8 @@ class Options:
             self.core_tools = True
         elif name == "--quiet-steps":
             self.quiet_steps = True
+        elif name == "--finish":
+            self.finish = True
         elif name in ("--tool-result-max", "--max-tokens"):
             try:
                 n = int(v)
@@ -1131,14 +1156,51 @@ class Mcp:
         for opener, key in self.openers.items():
             names = [i["tool"] for i in self.lazy.get(key, {}).values()]
             server, group = self.lazy_of.get(key, (key, ""))
+            direct = (" Or call one of them at once by its full name (mcp__" + server + "__TOOL), "
+                      "without loading them first.")
             if group:
-                desc = f"Load the {group} tools: {', '.join(names)}."
+                desc = f"Load the {group} tools: {', '.join(names)}." + direct
             else:
                 hint = self.instructions.get(server, "")[:300]
                 desc = (f"Get the tools of {server}, one of the user's apps ({len(names)} tools: "
-                        f"{', '.join(names[:12])}…), to use them in your next steps." + (f" {hint}" if hint else ""))
+                        f"{', '.join(names[:12])}…), to use them in your next steps." + direct + (f" {hint}" if hint else ""))
             out.append({"name": opener, "description": desc, "input_schema": {"type": "object", "properties": {}}})
         return out
+
+    def prefetch(self, text, limit=2):
+        """The waiting servers and groups the user's words call for, opened
+        before the first call instead of after a round trip through their
+        open_tools__ (a model call each): the server's or group's name
+        ("jellyfin", "notifications"), or a word only its tools' names have
+        ("watching": continue_watching). At most LIMIT, best first."""
+        def stem(w):
+            return w[:-1] if len(w) > 4 and w.endswith("s") else w
+        # The user's words, not the shell's note of the time and the app in
+        # front ("[Current date & time: …; Focused app: …]").
+        mine = re.sub(r"\[[^\]]*(?:Focused app|Current date)[^\]]*\]", " ", str(text or ""))
+        said = {stem(w) for w in re.findall(r"[a-zà-ÿ0-9]{4,}", mine.lower())} - PREFETCH_SKIP
+        if not said or not self.lazy:
+            return []
+        bags = {}
+        for key, found in self.lazy.items():
+            server, group = self.lazy_of.get(key, (key, ""))
+            names = {stem(w) for w in re.findall(r"[a-z0-9]{4,}", f"{server if not group else ''} {group}".lower())}
+            # Its tools' names only: their descriptions are prose, full of
+            # words any request has.
+            words = set()
+            for info in found.values():
+                words |= {stem(w) for w in re.findall(r"[a-z0-9]{5,}", info["tool"].lower().replace("_", " "))}
+            bags[key] = (names - PREFETCH_SKIP, words - PREFETCH_SKIP)
+        seen = {}
+        for _, words in bags.values():
+            for w in words:
+                seen[w] = seen.get(w, 0) + 1
+        scored = []
+        for key, (names, words) in bags.items():
+            only = {w for w in words if seen[w] == 1} & said
+            if names & said or only:
+                scored.append((2 * len(names & said) + len(only), key))
+        return [key for _, key in sorted(scored, reverse=True)[:limit]]
 
     def open(self, key):
         """What waits behind KEY (a lazy server, a desktop group) offered from
@@ -1920,6 +1982,11 @@ def content_text(content):
     return "\n".join(str(b.get("text") or "") for b in content or [] if b.get("type") == "text")
 
 
+def result_text(result):
+    """A tool_result's text (its content: a string or blocks)."""
+    return content_text(result.get("content")).strip()
+
+
 def prepend(content, text):
     """TEXT before a user message's content."""
     if isinstance(content, str):
@@ -2052,10 +2119,13 @@ class Agent:
                 if self.wrapped else {k: v for k, v in self.schema.items() if k != "$schema"}
             tools.append({"name": STRUCTURED, "description": "Give your final answer, as the JSON the caller "
                           "asked for. Call it once, last, when the task is done.", "input_schema": schema})
-        elif self.opts.verify:
-            # From the first call: the check doesn't change the tools (the
-            # prompt cache stays valid).
-            tools.append(VERIFY_SPEC)
+        else:
+            if self.opts.verify:
+                # From the first call: the check doesn't change the tools (the
+                # prompt cache stays valid).
+                tools.append(VERIFY_SPEC)
+            if self.opts.finish:
+                tools.append(FINISH_SPEC)
         self.tools = tools
 
     def build_system(self):
@@ -2118,7 +2188,7 @@ class Agent:
 
     def init_event(self):
         self.emit({"type": "system", "subtype": "init", "cwd": self.cwd, "session_id": self.session_id,
-                   "model": self.model, "tools": [t["name"] for t in self.tools if t["name"] not in (STRUCTURED, VERIFY)],
+                   "model": self.model, "tools": [t["name"] for t in self.tools if t["name"] not in (STRUCTURED, VERIFY, FINISH)],
                    "mcp_servers": self.mcp.status, "permissionMode": self.opts.permission_mode or "default",
                    "apiKeySource": "nixbook-model-provider"})
 
@@ -2213,7 +2283,7 @@ class Agent:
             shown = info["tool"] if info["server"] == DESKTOP_SERVER else f"{info['server']}: {info['tool']}"
             return {"tool": info["tool"], "shown": shown, "read_only": info.get("read_only", False),
                     "server": info["server"], "group": info.get("group", "")}
-        if name in self.mcp.openers or name == VERIFY:
+        if name in self.mcp.openers or name in (VERIFY, FINISH):
             return {"tool": name, "shown": name, "read_only": True, "server": self.mcp.openers.get(name, ""),
                     "group": ""}
         return {"tool": name, "shown": name, "read_only": False, "server": "", "group": ""}
@@ -2310,7 +2380,7 @@ class Agent:
         """What becomes of a call: ("run", None, ""), ("refuse", why,
         status) or ("ask", None, "") — the user's OK needed first."""
         name, args = call.get("name", ""), call.get("input") or {}
-        if name == VERIFY:
+        if name in (VERIFY, FINISH):
             return "run", None, ""
         why = self.made_up_name(name, args)
         if why:
@@ -2419,6 +2489,9 @@ class Agent:
         if name == VERIFY:
             # Offered for the checks; the model's own word isn't one.
             return {"type": "tool_result", "tool_use_id": call["id"], "content": "noted"}
+        if name == FINISH:
+            # Decided once the message's other steps are done (loop()).
+            return {"type": "tool_result", "tool_use_id": call["id"], "content": FINISHED}
         key = self.mcp.openers.get(name)
         if key is None and name not in self.mcp.tools:
             # A tool of a group not loaded yet, called by its name: loaded.
@@ -2482,7 +2555,7 @@ class Agent:
         step = {"id": call["id"], "tool": m["shown"], "bare": m["tool"], "server": m["server"],
                 "summary": nixbook_ai.step_summary(self.privacy.unmask_args(args)),
                 "status": "run", "result": "", "read_only": self.reads(name, args)}
-        if name not in self.mcp.openers and name != VERIFY:
+        if name not in self.mcp.openers and name not in (VERIFY, FINISH):
             self.steps.append(step)
         return step
 
@@ -2904,10 +2977,33 @@ class Agent:
                 break
             self.save()
             results = self.run_tools(calls, early=early)
+            fin = next((c for c in calls if c.get("name") == FINISH), None) if self.opts.finish else None
+            answer = str(((fin or {}).get("input") or {}).get("answer") or "").strip()
+            done = bool(fin) and bool(answer) and not cut_note and not any(
+                r.get("is_error") or result_text(r) in (DENIED, UNANSWERED)
+                for r in results if r.get("tool_use_id") != fin.get("id"))
+            if fin and not done:
+                results = [dict(r, content=NOT_FINISHED) if r.get("tool_use_id") == fin.get("id") else r
+                           for r in results]
             if cut_note:
                 results = results + [{"type": "text", "text": cut_note}]
             self.messages.append({"role": "user", "content": results})
             self.emit({"type": "user", "message": {"role": "user", "content": results}, "parent_tool_use_id": None})
+            if done:
+                # The answer given with the last steps: shown now, as a
+                # message of its own (the conversation reads as usual).
+                msg = {"content": [{"type": "text", "text": answer}], "stop_reason": "end_turn", "usage": {},
+                       "model": self.model}
+                self.messages.append({"role": "assistant", "content": [{"type": "text", "text": answer}]})
+                if self.opts.partial and self.opts.output_format == "stream-json":
+                    nixbook_ai.synthesize(msg, lambda ev: self.emit({"type": "stream_event", "event": ev,
+                                                                     "parent_tool_use_id": None}))
+                self.emit({"type": "assistant", "message": {"id": f"msg_{uuid.uuid4().hex[:24]}", "type": "message",
+                                                            "role": "assistant", "model": self.model, **msg},
+                           "parent_tool_use_id": None})
+                result = answer
+                self.save()
+                break
             self.save()
         return result, subtype, error, structured, turns
 
@@ -2961,6 +3057,10 @@ class Agent:
         if not as_blocks(content):
             content = "(empty message)"
         text = content_text(content)
+        # The waiting tools this request plainly needs: offered now, not
+        # after an open_tools__ round trip.
+        for key in self.mcp.prefetch(text):
+            self.open_lazy(key)
         result, subtype, error, structured, turns = "", "success", False, None, 0
         check = None
         gate = None

@@ -739,8 +739,8 @@ Singleton {
             + (desktop || !(Config.options.ai.includeSystemContext ?? true) ? ""
                 : "\n\n(machine_help isn't available now: the desktop tools are off; answer from the summary and your own knowledge.)")
             + (bubble
-                ? "\n\nYou are Muse, answering in your speech bubble on the user's desktop (they may be talking to you out loud): answer like a chat, in one to three short sentences, plain words, no headings or tables. While you work, don't narrate each step or say the same thing twice: at most one short line before you start, then your answer once at the end (what was done, or what went wrong). Everything you write is shown and may be read out loud: never write notes or plans to yourself, and give no technical details (ids, tool names, how you did it) unless asked."
-                : "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short, and don't narrate each step while you work; never write notes or plans to yourself in the chat.")
+                ? "\n\nYou are Muse, answering in your speech bubble on the user's desktop (they may be talking to you out loud): answer like a chat, in one to three short sentences, plain words, no headings or tables. While you work, don't narrate each step or say the same thing twice: at most one short line before you start, then your answer once at the end (what was done, or what went wrong). Everything you write is shown and may be read out loud: never write notes or plans to yourself, and give no technical details (ids, tool names, how you did it) unless asked. A tool's reply already says whether it worked (and what is in front after): don't call another tool to check, and call independent steps together in one message."
+                : "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short, and don't narrate each step while you work; never write notes or plans to yourself in the chat. A tool's reply already says whether it worked: don't call another tool to check, and call independent steps together in one message.")
             + (privacy ? " " + root.privacyPrompt : "")
             + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
             + (desktop ? " You can see and drive the user's desktop with the desktop tools." : "")
@@ -794,7 +794,7 @@ Singleton {
         const maskedSystem = { shell: '"$system"' };
         const builtins = [...configured, ...readTools, ...writeTools, ...shellTools];
         const disallowed = ["Bash", "Edit", "Write", ...fileTools].filter(t => !builtins.includes(t));
-        let args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--quiet-steps",
+        let args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--quiet-steps", "--finish",
             "--strict-mcp-config", "--append-system-prompt", privacy ? maskedSystem : system,
             ...(privacy ? ["--privacy"] : []),
             ...(confined ? ["--sandbox", JSON.stringify(sandbox)] : []),
@@ -824,7 +824,9 @@ Singleton {
         // ai.agent.model.
         const agentModel = bubble ? (Config.options.ai.routing?.quick ?? "small") : (Config.options.ai.agent.model ?? "");
         if (agentModel.length > 0) args.push("--model", agentModel);
-        const agentEffort = bubble ? (Config.options.ai.quick?.effort ?? "low") : (Config.options.ai.agent.effort ?? "");
+        // Low unless set: Meta's models always think, and with no effort
+        // they think at length (measured: 1.9–3.1 s a step against 0.9–1.5 s).
+        const agentEffort = bubble ? (Config.options.ai.quick?.effort || "low") : (Config.options.ai.agent.effort || "low");
         if (/^[a-z]+$/.test(agentEffort)) args.push("--effort", agentEffort);
         // One core for both (meta-agent): before each turn the context
         // broker's block for this surface (what the user is doing, the

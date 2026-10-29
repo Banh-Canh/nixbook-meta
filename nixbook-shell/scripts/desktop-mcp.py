@@ -8925,6 +8925,26 @@ CONTEXT_FLOOR_SURFACES = ("bubble", "chat")
 CONTEXT_MUSIC_WORDS = {"music", "song", "songs", "play", "playing", "listen", "track", "album", "artist", "playlist",
                        "musique", "chanson", "ecouter", "jouer", "musik", "lied", "spielen", "horen", "nhac", "bai"}
 CONTEXT_ACTIVITY_LINES = 20
+# The windows open on the user's desktop, for the surfaces where the user
+# waits on an order (bubble, chat): "close Firefox" acts in the first call,
+# with no list_windows step. Titles kept short; the caller masks.
+CONTEXT_WINDOWS_MAX = 900
+CONTEXT_WINDOWS_SURFACES = ("bubble", "chat")
+
+
+def context_windows():
+    """One line per window, the focused first: id, app, workspace, title."""
+    if not os.environ.get("NIRI_SOCKET") and not os.environ.get("WAYLAND_DISPLAY"):
+        return []
+    ws = {w.get("id"): w for w in niri_json("workspaces") or []}
+    rows = sorted(niri_json("windows") or [], key=lambda w: (not w.get("is_focused"), w.get("workspace_id") or 0))
+    out = []
+    for w in rows[:20]:
+        space = ws.get(w.get("workspace_id")) or {}
+        where = f"workspace {space.get('idx')}" + (f" on {space.get('output')}" if space.get("output") else "")
+        out.append(f"- id {w.get('id')}: {w.get('app_id') or '?'} — {short(str(w.get('title') or ''), 60)}"
+                   f" ({where}{', focused' if w.get('is_focused') else ''}{', floating' if w.get('is_floating') else ''})")
+    return out
 
 
 def fact_text(value, limit=200):
@@ -9028,6 +9048,15 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
             term = None
         if term and term[1]:
             term_text = fit_lines(term[0], term[1], min(TERMINAL_CONTEXT_MAX, budget // 2))
+    win_text = ""
+    if surface in CONTEXT_WINDOWS_SURFACES and "windows" in cfg["tools"]:
+        try:
+            win_text = fit_lines("Open windows (ids for the window tools):", context_windows(),
+                                 min(CONTEXT_WINDOWS_MAX, budget // 3))
+        except Exception as e:  # never in the way of the rest
+            log(f"context build: windows: {e!r}")
+        if win_text:
+            budget -= len(win_text) + 2
             if term_text:
                 budget -= len(term_text) + 2
 
@@ -9113,6 +9142,9 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
         carry = allowed - (len(text_) + sep if text_ else 0)
         if text_:
             sections.append({"name": name, "text": text_})
+    # After the facts: the terminal in front, then the windows.
+    if win_text:
+        sections.insert(1 if sections and sections[0]["name"] == "facts" else 0, {"name": "windows", "text": win_text})
     if term_text:
         sections.insert(1 if sections and sections[0]["name"] == "facts" else 0, {"name": "terminal", "text": term_text})
     kept = {ln for s in sections for ln in s["text"].splitlines()}

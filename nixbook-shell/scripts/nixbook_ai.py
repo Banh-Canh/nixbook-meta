@@ -860,6 +860,10 @@ def call(system, messages, *, model="small", effort=None, tools=None, tool_choic
             body["tools"] = tools
         if tool_choice:
             body["tool_choice"] = tool_choice
+        # "minimal" refused (Meta's Messages API): its floor, "low", not
+        # nothing at all — no effort means the model's own, longer thinking.
+        if effort == "minimal" and not _tuning_ok(p, model_id, "minimal") and _tuning_ok(p, model_id, "low"):
+            effort = "low"
         tuned = bool(effort) and _tuning_ok(p, model_id, effort) and not forced
         if tuned:
             body["thinking"] = {"type": "adaptive"}

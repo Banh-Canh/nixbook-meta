@@ -2451,13 +2451,12 @@ ContentPage {
                 enabled: !nixManaged
                 text: Translation.tr("Thinking effort (low: quicker steps on the desktop)")
                 icon: "speed"
-                currentValue: Config.options.ai.agent.effort
+                currentValue: Config.options.ai.agent.effort || "low"
                 onSelected: newValue => { Config.options.ai.agent.effort = newValue }
                 options: [
                     { displayName: Translation.tr("Low"), icon: "bolt", value: "low" },
                     { displayName: Translation.tr("Medium"), icon: "tune", value: "medium" },
-                    { displayName: Translation.tr("High"), icon: "psychology", value: "high" },
-                    { displayName: Translation.tr("Default"), icon: "auto_awesome", value: "" }
+                    { displayName: Translation.tr("High"), icon: "psychology", value: "high" }
                 ]
             }
 

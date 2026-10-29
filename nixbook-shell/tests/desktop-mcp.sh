@@ -4266,7 +4266,9 @@ echo '{"time": "09:12", "weather": {"temp": "12°C", "sky": "rain"}, "battery": 
 printf '09:01 Firefox: GitHub\n09:05 kitty: nvim flake.nix\n' >"$XDG_RUNTIME_DIR/nixbook-shell/recent.txt"
 call remember_about_user '{"topic": "me", "kind": "profile", "text": "Lives in Lyon, works as a nurse"}' >/dev/null
 out=$(python3 "$mcp" context build --for bubble --query "put on something calm")
-expect_eq "broker: sections in priority order" "facts corrections preferences personal desktop activity" "$(jq -r '[.sections[].name] | join(" ")' <<<"$out")"
+expect_eq "broker: sections in priority order" "facts windows corrections preferences personal desktop activity" "$(jq -r '[.sections[].name] | join(" ")' <<<"$out")"
+expect_contains "broker: the open windows, ids for the window tools" "$(jq -r '.sections[] | select(.name=="windows") | .text' <<<"$out")" "- id "
+expect_eq "broker: no windows for a background pass" "" "$(python3 "$mcp" context build --for triage --query calm | jq -r '.sections[] | select(.name=="windows") | .name')"
 expect_contains "broker: the shell's facts" "$(jq -r .text <<<"$out")" "- Weather: temp: 12°C, sky: rain"
 expect_contains "broker: the correction for a similar request" "$(jq -r '.sections[] | select(.name=="corrections") | .text' <<<"$out")" "the user meant: Bonobo on YouTube Music"
 expect_contains "broker: the preferences" "$(jq -r '.sections[] | select(.name=="preferences") | .text' <<<"$out")" "Likes calm jazz in the mornings (said 2 times)"

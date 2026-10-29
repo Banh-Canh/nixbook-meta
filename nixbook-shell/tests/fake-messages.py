@@ -25,6 +25,8 @@ Usage: fake-messages.py PORT_FILE REQUESTS_LOG [SCRIPTS_DIR]. Listens on
   - KIROSHITEST in it: Kiroshi's scan (its brief, labels, each item's options);
   - Full AI mode's "were the last words for Muse?" (FORYOU: yes, LOWCONF:
     yes but unsure, SLOWADDR: 6 s late, else no);
+  - text with NOMINIMAL: a 400 for output_config effort "minimal" only (Meta's
+    Messages API);
   - text with FAIL500: an HTTP 500; NOEFFORT: a 400 while output_config is
     sent; BIGTOKENS: a 400 naming max_tokens above 8192; PRIVATE: an answer
     naming the masked person back;
@@ -338,6 +340,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(500, {"error": {"message": "boom"}})
         if "NOEFFORT" in text and "output_config" in body:
             return self.send(400, {"error": {"message": "unknown parameter `output_config`"}})
+        # Meta's Messages API: every effort but "minimal".
+        if "NOMINIMAL" in text and (body.get("output_config") or {}).get("effort") == "minimal":
+            return self.send(400, {"error": {"message": "unsupported `output_config.effort` value `minimal`"}})
         if "BIGTOKENS" in text and body.get("max_tokens", 0) > 8192:
             return self.send(400, {"error": {"message": "max_tokens: 16000 > 8192, the maximum for this model"}})
         if self.path.startswith("/v1/messages") and self.scripted(body, text):

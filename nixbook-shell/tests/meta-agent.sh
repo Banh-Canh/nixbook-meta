@@ -260,6 +260,30 @@ expect_eq "quiet steps: every step still ran" "3" "$(jq -r 'select(.type == "use
 out=$(echo "AGENTTEST:quiet go" | agent -p --output-format stream-json --verbose --include-partial-messages --tools Glob)
 expect_eq "without it: every word streams" "Closing them all.Need to close rest.Still closing.All closed." "$(streamed <<<"$out")"
 
+# --finish: the answer given with the last steps ends the turn once they
+# succeed (no call only to say "done"); a failed step and it goes on.
+script finish "[[
+  {\"type\": \"text\", \"text\": \"Looking.\"},
+  {\"type\": \"tool_use\", \"id\": \"f1\", \"name\": \"Glob\", \"input\": {\"pattern\": \"*.txt\", \"path\": \"$tmp/rw\"}},
+  {\"type\": \"tool_use\", \"id\": \"f2\", \"name\": \"finish\", \"input\": {\"answer\": \"All found.\"}}
+], [{\"type\": \"text\", \"text\": \"Should not be asked.\"}]]"
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:finish go" | agent -p --output-format stream-json --verbose --include-partial-messages --tools Glob --add-dir "$tmp/rw" --finish --quiet-steps)
+expect_eq "finish: one model call" "1" "$(requests finish | wc -l | tr -d ' ')"
+expect_eq "finish: the answer is the result" "All found." "$(jq -r 'select(.type == "result") | .result' <<<"$out")"
+expect_eq "finish: shown as it streams, after the first line" "Looking.All found." "$(streamed <<<"$out")"
+expect_contains "finish: offered as a tool" "$(requests finish | head -n1 | jq -c '[.tools[].name]')" '"finish"'
+script finishfail "[[
+  {\"type\": \"tool_use\", \"id\": \"g1\", \"name\": \"Read\", \"input\": {\"file_path\": \"$tmp/home/secret.txt\"}},
+  {\"type\": \"tool_use\", \"id\": \"g2\", \"name\": \"finish\", \"input\": {\"answer\": \"Read it.\"}}
+], [{\"type\": \"text\", \"text\": \"I couldn't read it.\"}]]"
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:finishfail go" | agent -p --output-format json --tools Read --finish)
+expect_eq "finish: a failed step, and it goes on" "I couldn't read it." "$(jq -r .result <<<"$out")"
+expect_contains "finish: told why it wasn't shown" "$(requests finishfail | sed -n 2p)" "Not shown: a step above failed"
+out=$(echo "AGENTTEST:finish go" | agent -p --output-format json --tools Glob --add-dir "$tmp/rw")
+expect_eq "finish: not offered without the flag" "0" "$(requests finish | tail -n1 | jq '[.tools[].name | select(. == "finish")] | length')"
+
 # -- The model names -------------------------------------------------------------
 : >"$tmp/requests.log"
 for m in haiku small sonnet opus big muse-x; do echo "AGENTTEST:hello $m" | agent -p --model "$m" >/dev/null; done
@@ -631,7 +655,8 @@ script lazy '[[{"type": "tool_use", "id": "o1", "name": "open_tools__photos", "i
   [{"type": "tool_use", "id": "o2", "name": "mcp__photos__photo_12", "input": {"query": "beach"}}], [{"type": "text", "text": "Found."}]]'
 : >"$tmp/requests.log"
 : >"$tmp/desk-calls.log"
-out=$(echo "AGENTTEST:lazy find my beach photos" | agent -p --output-format json --mcp-config "$desk_config" --lazy-mcp 12)
+out=$(echo "AGENTTEST:lazy find my beach pictures" | agent -p --output-format json --mcp-config "$desk_config" --lazy-mcp 12)
+opener=$(requests lazy | sed -n 1p | jq -r '.tools[] | select(.name == "open_tools__photos") | .description')
 first=$(requests lazy | sed -n 1p | jq -c '[.tools[].name]')
 expect_contains "lazy: a big server as one tool" "$first" '"open_tools__photos"'
 expect_eq "lazy: not its tools up front" "0" "$(jq '[.[] | select(startswith("mcp__photos__"))] | length' <<<"$first")"
@@ -646,6 +671,18 @@ sid=$(jq -r .session_id <<<"$out")
 echo "AGENTTEST:lazy again" | agent -p --mcp-config "$desk_config" --lazy-mcp 12 --resume "$sid" >/dev/null
 expect_eq "lazy: what was opened stays open on --resume" "13" \
   "$(requests lazy | sed -n 1p | jq '[.tools[].name | select(startswith("mcp__photos__"))] | length')"
+expect_contains "lazy: its tools callable by their full name, the opener says" "$opener" "mcp__photos__TOOL"
+# Named in the request: offered from the first call, no open_tools__ round trip.
+script prefetch '[[{"type": "text", "text": "Found."}]]'
+: >"$tmp/requests.log"
+echo "AGENTTEST:prefetch find my beach photos [Current date & time: 10:00; Focused app: kitty]" | agent -p --mcp-config "$desk_config" --lazy-mcp 12 >/dev/null
+first=$(requests prefetch | sed -n 1p | jq -c '[.tools[].name]')
+expect_eq "prefetch: a server the request names, offered at once" "13 0" \
+  "$(jq '[.[] | select(startswith("mcp__photos__"))] | length' <<<"$first") $(jq '[.[] | select(. == "open_tools__photos")] | length' <<<"$first")"
+: >"$tmp/requests.log"
+echo "AGENTTEST:prefetch what time is it [Current date & time: 10:00; Focused app: photos]" | agent -p --mcp-config "$desk_config" --lazy-mcp 12 >/dev/null
+expect_eq "prefetch: not from the app in front, nor unasked" "1" \
+  "$(requests prefetch | sed -n 1p | jq '[.tools[].name | select(. == "open_tools__photos")] | length')"
 
 # -- The broker's context (--context-for) ---------------------------------------------------------
 : >"$tmp/requests.log"
