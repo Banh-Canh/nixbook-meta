@@ -12,7 +12,12 @@
 #   - started from a side panel conversation (--from-session, forked);
 #   - stopped; resumed after its runner was killed; an answer to a task
 #     whose runner is gone; the desktop-control pause stopping it;
-#   - at most ai.autonomy.maxTasks at once; policies.ai; list, show, clear.
+#   - at most ai.autonomy.maxTasks at once; policies.ai; list, show, clear;
+#   - plan and fan out: the big model's parts (checked), each a worker on its
+#     model at the same time (its activity written as it changes: a tool,
+#     typing), a part waiting for the one it needs and getting its result,
+#     the main model's merge, one notification; stopped with its workers;
+#     refused when off, from a task or a routine's run, or local only.
 # Needs bash, python3 and jq. Run: bash tests/muse-task.sh
 set -euo pipefail
 
@@ -338,6 +343,109 @@ expect_eq "a failing agent: its stderr in the task's error" "the agent stopped (
 expect_contains "a failing agent: and in the task's log" "$(cat "$run/nixbook-shell/tasks/$id.log")" "no model provider with an API key"
 until_dead "$id" || true
 mv "$tmp/provider.ok" "$tmp/bin/nixbook-model-provider"
+
+# -- Plan and fan out: the big model's parts, each its own worker at once, merged ----------------
+# fanw1 (main) searches then types, held so its activity can be seen; fanw3
+# (small) runs beside it; fanw2 needs fanw1's result, so it starts after it.
+script fanplan '{"steps": [[{"type": "text", "text": "…"}]], "system": {
+  "You split": [{"type": "tool_use", "id": "p1", "name": "structured_output", "input": {"parts": [
+    {"title": "Find 3 restaurants", "instruction": "AGENTTEST:fanw1 find three restaurants near the office", "model": "main"},
+    {"title": "Draft the invitation", "instruction": "AGENTTEST:fanw2 draft an invitation to the restaurant found", "model": "small", "needs": [0, 5]},
+    {"title": "Block Friday evening", "instruction": "AGENTTEST:fanw3 block my Friday evening", "model": "small", "needs": [2]},
+    {"title": "", "instruction": "no title: dropped", "model": "small"},
+    {"title": "Too many", "instruction": "a fifth part", "model": "small"}, {"title": "x", "instruction": "y", "model": "big"}]}}],
+  "You merge": [{"type": "tool_use", "id": "m1", "name": "structured_output", "input": {
+    "answer": "Dinner is set: Chez Paul, the invitation is drafted and Friday evening is blocked.",
+    "summary": "Restaurant found, invitation drafted, Friday blocked.", "done": ["restaurant", "invitation", "Friday"],
+    "failed": [], "needsYou": []}}]}}'
+script fanw1 '{"steps": [{"content": [{"type": "tool_use", "id": "s1", "name": "mcp__desktop__list_windows", "input": {}}], "hold": 1.5},
+  {"content": [{"type": "text", "text": "Found Chez Paul, Le Comptoir and Mamma Roma."}], "hold": 1.5}],
+  "system": {"You check whether": [{"type": "tool_use", "id": "v1", "name": "verification", "input": {"met": true, "note": "ok"}}]}}'
+script fanw2 '[[{"type": "text", "text": "Drafted: Join me at Chez Paul on Friday."}]]'
+script fanw3 '[{"content": [{"type": "text", "text": "Friday evening blocked."}], "delay": 0.5}]'
+export NIXBOOK_MUSE_PLAN_POLL=0.2
+: >"$tmp/notify.log"
+plan=$(mt fanout "AGENTTEST:fanplan research three restaurants, draft an invitation and block my Friday evening" | jq -r .id)
+expect_contains "fanout: the plan's id" "$plan" ""
+# until_jq ID FILTER VALUE: waits (15 s at most) for a field of the task.
+until_jq() {
+  for _ in $(seq 150); do
+    [ "$(field "$1" "$2")" = "$3" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+until_jq "$plan" '.parts | length' 4 || fail "fanout: planned" "$(mt show "$plan")"
+expect_eq "plan: the big model planned it" "big-model" "$(field "$plan" .plannerModel)"
+expect_eq "plan: the parts checked (no title dropped, at most 4, needs only earlier parts, big → main)" \
+  '[["Find 3 restaurants","main",[]],["Draft the invitation","small",[0]],["Block Friday evening","small",[]],["Too many","small",[]]]' \
+  "$(field "$plan" '[.parts[] | [.title, .model, .needs]] | tojson')"
+w1=""
+for _ in $(seq 150); do
+  w1=$(field "$plan" '.parts[0].worker // ""')
+  [ -n "$w1" ] && [ "$(field "$w1" .activity 2>/dev/null)" = tool ] && break
+  sleep 0.1
+done
+expect_eq "worker: using a tool while its call runs" "tool list_windows" "$(field "$w1" '"\(.activity) \(.doing)"')"
+until_jq "$w1" .activity typing || fail "worker: typing while its answer streams" "$(mt show "$w1")"
+pass "worker: typing while its answer streams"
+expect_eq "fan-out: the parts that don't wait run at once, beside the first" "running yes queued" \
+  "$(field "$plan" '.parts[0].status') $([ -n "$(field "$plan" '.parts[2].worker // ""')" ] && echo yes || echo no) $(field "$plan" '.parts[1].status')"
+expect_eq "worker: its plan, title, model and the provider's model id" "$plan Find 3 restaurants main main-model 0" \
+  "$(field "$w1" '"\(.parent) \(.title) \(.model) \(.modelId) \(.part)"')"
+expect_eq "list: workers with their parent and title" "$plan Find 3 restaurants" \
+  "$(mt list | jq -r --arg id "$w1" '.[] | select(.id == $id) | "\(.parent) \(.title)"')"
+until_status "$plan" done || fail "fan-out: done" "$(mt show "$plan")"
+expect_eq "fan-out: the merged answer" "Dinner is set: Chez Paul, the invitation is drafted and Friday evening is blocked." \
+  "$(field "$plan" .answer)"
+expect_eq "fan-out: the merged report" "Restaurant found, invitation drafted, Friday blocked." "$(field "$plan" .report.summary)"
+expect_eq "fan-out: merged by the main model" "main-model" "$(field "$plan" .mergerModel)"
+expect_eq "fan-out: every part done" "done done done done" "$(field "$plan" '[.parts[].status] | join(" ")')"
+w2=$(field "$plan" '.parts[1].worker')
+expect_eq "worker: each on its model" "main-model small-model small-model" \
+  "$(for n in fanw1 fanw2 fanw3; do requests "$n" | head -n1 | jq -r .model; done | paste -sd' ')"
+w2first=$(requests fanw2 | head -n1 | jq -c '.messages[0].content')
+expect_contains "worker: a part gets the result it needs" "$w2first" "Found Chez Paul, Le Comptoir and Mamma Roma."
+expect_contains "worker: told the whole order it is a part of" "$w2first" "one part of a bigger order"
+at() { jq -r --arg t "AGENTTEST:$1" 'select(.path == "/v1/messages" and (.body | tostring | contains($t))) | .t' "$tmp/requests.log" | $2 -n1; }
+expect_eq "worker: after the one it needs (its first request after the last of the other)" yes \
+  "$(awk -v a="$(at fanw2 head)" -v b="$(at fanw1 tail)" 'BEGIN { print (a > b ? "yes" : "no") }')"
+expect_eq "plan: asked of the big model" big-model \
+  "$(jq -r 'select(.path == "/v1/messages" and (.body | tostring | contains("You split"))) | .body.model' "$tmp/requests.log" | head -n1)"
+expect_eq "worker: the end of the plan's run, each worker done" "done done" "$(field "$w1" .status) $(field "$w2" .status)"
+merge=$(jq -c 'select(.path == "/v1/messages" and (.body | tostring | contains("You merge"))) | .body' "$tmp/requests.log" | tail -n1)
+expect_contains "merge: every part's result sent" "$(jq -c '.messages[0].content' <<<"$merge")" "Friday evening blocked."
+wait_notify 'Muse is done: AGENTTEST:fanplan'
+expect_eq "fan-out: one notification, the plan's (the workers say nothing when done)" 1 "$(grep -c 'Muse is done' "$tmp/notify.log")"
+for t in $(mt list | jq -r '.[] | select(.alive) | .id'); do until_dead "$t" || true; done
+
+# Stopped: the plan and its workers; a part alone is its own answer.
+script fanone '{"steps": [[{"type": "text", "text": "…"}]], "system": {"You split": [{"type": "tool_use", "id": "p1",
+  "name": "structured_output", "input": {"parts": [{"title": "Clean the list", "instruction": "AGENTTEST:taskapprove clean my list", "model": "small"}]}}]}}'
+plan=$(mt fanout "AGENTTEST:fanone clean my list" | jq -r .id)
+for _ in $(seq 150); do
+  w=$(field "$plan" '.parts[0].worker // ""')
+  [ -n "$w" ] && [ "$(field "$w" .status)" = waiting ] && break
+  sleep 0.1
+done
+expect_eq "fan-out: a worker's approval waits as a task's" "tasks" "$(field "$w" .approval.tool)"
+expect_eq "fan-out: stopped" '{"ok":true}' "$(mt stop "$plan")"
+until_status "$plan" stopped || fail "fan-out: the plan stops" "$(mt show "$plan")"
+until_status "$w" stopped || fail "fan-out: its worker stops with it" "$(mt show "$w")"
+pass "fan-out: its worker stops with it"
+until_dead "$plan" || fail "fan-out: the plan's runner ends"
+expect_contains "fan-out: a plan has no conversation" "$(mt answer "$plan" hello || true)" "answer the part"
+
+# Refused: turned off, from a task, policies.ai; and not counted in maxTasks.
+echo '{"ai": {"autonomy": {"fanOut": false}}}' >"$tmp/cfg/nixbook-shell/config.json"
+expect_contains "fan-out: off in Settings" "$(mt fanout "x and y" | jq -r .error || true)" "turned off"
+rm "$tmp/cfg/nixbook-shell/config.json"
+expect_contains "fan-out: never from a task" "$(NIXBOOK_MUSE_TASK_ID=abcdefabcdef mt fanout "x and y" | jq -r .error || true)" "can't fan out"
+expect_contains "fan-out: never from a routine's run" "$(NIXBOOK_DESKTOP_MCP_NO_TASKS=1 mt fanout "x and y" | jq -r .error || true)" "can't fan out"
+echo '{"policies": {"ai": 2}}' >"$tmp/cfg/nixbook-shell/config.json"
+expect_contains "fan-out: policies.ai local only" "$(mt fanout "x and y" | jq -r .error || true)" "policies.ai"
+rm "$tmp/cfg/nixbook-shell/config.json"
+for t in $(mt list | jq -r '.[] | select(.alive) | .id'); do until_dead "$t" || true; done
 
 # -- list, show, clear -------------------------------------------------------------------
 expect_eq "list: every task, newest first" "$(find "$tmp/state/nixbook-shell/tasks" -name '*.json' | wc -l | tr -d ' ')" \

@@ -126,6 +126,7 @@ Scope {
         chat.messageByID[id] = aiMessage;
         chat.messageIDs = [...chat.messageIDs, id];
         chat.lastActivity = Date.now();
+        return aiMessage;
     }
 
     function removeMessage(index) {

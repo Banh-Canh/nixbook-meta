@@ -62,6 +62,10 @@ QtObject {
     // cwd, exit, output, duration, visible, error}): "Ran `cmd` (exit N)"
     // with Show output (TerminalNotes).
     property var terminalRuns: []
+    // An order split into workers (nixbook-muse-task fanout): the plan's id,
+    // its live card under the message (PlanCard: the parts, each worker's
+    // figure, the merged answer).
+    property string planId: ""
     property var annotations: []
     property var annotationSources: []
     property list<string> searchQueries: []

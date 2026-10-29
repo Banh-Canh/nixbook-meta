@@ -22,17 +22,34 @@ trust ladder (--trust), and the user's --confirm floor stays.
     nixbook-muse-task resume ID       after a crash or a reboot: its session
                                       goes on
     nixbook-muse-task clear           finished tasks older than 7 days removed
+    nixbook-muse-task fanout TEXT     plan and fan out → {id} (the plan's): an
+                                      order of several parts split by the big
+                                      model into at most 4 sub-tasks, each run
+                                      as a task of its own at the same time,
+                                      their results merged into one answer
 
 State: $XDG_STATE_HOME/nixbook-shell/tasks/<id>.json (0600, replaced
 atomically): {id, text, status: running|waiting|done|failed|stopped,
 started, updated, steps: [{id, tool, summary, status}], approval?: {id,
 tool, summary, class}, question?, report?, answer?, sessionId, error?,
-told: […], trustSuggest: […]}. Control: $XDG_RUNTIME_DIR/nixbook-shell/
+told: […], trustSuggest: […], activity: thinking|typing|searching|tool,
+doing?}; a fan-out's worker also {parent, title, part, model: small|main,
+modelId}. Control: $XDG_RUNTIME_DIR/nixbook-shell/
 tasks/<id>.sock (0600, only this user's processes: SO_PEERCRED), one JSON
 line each way: {"type": "approval", "id", "allow"} | {"type": "answer",
 "text"} | {"type": "stop"} | {"type": "status"}.
 
-At most ai.autonomy.maxTasks (3) at once, an hour each run; nothing while
+A plan (kind "plan", `fanout`) is a task of its own with no agent: {id,
+kind, text, status: running|done|failed|stopped, phase: planning|working|
+merging, parts: [{title, instruction, model, modelId, needs, worker?,
+status: queued|running|waiting|done|failed|stopped|skipped}], plannerModel,
+mergerModel, answer?, report?, error?}. Its runner asks the big model
+(ai.routing.decisions) for the parts, starts every part whose `needs` are
+done while there is room, gives a part the results of those it needs, and
+once all are over asks the main model to merge them. Stopping it stops its
+workers; a task can't fan out again. Plans don't count in maxTasks.
+
+At most ai.autonomy.maxTasks (4) at once, an hour each run; nothing while
 policies.ai isn't 1 (Muse is an online model) or ai.autonomy.tasks is off.
 NIXBOOK_MUSE_TASK_SPAWN=plain: never systemd-run (tests). The runner's and
 its agent's output (stderr: what went wrong) in $XDG_RUNTIME_DIR/
@@ -62,7 +79,7 @@ import nixbook_ai  # noqa: E402
 
 RUN_LIMIT = float(os.environ.get("NIXBOOK_MUSE_TASK_LIMIT") or 3600)
 KEEP_DAYS = 7
-DEFAULT_MAX = 3
+DEFAULT_MAX = 4
 # A task just started whose runner hasn't taken its lock yet still counts.
 SPAWN_GRACE = 30
 LIVE = ("running", "waiting")
@@ -213,7 +230,7 @@ def settings():
     except (TypeError, ValueError):
         most = DEFAULT_MAX
     return {"cfg": cfg, "ai": ai, "policy": policies.get("ai", 1), "tasks": auto.get("tasks", True) is not False,
-            "max": most}
+            "fanOut": auto.get("fanOut", True) is not False, "max": most}
 
 
 def may_run(conf):
@@ -226,7 +243,8 @@ def may_run(conf):
 
 
 def room(conf, but=None):
-    running = [t for t in all_tasks() if t["id"] != but and active(t)]
+    # A plan runs no agent (its workers do): not counted.
+    running = [t for t in all_tasks() if t["id"] != but and t.get("kind") != "plan" and active(t)]
     if len(running) >= conf["max"]:
         return f"{len(running)} tasks are already running (at most {conf['max']}): wait for one, or stop one"
     return None
@@ -247,6 +265,12 @@ def notify(task, title, body):
                          stderr=subprocess.DEVNULL, env=nixbook_ai.child_env(), start_new_session=True)
     except OSError:
         pass
+
+
+def label(task):
+    """What a task is called where the user sees it: a worker's title (its
+    text is its whole instruction), else its text."""
+    return task.get("title") or task.get("text") or ""
 
 
 def short(text, n=80):
@@ -407,8 +431,10 @@ def agent_argv(task, conf, query_file):
                 system += "\n\nThe machine you run on:\n" + f.read()[:14000]
         except OSError:
             pass
+    # The deltas too (--include-partial-messages): which kind of block
+    # starts (text, a tool) is the worker's activity on the bar.
     argv = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-            "--strict-mcp-config", "--append-system-prompt", system,
+            "--include-partial-messages", "--strict-mcp-config", "--append-system-prompt", system,
             "--context-for", "chat", "--trust", "--confirm", "destructive", "--report", "--verify", "--learn",
             "--lazy-mcp", "12", "--max-turns", "80", "--journal-source", "task", "--task", task["id"]]
     # The web, and the allowed folders to read: what research needs. No
@@ -426,7 +452,8 @@ def agent_argv(task, conf, query_file):
     privacy = ai.get("privacy") if isinstance(ai.get("privacy"), dict) else {}
     if privacy.get("mask"):
         argv.append("--privacy")
-    model = str(agent.get("model") or "")
+    # A fan-out's worker runs the model its plan gave it.
+    model = str(task.get("model") or agent.get("model") or "")
     if model:
         argv += ["--model", model]
     effort = str(agent.get("effort") or "")
@@ -482,6 +509,14 @@ class Runner:
                 else:
                     self.task[k] = v
             save(self.task)
+
+    def act(self, activity, doing=""):
+        """What the agent is doing now (the bar's worker figure: thinking,
+        typing, searching, tool), written only when it changes: the shell
+        reads the file as it changes, never polls it."""
+        if self.task.get("activity") == activity and self.task.get("doing", "") == doing:
+            return
+        self.update(activity=activity, doing=doing)
 
     def step(self, tool_id, **fields):
         for s in self.task.get("steps") or []:
@@ -615,7 +650,20 @@ class Runner:
 
     def on_event(self, ev):
         t = ev.get("type")
-        if t == "system" and ev.get("session_id"):
+        if t == "stream_event":
+            # Only a block starting says something (a delta, nothing new).
+            inner = ev.get("event") if isinstance(ev.get("event"), dict) else {}
+            block = inner.get("content_block") if isinstance(inner.get("content_block"), dict) else {}
+            if inner.get("type") == "content_block_start":
+                if block.get("type") == "text":
+                    self.act("typing")
+                elif block.get("type") == "thinking":
+                    self.act("thinking")
+                elif block.get("type") == "tool_use":
+                    self.act(*tool_activity(block.get("name")))
+        elif t == "tool_started":
+            self.act(*tool_activity(ev.get("name")))
+        elif t == "system" and ev.get("session_id"):
             self.update(sessionId=ev["session_id"])
         elif t == "assistant":
             calls = [b for b in ((ev.get("message") or {}).get("content") or []) if b.get("type") == "tool_use"]
@@ -634,6 +682,8 @@ class Runner:
                     save(self.task)
         elif t == "user":
             results = (ev.get("message") or {}).get("content") or []
+            # Its results back: thinking about them (saved below).
+            self.task["activity"], self.task["doing"] = "thinking", ""
             with self.lock:
                 for r in results if isinstance(results, list) else []:
                     if isinstance(r, dict) and r.get("type") == "tool_result":
@@ -646,7 +696,7 @@ class Runner:
             what = f"{str(ev.get('tool') or '').replace('_', ' ')}" + (f" ({approval['summary']})"
                                                                       if approval["summary"] else "")
             notify(self.task, f"Muse needs you: {short(what, 90)}",
-                   f"Allow this step of “{short(self.task.get('text'), 120)}”?")
+                   f"Allow this step of “{short(label(self.task), 120)}”?")
         elif t in ("told", "trust_suggest"):
             key = "told" if t == "told" else "trustSuggest"
             with self.lock:
@@ -672,14 +722,16 @@ class Runner:
             if self.pending:
                 return
             self.update(status="failed", error=text or "the agent failed", **changes)
-            notify(self.task, "Muse couldn't finish a task", f"{short(self.task.get('text'), 120)}: {short(text, 300)}")
+            # A fan-out's worker: its plan says so once, with the others.
+            if not self.task.get("parent"):
+                notify(self.task, "Muse couldn't finish a task", f"{short(label(self.task), 120)}: {short(text, 300)}")
             self.finish()
             return
         if ev.get("clarify") or text.endswith("?"):
             # Its own question: the task waits for the user's answer.
             self.update(status="waiting", question=text, answer=text, **changes)
             if not self.pending:
-                notify(self.task, f"Muse needs you: {short(text, 120)}", short(self.task.get("text"), 200))
+                notify(self.task, f"Muse needs you: {short(text, 120)}", short(label(self.task), 200))
                 # Nothing to hold meanwhile (the agent, its MCP servers, a
                 # slot of maxTasks, for up to an hour, then "failed"): the
                 # answer resumes the session (cmd_answer, pendingAnswer).
@@ -690,7 +742,8 @@ class Runner:
             return
         self.update(status="done", answer=text, question=None, error=None, **changes)
         summary = (report or {}).get("summary") or (text.splitlines()[0] if text else "Done.")
-        notify(self.task, f"Muse is done: {short(self.task.get('text'), 90)}", short(summary, 400))
+        if not self.task.get("parent"):
+            notify(self.task, f"Muse is done: {short(self.task.get('text'), 90)}", short(summary, 400))
         self.finish()
 
     def finish(self):
@@ -762,6 +815,7 @@ class Runner:
             self.start_agent(conf, deadline)
             if first is not None:
                 self.say(first)
+                self.act("thinking")
             while True:
                 try:
                     kind, obj, reply = self.events.get(timeout=2)
@@ -778,7 +832,7 @@ class Runner:
                 if time.time() > deadline:
                     self.stopping = "limit"
                     self.update(status="failed", error="it took more than an hour: stopped", approval=None)
-                    notify(self.task, "Muse stopped a task", f"{short(self.task.get('text'), 120)}: it took more "
+                    notify(self.task, "Muse stopped a task", f"{short(label(self.task), 120)}: it took more "
                            "than an hour.")
                     threading.Thread(target=self.stop_agent, daemon=True).start()
                 elif allowed_at_start and not os.path.exists(control_marker()):
@@ -803,6 +857,360 @@ class Runner:
                 pass
             self.update(pid=None)
         return 0
+
+
+def tool_activity(name):
+    """(activity, doing) for a tool call: the web searched or read, or a
+    tool used (its name as the steps show it)."""
+    name = str(name or "")
+    if name in ("WebSearch", "WebFetch"):
+        return "searching", name
+    tool = re.sub(r"^mcp__desktop__", "", name)
+    tool = re.sub(r"^mcp__([^_].*?)__", r"\1: ", tool)
+    return "tool", tool
+
+
+# ── Plan and fan out ───────────────────────────────────────────────────────
+# One order of several parts ("research three restaurants, draft an
+# invitation and block my Friday evening"): the big model writes the parts,
+# each runs as a task of its own (its own agent, at the same time, each
+# asking the user as any task does), and the main model merges what they
+# found into one answer. The plan's runner only waits and starts: it runs no
+# agent, so it isn't counted in maxTasks.
+
+MAX_PARTS = 4
+PART_STATUSES_OVER = ("done", "failed", "stopped", "skipped")
+# Parts waiting for room or for the user (a question) may make a plan last
+# longer than one task.
+PLAN_LIMIT = float(os.environ.get("NIXBOOK_MUSE_PLAN_LIMIT") or RUN_LIMIT * 2)
+PLAN_POLL = float(os.environ.get("NIXBOOK_MUSE_PLAN_POLL") or 1.0)
+PLAN_SYSTEM = (
+    "You split an order the user gave Muse, their desktop assistant, into sub-tasks that separate agents work on "
+    "at the same time, each with the same tools as Muse (the web, the user's apps, calendar, tasks, notes…). "
+    f"At most {MAX_PARTS} parts, as few as the order needs; an order that is really one job is one part. Each "
+    "part: a title of a few words (shown on the user's screen: what it does, e.g. \"Find 3 restaurants\"), the "
+    "instruction the agent gets (complete by itself: that agent sees nothing else, so say everything it needs "
+    "from the order), and its model: \"small\" for a look-up or a single action, \"main\" for research, comparing "
+    "or writing. A part that needs another's result (an invitation naming the restaurant found) lists that "
+    "part's index (0-based, an earlier part) in `needs`: it runs after it, with its result. Steps that can't be "
+    "separated stay in one part. Never add parts the user didn't ask for.")
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "parts": {"type": "array", "maxItems": MAX_PARTS, "items": {
+            "type": "object",
+            "properties": {"title": {"type": "string"}, "instruction": {"type": "string"},
+                           "model": {"type": "string", "enum": ["small", "main"]},
+                           "needs": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["title", "instruction", "model"]}},
+    },
+    "required": ["parts"],
+}
+MERGE_SYSTEM = (
+    "You merge what several agents did for the parts of one order the user gave Muse, their desktop assistant, "
+    "into Muse's one short answer to the user: the outcome first, then what matters from each part (a few "
+    "sentences or a short list, names, times and links kept), and plainly what failed or still needs the user. "
+    "Speak as Muse (\"I found…\"), never of agents or parts. `summary`: one line. `done`, `failed`, `needsYou`: "
+    "short items (empty lists when none).")
+MERGE_SCHEMA = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}, "summary": {"type": "string"},
+                   "done": {"type": "array", "items": {"type": "string"}},
+                   "failed": {"type": "array", "items": {"type": "string"}},
+                   "needsYou": {"type": "array", "items": {"type": "string"}}},
+    "required": ["answer", "summary"],
+}
+
+
+def fan_out_refused(conf):
+    """Why no order may be fanned out now, or None."""
+    if os.environ.get("NIXBOOK_MUSE_TASK_ID") or os.environ.get("NIXBOOK_DESKTOP_MCP_NO_TASKS"):
+        return "a background task or a routine's run can't fan out"
+    why = may_run(conf)
+    if why:
+        return why
+    if not conf["fanOut"]:
+        return "splitting orders up is turned off (Settings > Desktop agents > Autonomy)"
+    return None
+
+
+def privacy_on(conf):
+    privacy = conf["ai"].get("privacy") if isinstance(conf["ai"].get("privacy"), dict) else {}
+    return bool(privacy.get("mask"))
+
+
+def clean_parts(raw, order):
+    """The model's parts, checked: at most MAX_PARTS, a title and an
+    instruction each, small or main, `needs` only earlier parts (so they run
+    one after the other, never in a loop)."""
+    parts = []
+    for p in raw if isinstance(raw, list) else []:
+        if not isinstance(p, dict):
+            continue
+        title = short(p.get("title"), 60)
+        instruction = str(p.get("instruction") or "").strip()[:4000]
+        if not title or not instruction:
+            continue
+        model = p.get("model") if p.get("model") in ("small", "main") else "main"
+        i = len(parts)
+        needs = sorted({n for n in p.get("needs") or [] if isinstance(n, int) and 0 <= n < i})
+        parts.append({"title": title, "instruction": instruction, "model": model, "needs": needs, "status": "queued"})
+        if len(parts) == MAX_PARTS:
+            break
+    return parts or [{"title": short(order, 60), "instruction": order, "model": "main", "needs": [],
+                      "status": "queued"}]
+
+
+def part_result(task):
+    """What a finished worker found, for the merge and the parts after it."""
+    return str((task.get("answer") if task.get("status") == "done" else task.get("error")) or "").strip()
+
+
+class PlanRunner:
+    """A plan's runner: plans, starts the parts as room allows, merges."""
+
+    def __init__(self, tid):
+        self.tid = tid
+        self.task = load(tid)
+
+    def update(self, **changes):
+        for k, v in changes.items():
+            if v is None:
+                self.task.pop(k, None)
+            else:
+                self.task[k] = v
+        save(self.task)
+
+    def provider(self):
+        try:
+            return nixbook_ai.Provider.from_env()
+        except nixbook_ai.AIError:
+            return None
+
+    def model_id(self, p, alias):
+        return p.model(alias) if p else alias
+
+    def plan(self, conf, p):
+        """The parts, from the big model (ai.routing.decisions): the text
+        masked on the way when the user asks for it, the names back after."""
+        route = nixbook_ai.routing(conf["cfg"])
+        model = route["decisions"]
+        order = self.task.get("text") or ""
+        self.update(plannerModel=self.model_id(p, model))
+        sent = nixbook_ai.mask(order) if privacy_on(conf) else order
+        nixbook_ai.sent_note("fan-out plan", self.task["plannerModel"], sent)
+        try:
+            got = nixbook_ai.answer(PLAN_SYSTEM, f"The order: {sent}", model=model, schema=PLAN_SCHEMA,
+                                    effort=route["decisionsEffort"], max_tokens=4000, provider=p)
+        except nixbook_ai.AIError as e:
+            # No plan: the whole order as one part, still done.
+            self.update(planError=str(e)[:300])
+            got = {}
+        if privacy_on(conf):
+            got = nixbook_ai.unmask_json(got)
+        parts = clean_parts((got or {}).get("parts"), order)
+        # The provider's model names, shown beside each part (Spark, Wonder).
+        for part in parts:
+            part["modelId"] = self.model_id(p, part["model"])
+        return parts
+
+    def worker_text(self, part, parts):
+        """The part's instruction, the results of those it needs, and the
+        whole order it is one part of."""
+        text = part["instruction"]
+        before = []
+        for n in part.get("needs") or []:
+            w = parts[n].get("worker")
+            try:
+                found = part_result(load(w)) if w else ""
+            except TaskError:
+                found = ""
+            if found:
+                before.append(f"- {parts[n]['title']}: {short(found, 1500)}")
+        if before:
+            text += "\n\nWhat was found before you, to use:\n" + "\n".join(before)
+        text += ("\n\n(This is one part of a bigger order the user gave: “" + short(self.task.get("text"), 600)
+                 + "”. Other parts are done at the same time by others: do only yours, and answer with what you "
+                 "found or did.)")
+        return text
+
+    def start_part(self, i, parts, conf, p):
+        part = parts[i]
+        worker = new_task(self.worker_text(part, parts), parent=self.tid, title=part["title"], part=i,
+                          model=part["model"], modelId=self.model_id(p, part["model"]))
+        part.update(worker=worker["id"], status="running", modelId=worker["modelId"])
+
+    def refresh(self, parts):
+        """Each started part's status from its worker's file; True when one
+        changed."""
+        changed = False
+        for part in parts:
+            if not part.get("worker") or part["status"] in PART_STATUSES_OVER:
+                continue
+            try:
+                w = load(part["worker"])
+            except TaskError:
+                status = "failed"
+            else:
+                status = w.get("status") or "running"
+                # Its runner gone while running (killed): failed, unless it
+                # waits for the user's answer (resumed by it).
+                if status == "running" and not active(w):
+                    status = "failed"
+            if status != part["status"]:
+                part["status"] = status
+                changed = True
+        return changed
+
+    def stop_workers(self, parts):
+        for part in parts:
+            if part.get("worker") and part["status"] not in PART_STATUSES_OVER:
+                stop_task(part["worker"])
+                part["status"] = "stopped"
+
+    def merge(self, conf, p, parts):
+        """One answer from the parts' results (the main model); a part alone
+        is its own answer."""
+        done = [pt for pt in parts if pt["status"] == "done"]
+        if len(parts) == 1 and done:
+            w = load(done[0]["worker"])
+            return part_result(w), w.get("report")
+        lines = []
+        for pt in parts:
+            try:
+                found = part_result(load(pt["worker"])) if pt.get("worker") else ""
+            except TaskError:
+                found = ""
+            state = {"done": "done", "skipped": "not done (a part it needed failed)"}.get(pt["status"], pt["status"])
+            lines.append(f"## {pt['title']} ({state})\n{short(found, 3000) or '(nothing said)'}")
+        prompt = f"The user's order: {self.task.get('text') or ''}\n\nWhat each part did:\n\n" + "\n\n".join(lines)
+        sent = nixbook_ai.mask(prompt) if privacy_on(conf) else prompt
+        self.update(phase="merging", mergerModel=self.model_id(p, "main"))
+        nixbook_ai.sent_note("fan-out merge", self.task["mergerModel"], sent)
+        try:
+            got = nixbook_ai.answer(MERGE_SYSTEM, sent, model="main", schema=MERGE_SCHEMA, max_tokens=4000,
+                                    provider=p)
+        except nixbook_ai.AIError as e:
+            # No merge: each part's result as it is.
+            self.update(mergeError=str(e)[:300])
+            return "\n\n".join(lines), None
+        if privacy_on(conf):
+            got = nixbook_ai.unmask_json(got)
+        report = {k: got.get(k) for k in ("summary", "done", "failed", "needsYou") if got.get(k)}
+        return str(got.get("answer") or "").strip(), report or None
+
+    def run(self):
+        lock = os.open(lock_path(self.tid), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            out({"error": "this plan already runs"})
+            return 1
+        self.task = load(self.tid)
+        conf = settings()
+        why = may_run(conf)
+        if why:
+            self.update(status="failed", error=why, spawned=None)
+            return 1
+        try:
+            os.unlink(stop_flag(self.tid))
+        except OSError:
+            pass
+        allowed_at_start = os.path.exists(control_marker())
+        self.update(status="running", pid=os.getpid(), error=None, spawned=None, runStarted=int(time.time()))
+        p = self.provider()
+        deadline = time.time() + PLAN_LIMIT
+        try:
+            parts = self.task.get("parts") or []
+            if not parts:
+                self.update(phase="planning")
+                parts = self.plan(conf, p)
+                self.update(parts=parts, phase="working")
+            while True:
+                if os.path.exists(stop_flag(self.tid)):
+                    self.stop_workers(parts)
+                    self.update(status="stopped", parts=parts)
+                    return 0
+                if allowed_at_start and not os.path.exists(control_marker()):
+                    # The panic key: its workers stop by themselves, the plan too.
+                    self.stop_workers(parts)
+                    self.update(status="stopped", error="desktop control was paused", parts=parts)
+                    return 0
+                changed = self.refresh(parts)
+                for i, part in enumerate(parts):
+                    if part["status"] != "queued":
+                        continue
+                    needs = [parts[n]["status"] for n in part.get("needs") or []]
+                    if any(s in ("failed", "stopped", "skipped") for s in needs):
+                        part["status"] = "skipped"
+                        changed = True
+                    elif all(s == "done" for s in needs) and not room(conf):
+                        self.start_part(i, parts, conf, p)
+                        changed = True
+                if changed:
+                    self.update(parts=parts)
+                if all(pt["status"] in PART_STATUSES_OVER for pt in parts):
+                    break
+                if time.time() > deadline:
+                    self.stop_workers(parts)
+                    self.update(parts=parts, timedOut=True)
+                    break
+                time.sleep(PLAN_POLL)
+            if not any(pt["status"] == "done" for pt in parts):
+                self.update(status="failed", phase=None, error="none of its parts got done")
+                notify(self.task, "Muse couldn't finish a task", short(self.task.get("text"), 200))
+                return 0
+            answer, report = self.merge(conf, p, parts)
+            self.update(status="done", phase=None, answer=answer, report=report)
+            summary = (report or {}).get("summary") or (answer.splitlines()[0] if answer else "Done.")
+            notify(self.task, f"Muse is done: {short(self.task.get('text'), 90)}", short(summary, 400))
+            return 0
+        except Exception as e:  # noqa: BLE001 — the plan said failed, whatever broke
+            self.update(status="failed", phase=None, error=f"the plan broke: {e}"[:300])
+            raise
+        finally:
+            self.update(pid=None)
+
+
+def stop_flag(tid):
+    """A plan asked to stop (its runner has no socket: it looks for this)."""
+    return os.path.join(run_dir(), check_id(tid) + ".stop")
+
+
+def new_task(text, **extra):
+    """A task made and its runner started."""
+    now = int(time.time())
+    task = {"id": uuid.uuid4().hex[:12], "text": text[:8000], "status": "running", "started": now, "updated": now,
+            "steps": [], "sessionId": str(uuid.uuid4()), "runs": 0, **extra}
+    save(task)
+    spawn(task)
+    return task
+
+
+def stop_task(tid):
+    """A task stopped: its runner told, else its state marked."""
+    task = load(tid)
+    if task.get("kind") == "plan":
+        with open(stop_flag(tid), "w"):
+            pass
+        for part in task.get("parts") or []:
+            if part.get("worker"):
+                try:
+                    stop_task(part["worker"])
+                except TaskError:
+                    pass
+        if alive(tid):
+            return {"ok": True}
+        task = load(tid)
+    else:
+        reply = send(tid, {"type": "stop"})
+        if reply is not None:
+            return reply
+    if task.get("status") in LIVE:
+        task.update(status="stopped")
+        task.pop("approval", None)
+        save(task)
+    return {"ok": True}
 
 
 def control_marker():
@@ -837,20 +1245,34 @@ def cmd_start(args):
     why = may_run(conf) or room(conf)
     if why:
         raise TaskError(why)
-    now = int(time.time())
-    task = {"id": uuid.uuid4().hex[:12], "text": text[:8000], "status": "running", "started": now, "updated": now,
-            "steps": [], "sessionId": str(uuid.uuid4()), "runs": 0}
-    if from_session:
-        task["fromSession"] = from_session
-    save(task)
-    spawn(task)
+    task = new_task(text, **({"fromSession": from_session} if from_session else {}))
     out({"id": task["id"]})
+    return 0
+
+
+def cmd_fanout(args):
+    text = " ".join(args).strip()
+    if text == "-":
+        text = sys.stdin.read().strip()
+    if not text:
+        raise TaskError("what should Muse do? (fanout TEXT)")
+    conf = settings()
+    why = fan_out_refused(conf) or room(conf)
+    if why:
+        raise TaskError(why)
+    now = int(time.time())
+    plan = {"id": uuid.uuid4().hex[:12], "kind": "plan", "text": text[:4000], "status": "running",
+            "phase": "planning", "started": now, "updated": now, "parts": [], "runs": 0}
+    save(plan)
+    spawn(plan)
+    out({"id": plan["id"]})
     return 0
 
 
 def summary_of(t):
     return {"id": t["id"], "text": t.get("text") or "", "status": t.get("status"), "updated": t.get("updated"),
             "started": t.get("started"), "alive": alive(t["id"]),
+            **{k: t[k] for k in ("kind", "phase", "parent", "title", "activity") if t.get(k)},
             **({"approval": t["approval"]} if t.get("approval") else {}),
             **({"question": t["question"]} if t.get("question") and t.get("status") == "waiting" else {})}
 
@@ -881,6 +1303,8 @@ def cmd_answer(args):
     if len(args) < 2:
         raise TaskError("answer ID TEXT")
     tid, text = check_id(args[0]), " ".join(args[1:]).strip()
+    if load(tid).get("kind") == "plan":
+        raise TaskError("a plan has no conversation: answer the part that asks")
     if text == "-":
         text = sys.stdin.read().strip()
     if not text:
@@ -910,18 +1334,9 @@ def cmd_answer(args):
 
 
 def cmd_stop(args):
-    tid = check_id(args[0] if args else "")
-    reply = send(tid, {"type": "stop"})
-    if reply is not None:
-        out(reply)
-        return 0 if reply.get("ok") else 1
-    task = load(tid)
-    if task.get("status") in LIVE:
-        task.update(status="stopped")
-        task.pop("approval", None)
-        save(task)
-    out({"ok": True})
-    return 0
+    reply = stop_task(check_id(args[0] if args else ""))
+    out(reply)
+    return 0 if reply.get("ok") else 1
 
 
 def cmd_resume(args):
@@ -935,6 +1350,12 @@ def cmd_resume(args):
         raise TaskError(why)
     task.update(status="running", error=None)
     task.pop("approval", None)
+    if task.get("kind") == "plan":
+        # Its parts that didn't get done go again (new workers).
+        for part in task.get("parts") or []:
+            if part.get("status") in ("stopped", "failed", "skipped"):
+                part.update(status="queued", worker=None)
+        task.update(phase="working" if task.get("parts") else "planning")
     spawn(task)
     out({"ok": True, "id": tid})
     return 0
@@ -955,7 +1376,7 @@ def cmd_clear(_args):
 
 
 COMMANDS = {"start": cmd_start, "list": cmd_list, "show": cmd_show, "approve": cmd_approve, "answer": cmd_answer,
-            "stop": cmd_stop, "resume": cmd_resume, "clear": cmd_clear}
+            "stop": cmd_stop, "resume": cmd_resume, "clear": cmd_clear, "fanout": cmd_fanout}
 
 
 def main(argv):
@@ -965,7 +1386,17 @@ def main(argv):
     cmd, args = argv[0], argv[1:]
     try:
         if cmd == "run":
-            return Runner(check_id(args[0] if args else "")).run()
+            tid = check_id(args[0] if args else "")
+            if load(tid).get("kind") == "plan":
+                # The plan calls the model itself: the provider's settings
+                # first (this run again through nixbook-model-provider when
+                # `env` gave none), before its lock is taken.
+                try:
+                    nixbook_ai.Provider.from_env()
+                except nixbook_ai.AIError as e:
+                    nixbook_ai.ensure_provider(["run", tid], script=os.path.realpath(__file__), why=str(e))
+                return PlanRunner(tid).run()
+            return Runner(tid).run()
         if cmd not in COMMANDS:
             raise TaskError(f"unknown command: {cmd}")
         return COMMANDS[cmd](args)

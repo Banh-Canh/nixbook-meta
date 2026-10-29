@@ -339,7 +339,7 @@ The `desktopControl` bar widget has a button for each thing it does, each with i
 - **Something for you** (a speech bubble with how many are unread, only then): click to read it in Muse's bubble, right-click for not now.
 - **Desktop control**: a **pause** button while agents may act (faint when idle, pulsing while one acts; its tooltip names the last agent and tool), a **red play** button while paused. Click pauses or allows every agent.
 - **Where agents work** (a monitor, or a window icon while they're on [their own desktop](./agent-desktop)): click switches.
-- **Background tasks** (a list with a count, only while [tasks](#background-tasks) run or wait for you; it breathes, with a hand, while one waits for your OK or an answer): hover for their status, click to see them in the side panel's **Muse** tab.
+- **Background tasks** (only while [tasks](#background-tasks) run, wait for you or just ended): a little worker each, the model it runs under it (Spark, Wonder) — typing while it writes, a magnifier while it searches the web, a gear while it uses a tool, an hourglass and a pulse while it waits for your OK or an answer, cheering when done, slumping when it failed; an order [split up](#split-it-up) shows its workers side by side, and its plan being written or merged as one more. Hover one for its title and current step, click it to see it in the side panel's **Muse** tab.
 - **Fixing nixbook** (a wrench, only while it works): click to see it in Settings. Settings → Desktop agents has the same switches, the memory, and the Muse panel setup.
 
 ## Turning AI off
@@ -426,7 +426,7 @@ Ask Muse for something to happen on its own whenever something happens on the co
 
 ## Autonomy
 
-Muse can do more on its own, with you in charge: what it may do without asking is your choice, kind by kind, and what it did that way can be taken back. **Settings → Desktop agents → Autonomy** has a switch for each part below (`ai.autonomy.orders`, `ai.autonomy.trust`, `ai.autonomy.journal`, `ai.autonomy.tasks`, all on) and how many background tasks may run at once (`ai.autonomy.maxTasks`, 3). None of it runs with [AI off](#turning-ai-off), and the desktop-control pause stops it all.
+Muse can do more on its own, with you in charge: what it may do without asking is your choice, kind by kind, and what it did that way can be taken back. **Settings → Desktop agents → Autonomy** has a switch for each part below (`ai.autonomy.orders`, `ai.autonomy.trust`, `ai.autonomy.journal`, `ai.autonomy.tasks`, `ai.autonomy.fanOut`, all on) and how many background tasks may run at once (`ai.autonomy.maxTasks`, 4). None of it runs with [AI off](#turning-ai-off), and the desktop-control pause stops it all.
 
 ### Standing orders
 
@@ -448,9 +448,19 @@ Everything done without your OK on that very step (routines, standing orders, di
 
 ### Background tasks
 
-For something long (finding, comparing, preparing), ask Muse to do it in the background ("in the background, compare the three laptops I looked at and write me a summary"), or click **Do it in the background** under the bubble while it works on a long order (a long message, or three steps in): the bubble is free again and the task goes on by itself from there. Muse's `background_task` tool starts one only when you ask or agree. Each runs as a `nixbook-meta-agent` of its own (a user unit, `nixbook-muse-task-…`), with the desktop and your apps' MCP servers as in the side panel but no command line of its own and no file writes (a command through the [terminal tools](#terminal-coding) is asked like any risky step), an hour at most, 3 at once (`ai.autonomy.maxTasks`). Its steps go through the [trust ladder](#trust-ladder) and the journal; a risky step waits for you.
+For something long (finding, comparing, preparing), ask Muse to do it in the background ("in the background, compare the three laptops I looked at and write me a summary"), or click **Do it in the background** under the bubble while it works on a long order (a long message, or three steps in): the bubble is free again and the task goes on by itself from there. Muse's `background_task` tool starts one only when you ask or agree. Each runs as a `nixbook-meta-agent` of its own (a user unit, `nixbook-muse-task-…`), with the desktop and your apps' MCP servers as in the side panel but no command line of its own and no file writes (a command through the [terminal tools](#terminal-coding) is asked like any risky step), an hour at most, 4 at once (`ai.autonomy.maxTasks`). Its steps go through the [trust ladder](#trust-ladder) and the journal; a risky step waits for you.
 
 The side panel's **Muse** tab lists them with their status and steps: **Allow** / **No** for a step waiting for your OK, a field to answer its question, **Open** (its conversation in the side panel), **Stop**, and **Resume** for one cut short (a crash, a reboot). A notification from **Muse** says when one needs you or is done (its **Open** opens the tab); Muse never reacts to those. A task can't start another one, and agents can only list, show and stop tasks (their `background_tasks` tool): approving and answering are yours. `nixbook-muse-task list|show ID|stop ID|resume ID|clear` (`~/.local/state/nixbook-shell/tasks/`).
+
+#### Split it up
+
+An order of several parts ("research three restaurants, draft an invitation and block my Friday evening") can be done by several Muses at once. While Muse works on it in the bubble, the chip under it reads **Split it up** instead of **Do it in the background** when the order has several parts (clauses joined by commas or "and / then", in the four languages); Muse's `fan_out` tool does the same when you ask for it to be done in parallel (`nixbook-muse-task fanout TEXT`).
+
+1. **Plan**: the big model (`ai.routing.decisions`, Muse Wonder) writes at most 4 parts as JSON, `[{title, instruction, model: small|main, needs}]`: a short title shown on screen, an instruction complete by itself, the model it deserves (Spark for a look-up, the main model for research or writing), and the parts whose result it needs (only earlier ones: those run one after the other). The plan shows as a card in the bubble (and in the side panel's chat when it was asked there).
+2. **Workers**: each part runs as a background task of its own (its own `nixbook-meta-agent`, on its model, with the same trust ladder, `--confirm destructive` floor, journal and approvals as any task), all at once within `ai.autonomy.maxTasks` (the plan itself isn't counted; parts beyond the limit wait for room). A part that needs another's result starts once it is done, with that result in its instruction; one whose needed part failed is skipped. Each worker writes what its agent is doing (thinking, typing, searching, using a tool) to its task file as it changes, which the bar's figures and the plan card read: nothing is polled.
+3. **Merge**: once every part is over, the main model merges their results into one short answer and a report (done, failed, needs you), said in Muse's bubble (brought back if it was put away), with one notification. A part alone is its own answer.
+
+The **Muse** tab shows the plan as a group: the order, the merged answer at the top once there, each part's worker with its model and step, then each worker's own card (steps, Allow / No, its question). **Stop all** stops the plan and its workers, **Resume** runs again the parts that didn't get done. A task or a routine's run never fans out, nor with [AI off](#turning-ai-off) or background tasks off; turn it off alone with **Split an order of several parts into workers at once** (`ai.autonomy.fanOut`). What goes to the model is masked when you ask for it, the names shown back to you are the real ones.
 
 ## Reactivity
 

@@ -201,12 +201,14 @@ lib.runTests {
     expr = shellLib.pinnedSettings (evalSettings {
       ai.autonomy.trust = false;
       ai.autonomy.maxTasks = 2;
+      ai.autonomy.fanOut = false;
       ai.reactivity.triage = false;
       ai.reactivity.triggers.meetingSoon = false;
     });
     expected = {
       ai.autonomy.trust = false;
       ai.autonomy.maxTasks = 2;
+      ai.autonomy.fanOut = false;
       ai.reactivity.triage = false;
       ai.reactivity.triggers.meetingSoon = false;
     };
@@ -222,7 +224,8 @@ lib.runTests {
         trust = true;
         journal = true;
         tasks = true;
-        maxTasks = 3;
+        fanOut = true;
+        maxTasks = 4;
       }
       {
         triage = true;

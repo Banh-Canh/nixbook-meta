@@ -103,9 +103,11 @@ DEFAULT_CONFIG = {
                             "voice", "fullAi", "mascot", "journal", "trust", "orders", "reactor"],
     # Functions no agent calls on any target: the user's answers (a
     # background task's approval or question, an offer taken, an Undo, a
-    # trust level, a standing order turned on).
+    # trust level, a standing order turned on), and fanOut (an order split
+    # into workers: agents use fan_out, which refuses from a task or a
+    # routine's run).
     "shellIpcDenyFunctions": ["approve", "deny", "answer", "accept", "decline", "undo", "allow", "setTrust",
-                              "trustSet", "setLevel", "turnOn"],
+                              "trustSet", "setLevel", "turnOn", "fanOut"],
     "allowSuperKey": False,
     "maxTextLength": 4000,
     # A note written into the notes widget (it goes through a file, not the
@@ -18084,7 +18086,7 @@ def call_tool_now(ctx, name, args, session=None, meta=None):
 # a file, a list kept here): no error means it is done.
 SELF_VERIFIED = {
     "remember", "forget", "remind", "watch", "routine", "habits", "remember_about_user", "forget_about_user",
-    "save_layout", "standing_order", "background_task", "notify", "clipboard_set", "set_aside",
+    "save_layout", "standing_order", "background_task", "fan_out", "notify", "clipboard_set", "set_aside",
     "report_problem", "request_feature", "start_improvement", "delete_conversations",
     "clear_notification_history", "snooze_notification",
 }
@@ -18336,7 +18338,8 @@ INSTRUCTIONS = (
     "forget notes that turned out wrong or slow. \"Remind me when…\": remind. "
     "\"From now on, when…\" or \"every evening…\": standing_order (the user "
     "turns it on). Long multi-step work the user asks for or agrees to "
-    "(finding, comparing, preparing): background_task. How this machine is set "
+    "(finding, comparing, preparing): background_task; an order of several "
+    "independent parts done at once: fan_out. How this machine is set "
     "up (its how-tos, key bindings, packages, modules): machine_help. A tool's "
     "full guide: call it with help: true, or tool_help."
 )
@@ -19777,7 +19780,7 @@ def tasks_refused():
     obj({"text": {"type": "string", "description": "The task, in full"}}, ["text"]),
     brief=("Run a long multi-step task in the background when the user asks or agrees (finding, comparing, "
            "preparing…); not for quick actions. They follow it in Tasks, where it asks for approvals. The "
-           "whole task in `text`. Returns its id."),
+           "whole task in `text`. Returns its id. Parts at once: fan_out."),
 )
 def t_background_task(ctx, args):
     why = tasks_refused()
@@ -19792,6 +19795,39 @@ def t_background_task(ctx, args):
         raise ToolError("nixbook-muse-task didn't start it")
     return [text({"id": out["id"], "started": True,
                   "note": "running in the background: the user follows it in Tasks (it asks them there if needed)"})]
+
+
+@tool(
+    "fan_out",
+    "shell",
+    "Split an order of several independent parts into workers that run at "
+    "the same time in the background, when the user asks for it or agrees "
+    "(\"research three restaurants, draft an invitation and block my "
+    "Friday evening\"): the big model plans at most 4 parts, each runs as "
+    "a background task of its own (the bar shows them working), and their "
+    "results come back merged into one answer. One long job: "
+    "background_task; quick actions: do them yourself. The whole order in "
+    "`text`. Returns the plan's id.",
+    obj({"text": {"type": "string", "description": "The order, in full"}}, ["text"]),
+    brief=("Split an order of several independent parts into parallel background workers (at most 4), their "
+           "results merged into one answer, when the user asks or agrees. The whole order in `text`."),
+)
+def t_fan_out(ctx, args):
+    why = tasks_refused()
+    if not why and not autonomy_on("ai.autonomy.fanOut"):
+        why = "splitting orders up is off (Settings > Desktop agents > Autonomy)"
+    if why:
+        raise ToolError(f"refused: {why}")
+    order = as_str(args, "text", max_len=MUSE_TASK_TEXT_MAX)
+    if not order.strip():
+        raise ToolError("`text` is empty")
+    ctx.guard.check_rate()
+    out = muse_task("fanout", order)
+    if not isinstance(out, dict) or not out.get("id"):
+        raise ToolError("nixbook-muse-task didn't start it")
+    return [text({"id": out["id"], "started": True,
+                  "note": "planned and fanned out in the background: the bar shows the workers, the merged "
+                          "answer comes back to the user (the side panel's Muse tab shows how it goes)"})]
 
 
 @tool(

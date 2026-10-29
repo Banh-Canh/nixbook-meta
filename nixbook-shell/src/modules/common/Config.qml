@@ -109,6 +109,14 @@ Singleton {
                 agent.mcpServersOff = [...off, "seerr"];
             done.seerrOff = true;
         }
+        // A fan-out's parts are tasks too (up to 4 at once): the old default
+        // of 3 raised once.
+        if (!done.maxTasks4) {
+            const auto = root.options.ai.autonomy;
+            if (auto.maxTasks === 3 && !NixManaged.isPinned("ai.autonomy.maxTasks"))
+                auto.maxTasks = 4;
+            done.maxTasks4 = true;
+        }
     }
     property int readWriteDelay: 50 // milliseconds
     property bool blockWrites: false
@@ -531,13 +539,17 @@ Singleton {
                 // only by the user: Settings > Desktop agents > Autonomy);
                 // `journal`, what it did without asking, each with its Undo
                 // ("What Muse did"); `tasks`, long tasks run in the background
-                // (nixbook-muse-task), at most `maxTasks` at once.
+                // (nixbook-muse-task), at most `maxTasks` at once; `fanOut`,
+                // an order of several parts planned by the big model and
+                // split into workers running at once (each a task), their
+                // results merged into one answer.
                 property JsonObject autonomy: JsonObject {
                     property bool orders: true
                     property bool trust: true
                     property bool journal: true
                     property bool tasks: true
-                    property int maxTasks: 3
+                    property bool fanOut: true
+                    property int maxTasks: 4
                 }
                 // How fast it reacts (services/Reactor.qml): `triage`, plain
                 // code scores each notification and event first (no model):

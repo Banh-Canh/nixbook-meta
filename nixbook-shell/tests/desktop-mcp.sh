@@ -4757,6 +4757,7 @@ cat >"$tmp/muse-task" <<'EOF'
 printf '%s\n' "$*" >>"$STUB_CALLS.muse"
 case "$1" in
   start) echo '{"id": "t7"}' ;;
+  fanout) echo '{"id": "p9"}' ;;
   list) echo '[{"id": "t7", "text": "find flats", "status": "running", "updated": 1}]' ;;
   show) echo '{"id": "t7", "text": "find flats", "status": "waiting", "steps": [], "approval": {"id": "a1", "tool": "send_sms"}}' ;;
   stop) echo '{"ok": true}' ;;
@@ -4776,6 +4777,14 @@ expect_contains "background_tasks: no approving" "$(call background_tasks '{"act
 expect_eq "background tasks: no tool approves or answers" "" "$(python3 "$mcp" tools | jq -r '.[].name' | grep -E 'approve|answer|accept|undo|trust' || true)"
 expect_contains "background_task: not from a task" "$(NIXBOOK_MUSE_TASK_ID=t7 call background_task '{"text": "more"}')" "can't start another"
 expect_contains "background_task: not from a routine's run" "$(NIXBOOK_DESKTOP_MCP_NO_TASKS=1 call background_task '{"text": "more"}')" "can't start another"
+# Plan and fan out: the same rules, plus its own switch; a task never fans out.
+out=$(call fan_out '{"text": "research three restaurants and draft an invitation"}')
+expect_eq "fan_out: planned, the plan's id" "p9 true" "$(jq -r '"\(.id) \(.started)"' <<<"$out")"
+expect_eq "fan_out: through nixbook-muse-task fanout" "fanout research three restaurants and draft an invitation" "$(tail -n 1 "$calls.muse")"
+expect_contains "fan_out: not from a task" "$(NIXBOOK_MUSE_TASK_ID=t7 call fan_out '{"text": "more"}')" "can't start another"
+expect_contains "fan_out: no agent calls the shell's fanOut" "$(call shell_ipc '{"target": "museTasks", "function": "fanOut", "args": ["x"]}')" "fanOut"
+echo '{"ai": {"autonomy": {"fanOut": false}}}' >"$shellcfg"
+expect_contains "fan_out: off in Settings" "$(call fan_out '{"text": "x"}')" "splitting orders up is off"
 echo '{"ai": {"autonomy": {"tasks": false}}}' >"$shellcfg"
 expect_contains "background_task: off in Settings" "$(call background_task '{"text": "x"}')" "background tasks are off"
 echo '{"policies": {"ai": 2}}' >"$shellcfg"

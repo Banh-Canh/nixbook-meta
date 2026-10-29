@@ -26,9 +26,13 @@ import Quickshell
 //   hand while the user has taken it over). Click switches.
 // - Fixing nixbook (a wrench, services/SelfImprove.qml; only then): click
 //   opens it in Settings.
-// - Background tasks (a list with a count, services/MuseTasks.qml; only
-//   while some run or wait for the user): click opens them in the side
-//   panel's Muse tab; it breathes while one waits for an OK or an answer.
+// - Background tasks (services/MuseTasks.qml; only while some run, wait
+//   for the user or just ended): a little worker each (WorkerFigure.qml) —
+//   typing, searching, using a tool, waiting (pulsing) for an OK or an
+//   answer, cheering when done, slumping when it failed — with the model it
+//   runs under it; a fan-out's workers side by side, its plan being written
+//   or merged one too. Hover: its title and step; click opens it in the
+//   side panel's Muse tab.
 // - Looking at the screen (an eye; only then): pairing reads the screen's
 //   text now (Initiative.looking), never unseen. Click stops screen reading.
 Item {
@@ -356,57 +360,72 @@ Item {
             }
         }
 
-        // Background tasks running or waiting for the user.
-        AgentButton {
-            id: tasksButton
-            visible: MuseTasks.activeCount > 0
-            small: true
-            icon: MuseTasks.waiting.length > 0 ? "front_hand" : "pending_actions"
-            filled: true
-            tone: Appearance.colors.colPrimary
-            chip: Appearance.colors.colPrimary
-            onChip: Appearance.colors.colOnPrimary
-            iconOpacity: MuseTasks.waiting.length > 0 ? buttons.breatheTasks : 1
-            onClicked: MuseTasks.openList()
-            StyledText {
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.rightMargin: -1
-                text: String(MuseTasks.activeCount)
-                font.pixelSize: Appearance.font.pixelSize.smallest
-                font.weight: Font.Bold
-                color: Appearance.colors.colPrimary
-            }
-            StyledPopup {
-                hoverTarget: tasksButton
-                ColumnLayout {
-                    spacing: 4
-                    StyledPopupHeaderRow {
-                        icon: "pending_actions"
-                        label: Translation.tr("Background tasks")
+        // The background tasks at work: a little worker per task (a
+        // fan-out's workers side by side, the plan being written or merged
+        // too: MuseTasks.figures), showing what it does now and the model it
+        // runs. Hover: its title and its current step; click: its card in
+        // the side panel's Muse tab. The ids keep their delegates (and their
+        // animations) as the task files change.
+        GridLayout {
+            id: workers
+            visible: MuseTasks.figureIds.length > 0
+            columns: root.vertical ? 1 : Math.max(1, MuseTasks.figureIds.length)
+            rowSpacing: 0
+            columnSpacing: 0
+            Repeater {
+                model: ScriptModel {
+                    values: MuseTasks.figureIds
+                }
+                delegate: MouseArea {
+                    id: worker
+                    required property var modelData
+                    readonly property var figure: MuseTasks.figureOf(worker.modelData)
+                    implicitWidth: figureItem.implicitWidth + 2
+                    implicitHeight: figureItem.implicitHeight + 2
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: MuseTasks.openTask(worker.figure?.task ?? "")
+                    WorkerFigure {
+                        id: figureItem
+                        anchors.centerIn: parent
+                        figure: worker.figure
+                        tone: Appearance.colors.colOnLayer1
+                        accent: Appearance.colors.colPrimary
+                        bad: Appearance.m3colors.m3error
+                        size: Appearance.font.pixelSize.normal
                     }
-                    Repeater {
-                        model: [...MuseTasks.waiting, ...MuseTasks.running].slice(0, 4)
-                        delegate: StyledPopupValueRow {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            icon: modelData.status === "waiting" ? "front_hand" : "progress_activity"
-                            label: String(modelData.text ?? "").slice(0, 48)
-                            value: MuseTasks.statusText(modelData)
+                    StyledPopup {
+                        hoverTarget: worker
+                        ColumnLayout {
+                            spacing: 4
+                            StyledPopupHeaderRow {
+                                icon: worker.figure?.plan ? "account_tree" : "smart_toy"
+                                label: String(worker.figure?.title ?? "").slice(0, 60)
+                            }
+                            StyledPopupValueRow {
+                                Layout.fillWidth: true
+                                visible: (worker.figure?.modelId ?? "").length > 0
+                                icon: "memory"
+                                label: Translation.tr("Model")
+                                value: MuseTasks.modelName(worker.figure?.modelId ?? "")
+                            }
+                            StyledText {
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 320
+                                wrapMode: Text.WordWrap
+                                textFormat: Text.PlainText
+                                maximumLineCount: 4
+                                elide: Text.ElideRight
+                                text: String(worker.figure?.doing ?? "")
+                                color: Appearance.colors.colOnSurfaceVariant
+                            }
+                            Hint {
+                                text: Translation.tr("Click to see it in the side panel's Muse tab")
+                            }
                         }
-                    }
-                    Hint {
-                        text: Translation.tr("Click to see them in the side panel")
                     }
                 }
             }
-        }
-        property real breatheTasks: 1
-        SequentialAnimation on breatheTasks {
-            running: MuseTasks.waiting.length > 0
-            loops: Animation.Infinite
-            NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine }
-            NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine }
         }
 
         // Looking at the screen: pairing reads its text now.

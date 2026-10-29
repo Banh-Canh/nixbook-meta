@@ -668,6 +668,20 @@ Scope {
                         fontFamily: root.font
                         square: root.square
                     }
+                    // An order split into workers (plan and fan out): the plan
+                    // card under it, live — each part's worker at work, then
+                    // done (the merged answer is the message).
+                    PlanCard {
+                        Layout.fillWidth: true
+                        readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
+                        planId: last?.role === "assistant" ? (last?.planId ?? "") : ""
+                        visible: root.conversing && !threadList.visible && planId.length > 0 && !!MuseTasks.byId[planId]
+                        fg: root.fg
+                        accent: root.accent
+                        bg: root.bg
+                        fontFamily: root.font
+                        square: root.square
+                    }
                     // Muse in the terminal: a command waiting for the OK (in
                     // monospace, with its folder; Allow / No are the chips),
                     // the commands it ran ("Ran `cmd` (exit N)", Show output,

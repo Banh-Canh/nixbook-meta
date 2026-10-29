@@ -125,9 +125,11 @@ Singleton {
             return out;
         }
         // A long order Muse is on in the bubble: on in the background instead
-        // (nixbook-muse-task), the bubble free again.
+        // (nixbook-muse-task), the bubble free again; split up into workers
+        // at once when it has several parts.
         if (root.canBackground)
-            out.push({ label: Translation.tr("Do it in the background"), main: false, run: () => root.toBackground() });
+            out.push(root.canSplit ? { label: Translation.tr("Split it up"), main: false, run: () => root.toFanOut() }
+                : { label: Translation.tr("Do it in the background"), main: false, run: () => root.toBackground() });
         if (root.busy || root.clarifying) return out;
         if (root.paused) {
             out.push({ label: Translation.tr("Allow desktop control and retry"), main: true, run: () => root.allowControl() });
@@ -160,6 +162,73 @@ Singleton {
                 : Translation.tr("On it in the background: I'll tell you when it's done (the side panel's Muse tab shows how it goes)."),
                 "assistant");
         });
+    }
+
+    // Plan and fan out: an order of several parts ("find three restaurants,
+    // draft an invitation and block my Friday evening") planned by the big
+    // model and done by workers at once (nixbook-muse-task fanout); the plan
+    // card, then the merged answer, come back in this conversation.
+    readonly property bool canSplit: MuseTasks.canFanOut && MuseTasks.partsIn(root.convo.question) >= 2
+    function toFanOut() {
+        const chat = root.agentChat;
+        const order = String(root.convo.question ?? "").trim();
+        if (!chat || order.length === 0) return;
+        chat.stopResponse();
+        MuseTasks.fanOut(order, chat, (id, error) => {
+            if (error.length > 0)
+                chat.addMessage(Translation.tr("⚠ Couldn't split it up: %1").arg(error), "assistant");
+        });
+    }
+    // The plan written: its card in the conversation (the parts, each
+    // worker's figure, live); the merged answer once they are all over, with
+    // its report, the bubble brought back to say it. A plan Muse started
+    // itself (its fan_out tool) goes to the conversation that is answering.
+    function _planChat(plan) {
+        let chat = MuseTasks.chatOf(plan);
+        if (!chat && Date.now() / 1000 - Number(plan?.started ?? 0) < 300) {
+            chat = root.agentChat?.responding ? root.agentChat : (Ai.chats.find(c => c.responding) ?? null);
+            if (chat) MuseTasks._chats[plan.id] = chat;
+        }
+        return chat;
+    }
+    Connections {
+        target: MuseTasks
+        function onPlanned(plan) {
+            const chat = root._planChat(plan);
+            if (!chat) return;
+            const parts = plan.parts ?? [];
+            const by = MuseTasks.modelName(plan.plannerModel);
+            const lines = parts.map((p, i) => `${i + 1}. ${p.title}` + (p.modelId ? ` (${MuseTasks.modelLabel(p.modelId)})` : "")
+                + ((p.needs ?? []).length > 0 ? Translation.tr(", after %1").arg(p.needs.map(n => n + 1).join(", ")) : ""));
+            const head = by ? Translation.tr("%1 split it into %2 parts, working on them at once:").arg(by).arg(parts.length)
+                : Translation.tr("Split it into %1 parts, working on them at once:").arg(parts.length);
+            const m = chat.addMessage(`${head}\n${lines.join("\n")}`, "assistant");
+            if (m) {
+                m.planId = plan.id;
+                // The agent's session hears of it with the next message.
+                m.offSession = true;
+            }
+        }
+        function onPlanFinished(plan) {
+            const chat = root._planChat(plan);
+            if (!chat) return;
+            const said = plan.status === "done" ? String(plan.answer ?? "").trim()
+                : Translation.tr("⚠ Couldn't do it: %1").arg(String(plan.error ?? ""));
+            const m = chat.addMessage(said.length > 0 ? said : Translation.tr("Done."), "assistant");
+            if (!m) return;
+            m.planId = plan.id;
+            m.offSession = true;
+            const parts = plan.parts ?? [];
+            if (plan.report) {
+                chat.lastReport = Object.assign({ done: [], failed: [], needsYou: [] }, plan.report, {
+                    steps: parts.length, ok: parts.filter(p => p.status === "done").length,
+                    ko: parts.filter(p => p.status !== "done").length });
+                chat.lastReportMsg = m;
+            }
+            if (GlobalStates.sidebarLeftOpen && chat.isCurrent) return;
+            if (Initiative.holds(chat)) Initiative.chatAnswered(chat);
+            else Initiative.chatDone(chat);
+        }
     }
 
     // The mode a text gets by itself (ai.quick.defaultMode "auto"): an

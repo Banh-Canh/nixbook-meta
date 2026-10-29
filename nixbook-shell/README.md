@@ -894,8 +894,9 @@ on with a trial (said each run until 3 runs undone by nobody).
 
 Routine events added (Routines.qml): `music_silent` (no music for `minutes` while present, once a silence, held after the user's own stop until music plays, a break or an hour), `music_repeating` (the same song `times` in a row, a loop seen as the position jumping back to the start, or the same artist for `minutes` of play, a track with no artist counting none; once a streak, which a 5-minute stop ends; the agent run is told why it fired, and that it has no listening history to read; track_changed routines about a repeat, from before it, moved to it: memory version 4), `app_focused`, `day_start` (once a day: `routine_run`), `away`, `long_session`, `fullscreen_started|ended`, `dnd_on|off`, `charged`, `bluetooth_connected|disconnected`, `phone_connected|disconnected` (KDE Connect), `drive_connected|disconnected` (/run/media), `disk_low`, `rain` (OpenWeather 2xx–6xx), `screenshot`. `music_ended` waits 20 s. Routine ideas (`routine_idea`, `IDEA_SYSTEM`, daily, `initiative ideas`): personal entries (people by name only, contacts redacted), habits, music, cue names, routines, events and actions → one routine added off and offered with why (`routine_ask(r, why)`); declined ones in `ideasDeclined`. Curiosity reads every 5 h with 4 new titles and may `offer` help with what is in front ("now").
 
-**Autonomy** (`ai.autonomy` = `{ orders; trust; journal; tasks; maxTasks; }`,
-all on, `maxTasks` 3; Settings → Desktop agents → Autonomy, the only place
+**Autonomy** (`ai.autonomy` = `{ orders; trust; journal; tasks; fanOut; maxTasks; }`,
+all on, `maxTasks` 4 (an older config.json's 3 raised once:
+`Persistent.states.migrations.maxTasks4`); Settings → Desktop agents → Autonomy, the only place
 `trust set` is called besides the "Stop asking" chip; `services/Autonomy.qml`,
 `modules/common/widgets/AutonomyNotes.qml` under an answer in the bubble and
 the side panel). Nothing of it runs with `policies.ai` 0 or while paused, and
@@ -999,10 +1000,46 @@ undoing are the user's clicks or command line (see the guardrails below).
   a task or a routine's run can't start another. `services/MuseTasks.qml` (IPC
   `museTasks list|stop`; approve and answer are the shell's only), the side
   panel's Muse tab (`sidebarLeft/MuseActivity.qml`: status, steps, Allow / No,
-  an answer field, Open, Stop, Resume), the bar's tasks count in
-  `DesktopControl` (breathing while one waits), and the bubble's "Do it in the
+  an answer field, Open, Stop, Resume), the bar's workers in
+  `DesktopControl` (a figure per task, below), and the bubble's "Do it in the
   background" chip (`QuickAi.canBackground`: a long order, or three steps in).
   Tests: `tests/muse-task.sh`.
+- **Plan and fan out** (`ai.autonomy.fanOut`): `nixbook-muse-task fanout
+TEXT` → `{id}` of a plan (a task file with `kind: "plan"`, no agent, not
+  counted in `maxTasks`; refused under `NIXBOOK_MUSE_TASK_ID` /
+  `NIXBOOK_DESKTOP_MCP_NO_TASKS`, with `policies.ai` ≠ 1, tasks or fan-out
+  off). Its runner (`PlanRunner`): `nixbook_ai.answer` on
+  `ai.routing.decisions` (big, `decisionsEffort`) with `PLAN_SCHEMA`
+  `{parts: [{title, instruction, model: small|main, needs: [earlier
+indexes]}]}` (≤ 4, checked by `clean_parts`; no plan → the order as one
+  part), the provider's model ids kept (`plannerModel`, each part's
+  `modelId`); every part whose `needs` are done starts as a worker task
+  (`parent`, `title`, `part`, `model` → its agent's `--model`, `modelId`)
+  while there is room, its instruction with the results it needs and the
+  whole order; a part whose needed one failed is `skipped`; once all are
+  over, the main model merges (`MERGE_SCHEMA` `{answer, summary, done,
+failed, needsYou}`, the plan's `answer` + `report`; a part alone is its
+  own answer) and one notification says it (workers notify only to ask).
+  Masked on the way with `ai.privacy.mask`, unmasked before it is saved.
+  `stop` (a `<id>.stop` flag, its workers stopped), `resume` (the parts not
+  done run again). Workers run with `--include-partial-messages`: the
+  runner writes `activity` (thinking | typing | searching | tool) and
+  `doing` only when they change. desktop-mcp's `fan_out` {text} (group
+  `shell`, `ai.autonomy.fanOut`); `fanOut` is in `shellIpcDenyFunctions`.
+  Shell: `MuseTasks.fanOut(text, chat, done)`, `partsIn(text)` (the
+  bubble's chip reads **Split it up** instead of "Do it in the background"
+  for ≥ 2 parts: `QuickAi.canSplit`), `figures` / `figureIds` /
+  `figureOf(id)` (one per running task, a finished one kept 10 s, a plan
+  being planned or merged), `figureState` (think, type, search, tool, wait,
+  cheer, slump), `modelLabel` (muse-spark-1.3 → Spark), `planned` /
+  `planFinished` signals (QuickAi puts the plan card, then the merged answer
+  with its report, in the conversation it came from); widgets
+  `WorkerFigure.qml` (the bar, one per figure, ScriptModel of ids, animations
+  gated by `ObjectUtils.shown`) and `PlanCard.qml` (under the message in the
+  bubble and the side panel, and the Muse tab's plan group, workers'
+  `TaskCard`s under it; a click on a worker outlines and scrolls to it:
+  `MuseTasks.openTask`). IPC `museTasks fanOut TEXT`. Tests in
+  `tests/muse-task.sh`.
 
 **Reactivity** (`ai.reactivity` = `{ triage; triggers; }`, `triggers` =
 `{ commandFailedAgain; errorCopied; returningWindow; meetingSoon; errorDialog; }`,

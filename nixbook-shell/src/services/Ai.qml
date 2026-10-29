@@ -751,6 +751,9 @@ Singleton {
                 : "")
             + (desktop && (Config.options.ai.autonomy?.tasks ?? true)
                 ? " For a long multi-step task (finding, comparing, preparing) that the user asks to be done in the background or agrees to, use background_task; quick actions you do yourself."
+                    + ((Config.options.ai.autonomy?.fanOut ?? true)
+                        ? " An order of several independent parts the user wants done at once or in parallel (\"find three restaurants, draft an invitation and block my Friday evening\"): fan_out, which splits it into workers and brings back one merged answer."
+                        : "")
                 : "")
             // Its tools are all allowed (-p can't ask): what acts on the
             // user's account waits for their yes in the chat.

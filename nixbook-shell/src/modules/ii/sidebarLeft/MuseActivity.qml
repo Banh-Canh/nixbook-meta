@@ -10,7 +10,10 @@ import QtQuick.Layouts
  * The side panel's Muse tab: what Muse does on its own.
  *   - Background tasks (services/MuseTasks.qml): each with its status and
  *     steps; Allow / No for a step waiting for the user's OK, a field to
- *     answer its question, Open (its session in the chat), Stop.
+ *     answer its question, Open (its session in the chat), Stop. An order
+ *     split up (plan and fan out) is a group: its plan (PlanCard: the
+ *     merged answer at the top once there, each part's worker), then its
+ *     workers' cards. A task clicked on the bar is outlined and scrolled to.
  *   - What Muse did (services/Autonomy.qml, the journal): by day, each with
  *     where it came from (a routine, a standing order, a task…) and Undo
  *     when it can be taken back.
@@ -21,6 +24,10 @@ Item {
     id: root
     property string section: "tasks"
     onSectionChanged: Qt.callLater(root.scrollToSection)
+    function scrollTo(item) {
+        const y = item.mapToItem(content, 0, 0).y
+        flick.contentY = Math.max(0, Math.min(y - 8, flick.contentHeight - flick.height))
+    }
     function scrollToSection() {
         const target = root.section === "journal" ? journalHeader : tasksHeader
         flick.contentY = Math.max(0, Math.min(target.y, flick.contentHeight - flick.height))
@@ -83,6 +90,173 @@ Item {
         }
     }
 
+    component TaskCard: Rectangle {
+        id: task
+        property var modelData: ({})
+        readonly property bool live: ["running", "waiting"].includes(task.modelData.status)
+        Layout.fillWidth: true
+        implicitHeight: taskColumn.implicitHeight + 16
+        radius: Appearance.rounding.small
+        color: task.modelData.status === "waiting" ? Appearance.colors.colSecondaryContainer : Appearance.colors.colLayer2
+        // The one clicked on the bar: outlined, scrolled to.
+        readonly property bool focused: MuseTasks.focusId !== "" && MuseTasks.focusId === task.modelData.id
+        border.width: task.focused ? 1 : 0
+        border.color: Appearance.colors.colPrimary
+        onFocusedChanged: if (task.focused) Qt.callLater(() => root.scrollTo(task))
+        ColumnLayout {
+            id: taskColumn
+            anchors.fill: parent
+            anchors.margins: 8
+            spacing: 4
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                MaterialSymbol {
+                    text: task.modelData.status === "running" ? "progress_activity"
+                        : task.modelData.status === "waiting" ? "front_hand"
+                        : task.modelData.status === "done" ? "check_circle"
+                        : task.modelData.status === "failed" ? "error" : "stop_circle"
+                    iconSize: Appearance.font.pixelSize.normal
+                    color: task.modelData.status === "failed" ? Appearance.colors.colError : Appearance.colors.colPrimary
+                }
+                StyledText {
+                    text: MuseTasks.statusText(task.modelData)
+                    font.pixelSize: Appearance.font.pixelSize.smaller
+                    font.weight: Font.Medium
+                    color: Appearance.colors.colOnLayer2
+                }
+                Item { Layout.fillWidth: true }
+                StyledText {
+                    text: root.ago(task.modelData.updated ?? task.modelData.started)
+                    font.pixelSize: Appearance.font.pixelSize.smaller
+                    color: Appearance.colors.colSubtext
+                }
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                maximumLineCount: 4
+                elide: Text.ElideRight
+                // A fan-out's worker: its title (its text is its whole
+                // instruction), and the model it runs.
+                text: task.modelData.title
+                    ? `${task.modelData.title}${task.modelData.modelId ? " · " + MuseTasks.modelName(task.modelData.modelId) : ""}`
+                    : (task.modelData.text ?? "")
+                font.pixelSize: Appearance.font.pixelSize.small
+                font.weight: task.modelData.title ? Font.Medium : Font.Normal
+                color: Appearance.colors.colOnLayer2
+            }
+            // Its last steps.
+            Repeater {
+                model: (task.modelData.steps ?? []).slice(-4)
+                delegate: StyledText {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: `${modelData.status === "error" ? "✗" : modelData.status === "run" ? "…" : "✓"} ${String(modelData.tool ?? "").replace(/_/g, " ")}${modelData.summary ? " · " + modelData.summary : ""}`
+                    font.pixelSize: Appearance.font.pixelSize.smaller
+                    color: Appearance.colors.colSubtext
+                }
+            }
+            // What it waits for: an OK, or an answer.
+            StyledText {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: task.modelData.status !== "waiting" ? ""
+                    : task.modelData.approval ? Translation.tr("Asks before: %1").arg(task.modelData.approval.summary || String(task.modelData.approval.tool ?? "").replace(/_/g, " "))
+                    : String(task.modelData.question ?? "")
+                font.pixelSize: Appearance.font.pixelSize.small
+                font.weight: Font.Medium
+                color: Appearance.colors.colOnSecondaryContainer
+            }
+            // Its outcome.
+            StyledText {
+                Layout.fillWidth: true
+                visible: text.length > 0 && !task.live
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                maximumLineCount: 6
+                elide: Text.ElideRight
+                text: String(task.modelData.report?.summary ?? task.modelData.answer ?? task.modelData.error ?? "")
+                font.pixelSize: Appearance.font.pixelSize.small
+                color: task.modelData.status === "failed" ? Appearance.colors.colError : Appearance.colors.colOnLayer2
+            }
+            // What it did trusted to tell after (Undo), stop asking before…?
+            AutonomyNotes {
+                Layout.fillWidth: true
+                visible: (task.modelData.told ?? []).length > 0 || (task.modelData.trustSuggest ?? []).length > 0
+                message: ({ orders: [], told: (task.modelData.told ?? []).slice(-3).map(t => Object.assign({}, t, { id: String(t.journal ?? t.id ?? "") })),
+                            trustSuggest: task.modelData.trustSuggest ?? [] })
+                fg: Appearance.colors.colOnLayer2
+                accent: Appearance.colors.colPrimary
+                bg: Appearance.colors.colLayer2
+            }
+            // A reply to its question.
+            Rectangle {
+                Layout.fillWidth: true
+                visible: task.modelData.status === "waiting" && !task.modelData.approval
+                implicitHeight: 30
+                radius: Appearance.rounding.small
+                color: Appearance.colors.colLayer1
+                StyledTextInput {
+                    id: reply
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    verticalAlignment: TextInput.AlignVCenter
+                    clip: true
+                    color: Appearance.colors.colOnLayer1
+                    onAccepted: {
+                        MuseTasks.answer(task.modelData, reply.text)
+                        reply.text = ""
+                    }
+                }
+                StyledText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 8
+                    visible: reply.text.length === 0
+                    text: Translation.tr("Your answer (Enter)")
+                    font.pixelSize: Appearance.font.pixelSize.small
+                    color: Appearance.colors.colSubtext
+                }
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 6
+                SmallButton {
+                    visible: task.modelData.status === "waiting" && !!task.modelData.approval
+                    main: true
+                    label: Translation.tr("Allow")
+                    onClicked: MuseTasks.approve(task.modelData, true)
+                }
+                SmallButton {
+                    visible: task.modelData.status === "waiting" && !!task.modelData.approval
+                    label: Translation.tr("No")
+                    onClicked: MuseTasks.approve(task.modelData, false)
+                }
+                SmallButton {
+                    label: Translation.tr("Open")
+                    onClicked: MuseTasks.open(task.modelData)
+                }
+                SmallButton {
+                    visible: task.live
+                    label: Translation.tr("Stop")
+                    onClicked: MuseTasks.stop(task.modelData)
+                }
+                SmallButton {
+                    visible: task.modelData.status === "failed" || task.modelData.status === "stopped"
+                    label: Translation.tr("Resume")
+                    onClicked: MuseTasks.resume(task.modelData)
+                }
+            }
+        }
+    }
+
     StyledFlickable {
         id: flick
         anchors.fill: parent
@@ -113,159 +287,106 @@ Item {
                 color: Appearance.colors.colSubtext
             }
             Repeater {
-                model: MuseTasks.tasks
-                delegate: Rectangle {
-                    id: task
+                model: MuseTasks.topLevel
+                delegate: ColumnLayout {
+                    id: entry
                     required property var modelData
-                    readonly property bool live: ["running", "waiting"].includes(task.modelData.status)
+                    readonly property bool isPlan: entry.modelData.kind === "plan"
                     Layout.fillWidth: true
-                    implicitHeight: taskColumn.implicitHeight + 16
-                    radius: Appearance.rounding.small
-                    color: task.modelData.status === "waiting" ? Appearance.colors.colSecondaryContainer : Appearance.colors.colLayer2
-                    ColumnLayout {
-                        id: taskColumn
-                        anchors.fill: parent
-                        anchors.margins: 8
-                        spacing: 4
-                        RowLayout {
-                            Layout.fillWidth: true
+                    spacing: 4
+                    TaskCard {
+                        Layout.fillWidth: true
+                        visible: !entry.isPlan
+                        modelData: entry.isPlan ? ({}) : entry.modelData
+                    }
+                    // A plan: its card (the merged answer first once there,
+                    // each part's worker), then the workers' own cards.
+                    Rectangle {
+                        id: planBox
+                        readonly property bool live: entry.modelData.status === "running"
+                        Layout.fillWidth: true
+                        visible: entry.isPlan
+                        implicitHeight: planColumn.implicitHeight + 16
+                        radius: Appearance.rounding.small
+                        color: Appearance.colors.colLayer2
+                        border.width: MuseTasks.focusId !== "" && MuseTasks.focusId === entry.modelData.id ? 1 : 0
+                        border.color: Appearance.colors.colPrimary
+                        ColumnLayout {
+                            id: planColumn
+                            anchors.fill: parent
+                            anchors.margins: 8
                             spacing: 6
-                            MaterialSymbol {
-                                text: task.modelData.status === "running" ? "progress_activity"
-                                    : task.modelData.status === "waiting" ? "front_hand"
-                                    : task.modelData.status === "done" ? "check_circle"
-                                    : task.modelData.status === "failed" ? "error" : "stop_circle"
-                                iconSize: Appearance.font.pixelSize.normal
-                                color: task.modelData.status === "failed" ? Appearance.colors.colError : Appearance.colors.colPrimary
-                            }
-                            StyledText {
-                                text: MuseTasks.statusText(task.modelData)
-                                font.pixelSize: Appearance.font.pixelSize.smaller
-                                font.weight: Font.Medium
-                                color: Appearance.colors.colOnLayer2
-                            }
-                            Item { Layout.fillWidth: true }
-                            StyledText {
-                                text: root.ago(task.modelData.updated ?? task.modelData.started)
-                                font.pixelSize: Appearance.font.pixelSize.smaller
-                                color: Appearance.colors.colSubtext
-                            }
-                        }
-                        StyledText {
-                            Layout.fillWidth: true
-                            wrapMode: Text.Wrap
-                            textFormat: Text.PlainText
-                            maximumLineCount: 4
-                            elide: Text.ElideRight
-                            text: task.modelData.text ?? ""
-                            font.pixelSize: Appearance.font.pixelSize.small
-                            color: Appearance.colors.colOnLayer2
-                        }
-                        // Its last steps.
-                        Repeater {
-                            model: (task.modelData.steps ?? []).slice(-4)
-                            delegate: StyledText {
-                                required property var modelData
+                            RowLayout {
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                textFormat: Text.PlainText
-                                text: `${modelData.status === "error" ? "✗" : modelData.status === "run" ? "…" : "✓"} ${String(modelData.tool ?? "").replace(/_/g, " ")}${modelData.summary ? " · " + modelData.summary : ""}`
-                                font.pixelSize: Appearance.font.pixelSize.smaller
-                                color: Appearance.colors.colSubtext
-                            }
-                        }
-                        // What it waits for: an OK, or an answer.
-                        StyledText {
-                            Layout.fillWidth: true
-                            visible: text.length > 0
-                            wrapMode: Text.Wrap
-                            textFormat: Text.PlainText
-                            text: task.modelData.status !== "waiting" ? ""
-                                : task.modelData.approval ? Translation.tr("Asks before: %1").arg(task.modelData.approval.summary || String(task.modelData.approval.tool ?? "").replace(/_/g, " "))
-                                : String(task.modelData.question ?? "")
-                            font.pixelSize: Appearance.font.pixelSize.small
-                            font.weight: Font.Medium
-                            color: Appearance.colors.colOnSecondaryContainer
-                        }
-                        // Its outcome.
-                        StyledText {
-                            Layout.fillWidth: true
-                            visible: text.length > 0 && !task.live
-                            wrapMode: Text.Wrap
-                            textFormat: Text.PlainText
-                            maximumLineCount: 6
-                            elide: Text.ElideRight
-                            text: String(task.modelData.report?.summary ?? task.modelData.answer ?? task.modelData.error ?? "")
-                            font.pixelSize: Appearance.font.pixelSize.small
-                            color: task.modelData.status === "failed" ? Appearance.colors.colError : Appearance.colors.colOnLayer2
-                        }
-                        // What it did trusted to tell after (Undo), stop asking before…?
-                        AutonomyNotes {
-                            Layout.fillWidth: true
-                            visible: (task.modelData.told ?? []).length > 0 || (task.modelData.trustSuggest ?? []).length > 0
-                            message: ({ orders: [], told: (task.modelData.told ?? []).slice(-3).map(t => Object.assign({}, t, { id: String(t.journal ?? t.id ?? "") })),
-                                        trustSuggest: task.modelData.trustSuggest ?? [] })
-                            fg: Appearance.colors.colOnLayer2
-                            accent: Appearance.colors.colPrimary
-                            bg: Appearance.colors.colLayer2
-                        }
-                        // A reply to its question.
-                        Rectangle {
-                            Layout.fillWidth: true
-                            visible: task.modelData.status === "waiting" && !task.modelData.approval
-                            implicitHeight: 30
-                            radius: Appearance.rounding.small
-                            color: Appearance.colors.colLayer1
-                            StyledTextInput {
-                                id: reply
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                verticalAlignment: TextInput.AlignVCenter
-                                clip: true
-                                color: Appearance.colors.colOnLayer1
-                                onAccepted: {
-                                    MuseTasks.answer(task.modelData, reply.text)
-                                    reply.text = ""
+                                spacing: 6
+                                MaterialSymbol {
+                                    text: "account_tree"
+                                    iconSize: Appearance.font.pixelSize.normal
+                                    color: Appearance.colors.colPrimary
+                                }
+                                StyledText {
+                                    text: Translation.tr("Split up")
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                    font.weight: Font.Medium
+                                    color: Appearance.colors.colOnLayer2
+                                }
+                                Item { Layout.fillWidth: true }
+                                StyledText {
+                                    text: root.ago(entry.modelData.updated ?? entry.modelData.started)
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                    color: Appearance.colors.colSubtext
                                 }
                             }
                             StyledText {
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.left: parent.left
-                                anchors.leftMargin: 8
-                                visible: reply.text.length === 0
-                                text: Translation.tr("Your answer (Enter)")
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                textFormat: Text.PlainText
+                                maximumLineCount: 4
+                                elide: Text.ElideRight
+                                text: entry.modelData.text ?? ""
                                 font.pixelSize: Appearance.font.pixelSize.small
-                                color: Appearance.colors.colSubtext
+                                color: Appearance.colors.colOnLayer2
+                            }
+                            PlanCard {
+                                Layout.fillWidth: true
+                                planId: entry.isPlan ? entry.modelData.id : ""
+                                showAnswer: true
+                                fg: Appearance.colors.colOnLayer2
+                                accent: Appearance.colors.colPrimary
+                                bg: Appearance.colors.colLayer2
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                SmallButton {
+                                    visible: entry.modelData.status === "done"
+                                    label: Translation.tr("Open")
+                                    onClicked: MuseTasks.open(entry.modelData)
+                                }
+                                SmallButton {
+                                    visible: planBox.live
+                                    label: Translation.tr("Stop all")
+                                    onClicked: MuseTasks.stop(entry.modelData)
+                                }
+                                SmallButton {
+                                    visible: entry.modelData.status === "failed" || entry.modelData.status === "stopped"
+                                    label: Translation.tr("Resume")
+                                    onClicked: MuseTasks.resume(entry.modelData)
+                                }
                             }
                         }
-                        Flow {
+                    }
+                    // Its workers: what each did, its approvals and questions.
+                    Repeater {
+                        model: entry.isPlan ? MuseTasks.workersOf(entry.modelData) : []
+                        delegate: ColumnLayout {
+                            id: workerEntry
+                            required property var modelData
                             Layout.fillWidth: true
-                            spacing: 6
-                            SmallButton {
-                                visible: task.modelData.status === "waiting" && !!task.modelData.approval
-                                main: true
-                                label: Translation.tr("Allow")
-                                onClicked: MuseTasks.approve(task.modelData, true)
-                            }
-                            SmallButton {
-                                visible: task.modelData.status === "waiting" && !!task.modelData.approval
-                                label: Translation.tr("No")
-                                onClicked: MuseTasks.approve(task.modelData, false)
-                            }
-                            SmallButton {
-                                label: Translation.tr("Open")
-                                onClicked: MuseTasks.open(task.modelData)
-                            }
-                            SmallButton {
-                                visible: task.live
-                                label: Translation.tr("Stop")
-                                onClicked: MuseTasks.stop(task.modelData)
-                            }
-                            SmallButton {
-                                visible: task.modelData.status === "failed" || task.modelData.status === "stopped"
-                                label: Translation.tr("Resume")
-                                onClicked: MuseTasks.resume(task.modelData)
+                            Layout.leftMargin: 14
+                            TaskCard {
+                                Layout.fillWidth: true
+                                modelData: workerEntry.modelData
                             }
                         }
                     }

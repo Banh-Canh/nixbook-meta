@@ -1069,7 +1069,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Muse can do more on its own, always with you in charge. Standing orders: say \"from now on, when I join a meeting, mute the music\" or \"every evening at 6, a digest of my Slack mentions\": it proposes a routine, on only when you click Turn on. Trust: each kind of action is asked about first, done and told after (with Undo), or done silently; after three yeses in a row it offers to stop asking, and only you raise a kind, below. Sending, paying, deleting and passwords always ask. Journal: everything it did without your OK on that very step, 30 days, with Undo (the side panel's Muse tab). Background tasks: long tasks go on while you do something else (the side panel's Muse tab, the bar).")
+                text: Translation.tr("Muse can do more on its own, always with you in charge. Standing orders: say \"from now on, when I join a meeting, mute the music\" or \"every evening at 6, a digest of my Slack mentions\": it proposes a routine, on only when you click Turn on. Trust: each kind of action is asked about first, done and told after (with Undo), or done silently; after three yeses in a row it offers to stop asking, and only you raise a kind, below. Sending, paying, deleting and passwords always ask. Journal: everything it did without your OK on that very step, 30 days, with Undo (the side panel's Muse tab). Background tasks: long tasks go on while you do something else (the side panel's Muse tab, the bar). Split it up: an order of several parts (\"find three restaurants, draft an invitation and block my Friday evening\") is planned by Muse Wonder and done by up to four workers at once, each a little figure on the bar, their results merged into one answer.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -1099,6 +1099,13 @@ ContentPage {
                     text: Translation.tr("Background tasks")
                     checked: Config.options.ai.autonomy.tasks
                     onCheckedChanged: Config.options.ai.autonomy.tasks = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.autonomy.fanOut"
+                    buttonIcon: "account_tree"
+                    text: Translation.tr("Split an order of several parts into workers at once (\"Split it up\")")
+                    checked: Config.options.ai.autonomy.fanOut
+                    onCheckedChanged: Config.options.ai.autonomy.fanOut = checked
                 }
             }
             ConfigSpinBox {
