@@ -314,7 +314,7 @@ Scope {
                                         glyph: "construction"
                                         label: Translation.tr("Build it for me")
                                         onClicked: NixOnboarding.buildIt()
-                                        StyledToolTip { text: Translation.tr("The desktop agent's fixer puts it in your configuration and opens a pull request") }
+                                        StyledToolTip { text: Translation.tr("Muse's fixer puts it in your configuration and opens a pull request") }
                                     }
                                     Action {
                                         visible: (NixOnboarding.config?.checked ?? false) && NixOnboarding.config?.settings

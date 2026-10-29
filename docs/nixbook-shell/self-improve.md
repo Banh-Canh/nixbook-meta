@@ -1,6 +1,6 @@
 # Fixes it makes itself
 
-The desktop agent can fix nixbook itself: **fixes and polish only** (a bug, a rough edge, wrong wording), each as a pull request with its changelog entry, merged when you say so. Apart from them, and switched on apart, it can **build the features you ask for** ([below](#features-it-builds)): a fix it finds too big goes there too. The agent can also [propose one of either](#proposed-by-the-agent) from what it saw get in your way.
+Muse can fix nixbook itself: **fixes and polish only** (a bug, a rough edge, wrong wording), each as a pull request with its changelog entry, merged when you say so. Apart from them, and switched on apart, it can **build the features you ask for** ([below](#features-it-builds)): a fix it finds too big goes there too. The agent can also [propose one of either](#proposed-by-the-agent) from what it saw get in your way.
 
 Only machines whose Nix configuration enables it have it (totoro, for now):
 

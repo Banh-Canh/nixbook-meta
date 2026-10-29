@@ -104,7 +104,7 @@ Singleton {
         const text = Translation.tr("Add this configuration (written with the user and checked with nix-instantiate):") + "\n\n"
             + root.config.explanation + "\n\n```nix\n" + root.config.nix + "\n```";
         Quickshell.execDetached(["nixbook-improve", "request", text, "--where", root.config.where || "profiles"]);
-        root.applied = Translation.tr("Filed for the desktop agent's fixer: it builds it on a branch and opens a pull request (Settings > Desktop agents).");
+        root.applied = Translation.tr("Filed for Muse's fixer: it builds it on a branch and opens a pull request (Settings > Desktop agents).");
     }
     // The shell settings, set now in the running shell: not declarative (the
     // next Nix switch keeps them only because Nix doesn't set them), and the

@@ -283,7 +283,7 @@ setting_on .ai.agentDesktop.privateNetwork || private_network=false
 
 fail() {
   echo "nixbook-agent-desktop: $1" >&2
-  notify-send -a "Desktop agent" -u critical "The assistant's desktop didn't start" "$1" 2>/dev/null || true
+  notify-send -a "Muse" -u critical "Muse's desktop didn't start" "$1" 2>/dev/null || true
   exit 1
 }
 

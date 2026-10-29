@@ -399,7 +399,7 @@ notifications at night, I like a minimal bar") into Nix:
    evaluated against their real typed options. A misspelt key or a wrong value
    fails with Nix's own message, which goes back to the model to fix, up to
    three rounds. The configuration shows _Checked by Nix_ once it passes.
-4. You get **Copy**, **Build it for me** (files it for the desktop agent's
+4. You get **Copy**, **Build it for me** (files it for Muse's
    [fixer](./self-improve.md), which opens a pull request, when its features are
    on) and **Apply now** (the settings change live in the shell, not in your Nix
    files; settings already set in Nix are left alone).

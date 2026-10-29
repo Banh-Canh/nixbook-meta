@@ -1052,7 +1052,7 @@ class Guard:
                     [
                         "notify-send",
                         "-a",
-                        "Desktop agent",
+                        "Muse",
                         "-i",
                         "input-mouse",
                         "--",
@@ -15685,7 +15685,7 @@ def t_notify(ctx, args):
     if not isinstance(body, str) or len(body) > 1000:
         raise ToolError("`body` must be a string of at most 1000 characters")
     ctx.guard.check_rate()
-    run(["notify-send", "-a", "Desktop agent", "--", title, body])
+    run(["notify-send", "-a", "Muse", "--", title, body])
     return [text("notification shown")]
 
 
@@ -21741,7 +21741,7 @@ def main(argv):
         except FileNotFoundError:
             pass
         write_state()
-        notify(["-a", "Desktop agent", "--", "Desktop control paused"])
+        notify(["-a", "Muse", "--", "Desktop control paused"])
         print("desktop control paused")
         return 0
     if cmd == "resume":
@@ -22079,7 +22079,7 @@ def notify(argv, env=None):
 
 
 def notify_desktop(message):
-    notify(["-a", "Desktop agent", "-i", "computer", "--", message], env=user_desktop_env())
+    notify(["-a", "Muse", "-i", "computer", "--", message], env=user_desktop_env())
 
 
 def memory_command(cfg, argv):
