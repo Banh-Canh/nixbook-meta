@@ -117,6 +117,15 @@ Singleton {
                 auto.maxTasks = 4;
             done.maxTasks4 = true;
         }
+        // The mascot is Full AI mode's: it first shipped on the desktop all
+        // the time, and that default (true) was written into config.json, so
+        // the new one (false) never reached it. Turned off once.
+        if (!done.mascotFullAiOnly) {
+            const mascot = root.options.ai.mascot;
+            if (mascot && mascot.enable === true && !NixManaged.isPinned("ai.mascot.enable"))
+                mascot.enable = false;
+            done.mascotFullAiOnly = true;
+        }
     }
     property int readWriteDelay: 50 // milliseconds
     property bool blockWrites: false

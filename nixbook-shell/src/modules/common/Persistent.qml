@@ -70,6 +70,7 @@ Singleton {
                 property bool jellyfinOff: false
                 property bool seerrOff: false
                 property bool maxTasks4: false
+                property bool mascotFullAiOnly: false
             }
 
             property JsonObject ai: JsonObject {
