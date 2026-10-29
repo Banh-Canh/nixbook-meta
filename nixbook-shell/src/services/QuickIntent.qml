@@ -309,11 +309,6 @@ Singleton {
 
         // ── The meeting companion (Meeting.qml): it listens to the call ──
         if (/^(?:start )?(?:take |taking )(?:meeting |call )?notes(?: (?:of|for|on) (?:the |this |my )?(?:meeting|call))?$|^(?:caption|transcribe) (?:the |this |my )?(?:meeting|call)$|^(?:start )?(?:the )?meeting (?:notes|companion|captions)$/.test(t)) {
-            // It sends the call to Meta: with private listening, only when
-            // called by name (or by the user's key), never on words taken
-            // for Muse only for coming right after it spoke.
-            if (!Addressee.namedFor(raw))
-                return root._done(Translation.tr("Say “Muse, take notes” to start: the call's captions go to Meta."));
             const why = Meeting.start({ from: "voice" });
             return root._done(why || Translation.tr("Listening to the call: live captions and notes."), why ? null : () => Meeting.cancel());
         }

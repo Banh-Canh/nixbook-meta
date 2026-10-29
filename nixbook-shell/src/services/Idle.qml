@@ -10,23 +10,8 @@ import Quickshell.Wayland
 Singleton {
     id: root
 
-    // The idle toggle.
-    property bool inhibit: false
-    // Talking to Muse (Voice.qml, after each turn said to it): no key is
-    // pressed meanwhile, but the user is there; the screens stay on (and
-    // so does the microphone, which closes when they go off) for
-    // `talkMinutes` after the last thing said to it.
-    readonly property int talkMinutes: 5
-    property bool talking: false
-    function noteTalking() {
-        root.talking = true;
-        talkTimer.restart();
-    }
-    Timer {
-        id: talkTimer
-        interval: root.talkMinutes * 60000
-        onTriggered: root.talking = false
-    }
+    property alias inhibit: idleInhibitor.enabled
+    inhibit: false
 
     // The screens are off: no input for as long as hypridle waits before
     // `niri msg action power-off-monitors` (niriConfig.nix, 300 s), with the
@@ -60,7 +45,6 @@ Singleton {
 
     IdleInhibitor {
         id: idleInhibitor
-        enabled: root.inhibit || root.talking
         window: PanelWindow {
             // Inhibitor requires a "visible" surface
             // Actually not lol

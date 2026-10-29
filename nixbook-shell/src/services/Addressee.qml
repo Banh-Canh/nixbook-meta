@@ -22,11 +22,7 @@ import QtQuick
  *   - else ("smart") the small model judges, given the last things heard
  *     and said (masked for the provider), the focused window and the call:
  *     `nixbook-quick-ai` addressee mode, ~1 s; acted on only above
- *     `threshold`; a timeout or an error is "not for me". Not with private
- *     listening (ai.voice.privateListening, the default): the room's words
- *     never go to the model, what the rules can't tell is "not for me".
- * With private listening the mic opening again on its own outside Full AI
- * mode (a conversation's next turn) is judged here too (`judges`).
+ *     `threshold`; a timeout or an error is "not for me".
  * What isn't for it is never sent: it shows dimmed in the mascot's balloon
  * ("not for me?") with a "Was that for me?" chip for a few seconds, which
  * sends it after all and is remembered as an example for the model; so
@@ -47,19 +43,6 @@ Singleton {
     // Judged here: Full AI mode's always-open microphone ("all": every
     // sentence goes on, as before).
     readonly property bool active: FullAi.active && root.mode !== "all"
-    // Whether what a capture heard is judged here (VoiceRoute.judged): Full
-    // AI mode's, and with private listening what the mic heard when it
-    // opened on its own (not after the user's key).
-    function judges(solicited) {
-        return VoiceRoute.judged({ mode: root.mode, fullAi: FullAi.active, solicited: !!solicited,
-            privateListening: Voice.privateListening });
-    }
-    // Said after the user's own key (Mod+T): for Muse, the start of a
-    // back-and-forth the next turns are judged against.
-    function noteAddressed() {
-        root.addressedAt = Date.now();
-        root.namedAt = Date.now();
-    }
     // The model's verdict is taken from this confidence up.
     readonly property real threshold: 0.6
 
@@ -103,26 +86,8 @@ Singleton {
             spokeAt: root.spokeAt, addressedAt: root.addressedAt,
             overheardAt: root.lastNo?.at ?? 0,
             inCall: Meeting.inCall,
-            // No model for what the rules can't tell (addressee.js).
-            private: Voice.privateListening,
         };
     }
-    // The last order the rules (or the chip) let through: {text, why, at}.
-    property var lastOrder: null
-    // Was `text` called by name (or an answer to Muse), if it came from
-    // here a moment ago? What sends the room to Meta (the meeting
-    // companion, QuickIntent) asks for that with private listening: an
-    // order taken only for being said just after Muse spoke isn't enough.
-    function namedFor(text) {
-        const o = root.lastOrder;
-        if (!Voice.privateListening || !o || Date.now() - o.at > 5000) return true;
-        if (String(text ?? "").trim().toLowerCase() !== String(o.text).trim().toLowerCase()) return true;
-        // Or within 30 s of being called by name or by the user's key ("Muse?"
-        // "Yes?" "Take notes.").
-        return ["name", "approval", "asked", "claimed", "all"].includes(o.why) || o.at - root.namedAt <= 30000;
-    }
-    // When it was last called by name, or with the user's key.
-    property real namedAt: 0
 
     // A sentence heard by the always-open microphone.
     function hear(text) {
@@ -133,9 +98,7 @@ Singleton {
         if (d.verdict === "claim") return root._claimed(t);
         if (d.verdict === "yes") return root._forMe(t, d.order, d.why);
         if (d.verdict === "no" && d.why === "not-you") return root._disown(t);
-        // Private listening: never the model (the rules say "no" already;
-        // this holds whatever they become).
-        if (d.verdict === "no" || Voice.privateListening) return root._notForMe(t, d.verdict === "no" ? d.why : "private");
+        if (d.verdict === "no") return root._notForMe(t, d.why);
         // The model, one sentence at a time (the rules above never wait).
         root.queue = root.queue.concat([t]).slice(-3);
         root._next();
@@ -143,8 +106,6 @@ Singleton {
     function _forMe(heard, order, why) {
         root.addressedAt = Date.now();
         root.lastYes = { text: heard, at: Date.now() };
-        root.lastOrder = { text: String(order), why: why, at: Date.now() };
-        if (why === "name" || why === "name-only") root.namedAt = Date.now();
         root._push("user", heard, "yes");
         if (root.overheard) root.overheard = null;
         // The name alone ("Muse?", "hey Muse"): it answers, the next words
@@ -181,10 +142,7 @@ Singleton {
         root.lastYes = { text: o.text, at: Date.now() };
         // Its name taken out, if it was there.
         const named = AddresseeRules.calledByName(o.text);
-        const order = named && named.order ? named.order : o.text;
-        // The user's tap: as good as calling it by name.
-        root.lastOrder = { text: order, why: "claimed", at: Date.now() };
-        Voice.deliver(order, true);
+        Voice.deliver(named && named.order ? named.order : o.text, true);
     }
 
     // "Yes, I'm talking to you (Muse)": the words it let go lately sent after
@@ -237,8 +195,6 @@ Singleton {
             examples: Persistent.states.ai.addresseeExamples ?? [],
             notExamples: Persistent.states.ai.addresseeNotExamples ?? [],
             museSpokeAgo: root.spokeAt > 0 ? Math.round((now - root.spokeAt) / 1000) : -1,
-            // quick-ai.py refuses to send it with private listening, too.
-            private: Voice.privateListening,
             model: "small" });
         judge.running = true;
         judgeTimeout.restart();
@@ -323,18 +279,16 @@ Singleton {
             root.judgingText = "";
         }
     }
-    // Also in a conversation outside Full AI mode (its next turns are judged
-    // with private listening).
     Connections {
         target: Voice
         function onSpeakingChanged() {
-            if (!Voice.speaking && (FullAi.active || Voice.session)) root.spokeAt = Date.now();
+            if (!Voice.speaking && FullAi.active) root.spokeAt = Date.now();
         }
     }
     Connections {
         target: QuickAi
         function onBusyChanged() {
-            if (!QuickAi.busy && (FullAi.active || Voice.session)) root.spokeAt = Date.now();
+            if (!QuickAi.busy && FullAi.active) root.spokeAt = Date.now();
         }
     }
     // Barge-in while it talks (Voice's partial words): the name or a stop
@@ -349,8 +303,7 @@ Singleton {
     IpcHandler {
         target: "addressee"
         function status(): string {
-            return JSON.stringify({ mode: root.mode, active: root.active, privateListening: Voice.privateListening,
-                judging: root.judgingText, queued: root.queue.length,
+            return JSON.stringify({ mode: root.mode, active: root.active, judging: root.judgingText, queued: root.queue.length,
                 overheard: root.overheard, lastWhy: root.lastWhy, inCall: Meeting.inCall, transcript: root.transcript });
         }
         // What the plain-code rules say of a sentence now (no model, nothing

@@ -10,9 +10,7 @@
 // asking (Muse asked a question), speaking (Muse talks right now), busy (it
 // works on an order), halt (a stop word: Voice._halt), spokeAt (when Muse
 // last said or wrote something), addressedAt (when the user last spoke to
-// it), inCall, private (private listening, ai.voice.privateListening: no
-// model, so "can't tell" is "not for Muse": nothing heard leaves the
-// computer unless it was said to it; the "Was that for me?" chip sends it)}.
+// it), inCall}.
 // The rules, in order: "not you" and "I'm talking to you" (ctx.overheardAt:
 // when words were last let go); Muse's name; another person's name or another
 // assistant's; an answer to the step waiting for an OK or to Muse's own
@@ -276,8 +274,6 @@ function decide(text, ctx) {
     // A back-and-forth: the user spoke to it lately and it answered.
     if (reply && addressed > 0 && now - addressed <= 25000 && spoke >= addressed)
         return { verdict: "yes", order: t, why: "conversation" }
-    // 6. The model decides; with private listening the room's words never
-    // go to it: not for Muse (the chip sends them after all).
-    if (c.private) return { verdict: "no", order: "", why: "private" }
+    // 6. The model decides.
     return { verdict: "ask", order: t, why: "unsure" }
 }

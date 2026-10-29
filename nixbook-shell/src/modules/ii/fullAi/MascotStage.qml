@@ -44,11 +44,6 @@ Item {
     property real level: 0
     property bool talking: false
     property bool active: true
-    // Where the microphone's audio goes (Voice.micState), on a badge by
-    // the mascot — the mode's only sign: "local" (an ear: listening on this
-    // computer), "meta" (a cloud: sending to Meta), "paused" (away), "off"
-    // (muted); "" hides it.
-    property string micState: ""
     // How big the mascot is (1: 120×140 px).
     property real zoom: 1.3
 
@@ -212,45 +207,6 @@ Item {
             stretchY: root.flying ? 1.08 : 1
             Behavior on stretchX { enabled: !landing.running; NumberAnimation { duration: 140 } }
             Behavior on stretchY { enabled: !landing.running; NumberAnimation { duration: 140 } }
-        }
-
-        // The microphone's badge, under its feet: where what it hears goes.
-        Rectangle {
-            id: micBadge
-            readonly property bool meta: root.micState === "meta"
-            readonly property bool dim: root.micState === "off" || root.micState === "paused"
-            visible: root.micState.length > 0
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: parent.height - 2
-            width: micRow.implicitWidth + 16
-            height: micRow.implicitHeight + 6
-            radius: height / 2
-            color: micBadge.meta ? Appearance.colors.colTertiaryContainer
-                : micBadge.dim ? Qt.alpha(Appearance.colors.colLayer2, 0.9) : Appearance.colors.colSecondaryContainer
-            border.width: 1
-            border.color: Qt.alpha(mascot.outline, 0.5)
-            opacity: micBadge.dim ? 0.75 : 1
-            Row {
-                id: micRow
-                anchors.centerIn: parent
-                spacing: 4
-                MaterialSymbol {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: micBadge.meta ? "cloud_upload" : root.micState === "off" ? "mic_off"
-                        : root.micState === "paused" ? "pause_circle" : "hearing"
-                    iconSize: Appearance.font.pixelSize.small
-                    color: micBadge.meta ? Appearance.colors.colOnTertiaryContainer
-                        : micBadge.dim ? Appearance.colors.colOnLayer2 : Appearance.colors.colOnSecondaryContainer
-                }
-                StyledText {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: micBadge.meta ? Translation.tr("Sending to Meta") : root.micState === "off" ? Translation.tr("Mic off")
-                        : root.micState === "paused" ? Translation.tr("Mic paused") : Translation.tr("Only on this computer")
-                    font.pixelSize: Appearance.font.pixelSize.smaller
-                    color: micBadge.meta ? Appearance.colors.colOnTertiaryContainer
-                        : micBadge.dim ? Appearance.colors.colOnLayer2 : Appearance.colors.colOnSecondaryContainer
-                }
-            }
         }
     }
 

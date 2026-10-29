@@ -130,11 +130,6 @@ Singleton {
         target: "musicRecognition"
 
         function listen(): string {
-            // Private listening (ai.voice.privateListening): through IPC (the
-            // desktop agents) only the system sound; the room's sound goes to
-            // Shazam only from the widget's own button, the user's click.
-            if (root.monitorSource === SongRec.MonitorSource.Input && (Config.options.ai?.voice?.privateListening ?? true))
-                return "refused: private listening is on: the microphone is only for what the user starts (the widget's button); use_system_sound first";
             if (!root.running)
                 root.toggleRunning(true);
             return `ok: listening to the ${root.monitorSource === SongRec.MonitorSource.Monitor ? "system sound" : "microphone"} for up to ${root.timeoutDuration} s`;
@@ -161,9 +156,6 @@ Singleton {
             return "ok: system sound";
         }
         function useMicrophone(): string {
-            // Private listening: the agents never point it at the room.
-            if (Config.options.ai?.voice?.privateListening ?? true)
-                return "refused: private listening is on: the microphone is only for what the user starts";
             root.toggleMonitorSource(SongRec.MonitorSource.Input);
             return "ok: microphone";
         }

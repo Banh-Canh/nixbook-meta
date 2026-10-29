@@ -453,13 +453,6 @@ expect_eq "addressee: a server error is not for Muse" '{"addressed":false,"faile
 expect_eq "addressee: no retry (too late to be an answer)" "1" "$(jq -c 'select(.path == "/v1/messages" and (.body | tostring | contains("FAIL500")))' "$tmp/requests.log" | wc -l)"
 ask addr6 '{"mode": "addressee", "heard": "", "lang": "en"}'
 expect_eq "addressee: nothing heard, nothing asked" '{"addressed":false}' "$(event addr6 addressee '| {addressed}')"
-# Private listening: the room's words never reach the model, nor the sent log.
-: >"$tmp/requests.log"
-: >"$tmp/sent.log"
-ask addr7 '{"mode": "addressee", "heard": "PRIVATEROOM FORYOU open the calendar", "lang": "en", "private": true}'
-expect_eq "addressee, private listening: not for Muse" '{"addressed":false,"private":true}' "$(event addr7 addressee '| {addressed, private}')"
-expect_eq "addressee, private listening: no model call" "0" "$(grep -c PRIVATEROOM "$tmp/requests.log" || true)"
-expect_eq "addressee, private listening: nothing recorded as sent" "" "$(cat "$tmp/sent.log")"
 
 # Failures.
 python3 -I "$script" ask "$tmp/none.json" >"$tmp/none.out" 2>/dev/null || true
