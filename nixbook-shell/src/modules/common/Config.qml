@@ -324,6 +324,30 @@ Singleton {
                     // Dozes after this many idle minutes.
                     property int dozeMinutes: 3
                 }
+                // The smart clipboard (services/SmartClipboard.qml): what was
+                // copied read in plain code, its action offered as chips by
+                // the mascot for a few seconds. `kinds`, each kind on or off;
+                // `knownLanguages`, languages besides the interface's not to
+                // offer translating from (e.g. ["en"]); `currency`, the one
+                // amounts convert to ("" = from the language: USD, EUR, VND).
+                property JsonObject clipboard: JsonObject {
+                    property bool enable: true
+                    property list<string> knownLanguages: []
+                    property string currency: ""
+                    property JsonObject kinds: JsonObject {
+                        property bool tracking: true
+                        property bool address: true
+                        property bool date: true
+                        property bool language: true
+                        property bool error: true
+                        property bool url: true
+                        property bool phone: true
+                        property bool email: true
+                        property bool paragraph: true
+                        property bool code: true
+                        property bool amount: true
+                    }
+                }
                 // Which of the provider's models does what (small, main or big):
                 // `decisions`, every pass that decides on the user's behalf
                 // (the initiative's notifications and words, pairing, a

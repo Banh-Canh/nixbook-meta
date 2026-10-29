@@ -328,6 +328,61 @@ drives it (for demos and tests; agents can't: `mascot` is in desktop-mcp's
 `thinking`…, a few seconds) or a move (`hop`, `celebrate`, `shake`, `stretch`,
 `perk`).
 
+### Smart clipboard
+
+Copy something and the right action shows at once (`ai.clipboard`, on by
+default; Settings > Desktop agents > **Smart clipboard**): a small card over the
+mascot (beside Muse's bubble when the mascot is off) for about 8 seconds,
+"Copied a tracking number — **Track it** · Not now". It never takes the
+keyboard; click a chip, or press `Mod+Alt+V` for the first one. Hovering it
+holds it.
+
+What was copied is read on this computer in plain code, in well under a
+millisecond (`src/modules/common/functions/clipboard_kinds.js`), in English,
+French, German and Vietnamese:
+
+| Copied                                                                                                  | Chips (best first)                         |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| A tracking number: UPS, FedEx, DHL, La Poste, Colissimo, Chronopost, any UPU number (check digits read) | Track it (the carrier's page)              |
+| An address (`12 rue de Rivoli, 75001 Paris`, `Hauptstraße 5, 10115 Berlin`, `12 đường Lê Lợi, quận 1…`) | Directions, Show on the map                |
+| A date or a time: "next Tuesday 3pm", "le 12 novembre à 14h", "morgen um 9 Uhr", "3 giờ chiều ngày mai" | Add to calendar                            |
+| Text in another language than yours (stopwords and scripts)                                             | ✦ Translate (✦ Summarize when long)        |
+| An error or a stack trace                                                                               | ✦ Explain it, ✦ Fix it                     |
+| A link                                                                                                  | ✦ Summarize the page, Open                 |
+| A phone number                                                                                          | Call / Text from the phone (KDE Connect)   |
+| An e-mail address                                                                                       | Write to … (your mail app)                 |
+| A long paragraph                                                                                        | ✦ Summarize, ✦ Rewrite                     |
+| Code, a shell command                                                                                   | ✦ Explain                                  |
+| An amount with a currency (`$1,299.99`, `49,99 €`, `500.000 ₫`)                                         | Convert to your currency (a search opened) |
+
+Plain chips run at once. **Add to calendar** opens the Calendar's editor filled
+in (title, date and time, the place when the text has an address): you check
+it and save. The ✦ chips are AI: Quick AI's one-shots (Translate, Explain,
+Summarize, Rewrite) or an order for Muse (Fix it, Summarize the page, which
+reads the page with the page tools), answered in Muse's bubble; the text goes
+through the privacy mask for the model provider as everywhere else, and the
+chips show real names. An error copied is offered here, not also by
+[the error_copied offer](./desktop-agents.md#reactivity).
+
+**Never** what a password manager copied (marked as such, or copied while one
+is in front), never a password, a one-time code, a key or token, a card number
+or an IBAN: nothing is shown and nothing leaves. Nor an agent's paste. With
+`policies.ai` set to local only, the plain chips only; off, nothing. Not while
+locked; quiet in Do Not Disturb, a meeting or a fullscreen app (no chip): the
+clipboard history (`Mod+Q`) still has the plain action for each entry.
+
+It learns lightly: a kind you ignore 5 times in a row (Not now, or letting it
+fade) is no longer offered until **Offer them again**; the kinds and chips you
+take come first. Each kind has its switch (`ai.clipboard.kinds.<kind>`);
+`ai.clipboard.knownLanguages` (e.g. `["en"]`) are languages you read and don't
+need translated, `ai.clipboard.currency` the one amounts convert to (empty:
+from your language). State in `$XDG_STATE_HOME/nixbook-shell/smart-clipboard.json`.
+
+`nixbook-shell ipc call smartClipboard status|classify TEXT|offer TEXT|run|runChip N|dismiss|reset`
+(`classify` shows what a text is with no side effect; `offer` shows its chips
+as if just copied, for demos). Agents can't: `smartClipboard` is in
+desktop-mcp's `shellIpcDenyTargets`.
+
 ## Set up the desktop by talking
 
 Settings > Desktop agents > Talk to your desktop > **Set up my desktop by
@@ -538,10 +593,11 @@ tools up front (`ai.agent.coreTools`), and how long the agent stays running
 after the last message (`ai.agent.keepWarmMinutes`, 60; 15 while locked).
 **Muse on the desktop**: the mascot in a corner (`ai.mascot.enable`, `corner`:
 bottomRight, bottomLeft, topRight or topLeft), its little words (`quips`,
-`quipsPerDay`) and when it dozes (`dozeMinutes`).
+`quipsPerDay`) and when it dozes (`dozeMinutes`). **Smart clipboard**: on or
+off (`ai.clipboard.enable`), one switch per kind, and Offer them again.
 `policies.ai` (AI features off) turns all of it off.
 
-The options are under `ai.quick`, `ai.voice`, `ai.agent`, `ai.routing` and `ai.mascot` in the shell's settings, so Nix
+The options are under `ai.quick`, `ai.voice`, `ai.agent`, `ai.routing`, `ai.mascot` and `ai.clipboard` in the shell's settings, so Nix
 can set them like any other (`programs.nixbook-shell.settings.ai.quick.confirm = "actions";`).
 
 From a script: `nixbook-shell ipc call quickAi selection|screen|toggle|close`,

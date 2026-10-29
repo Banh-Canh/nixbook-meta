@@ -963,6 +963,13 @@ in
                   "muse"
                   "toggle"
                 ];
+                # Smart clipboard: the first action offered for what was just
+                # copied (Track it, Add to calendar, Translate…), while its
+                # chips show (they never take the keyboard).
+                "Mod+Alt+V" = [
+                  "smartClipboard"
+                  "run"
+                ];
               }
           )
         )

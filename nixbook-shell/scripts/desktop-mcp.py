@@ -101,8 +101,11 @@ DEFAULT_CONFIG = {
     # desktop, its quip spends model calls outside the day's budget.
     # meeting: the meeting companion listens to a call (meeting_notes reads
     # what it wrote).
+    # smartClipboard: run would take the action offered for what the user
+    # copied, offer would show chips the user never asked for.
     "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay", "quickAi",
-                            "voice", "fullAi", "mascot", "journal", "trust", "orders", "reactor", "meeting"],
+                            "voice", "fullAi", "mascot", "smartClipboard", "journal", "trust", "orders", "reactor",
+                            "meeting"],
     # Functions no agent calls on any target: the user's answers (a
     # background task's approval or question, an offer taken, an Undo, a
     # trust level, a standing order turned on), and fanOut (an order split

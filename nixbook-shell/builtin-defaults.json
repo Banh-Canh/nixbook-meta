@@ -43,6 +43,24 @@
       "quipsPerDay": 6,
       "dozeMinutes": 3
     },
+    "clipboard": {
+      "enable": true,
+      "knownLanguages": [],
+      "currency": "",
+      "kinds": {
+        "tracking": true,
+        "address": true,
+        "date": true,
+        "language": true,
+        "error": true,
+        "url": true,
+        "phone": true,
+        "email": true,
+        "paragraph": true,
+        "code": true,
+        "amount": true
+      }
+    },
     "routing": {
       "decisions": "big",
       "decisionsEffort": "low",

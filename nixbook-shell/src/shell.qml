@@ -57,6 +57,7 @@ ShellRoot {
         NixOnboarding.load()
         FullAi.load()
         MascotState.load()
+        SmartClipboard.load()
         // Autonomy and reactivity: the journal and trust (journal IPC), the
         // background tasks (tasks IPC), the offers before being asked.
         Autonomy.load()

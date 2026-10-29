@@ -27,6 +27,7 @@ import qs.modules.ii.sessionScreen
 import qs.modules.ii.sidebarHandles
 import qs.modules.ii.sidebarLeft
 import qs.modules.ii.sidebarRight
+import qs.modules.ii.smartClipboard
 import qs.modules.ii.splash
 import qs.modules.ii.tasks
 import qs.modules.ii.notesApp
@@ -76,6 +77,7 @@ Scope {
     PanelLoader { component: LayoutRestoreOverlay {} }
     PanelLoader { component: KiroshiScan {} }
     PanelLoader { component: DesktopMascot {} }
+    PanelLoader { component: SmartClipboardChips {} }
     PanelLoader { component: FullAiOverlay {} }
     PanelLoader { component: MeetingCaptions {} }
     // Muse's visible cursor: mapped the first time an agent acts, so above the popups.

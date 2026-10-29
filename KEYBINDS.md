@@ -59,6 +59,7 @@ Niri is column/scroll based; it has no numbered workspaces (workspaces stack ver
 | `Mod+T`            | —                                                        | Talk: push to talk to Quick AI (again: stop and send)           |
 | `Mod+K`            | —                                                        | Kiroshi scan: a brief of what's going on, and tasks to hand off |
 | `Mod+Shift+T`      | —                                                        | Full AI mode: the AI runs the desktop, you talk (again: leaves) |
+| `Mod+Alt+V`        | —                                                        | Smart clipboard: run the first action offered for a copy        |
 | `Ctrl+Space`       | Toggle fcitx5 input method (when `fcitx5Config` enabled) | same                                                            |
 
 nixbook-shell binds all spawn `nixbook-shell ipc call <target> <function>`.

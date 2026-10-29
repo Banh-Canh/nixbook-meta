@@ -33,6 +33,8 @@ import QtQuick
  * errorCopied, services/ContextTriggers.qml), those two moments are offers
  * of the reactor instead (one order on Yes): the hook and the clipboard
  * watcher run for them too, and the old "Explain it" isn't offered twice.
+ * With the smart clipboard on for errors (services/SmartClipboard.qml,
+ * handlesErrors), a copied error gets its chips there instead.
  */
 Singleton {
     id: root
@@ -227,6 +229,8 @@ Singleton {
         if (root._copied[key]) return
         root._copied = Object.assign({}, root._copied, { [key]: true })
         root._add({ kind: "copied", text: text.slice(0, 400) })
+        // The smart clipboard offers it (Explain it · Fix it): not twice.
+        if (SmartClipboard.handlesErrors) return
         if (ContextTriggers.copied(text)) return
         if (root.clipboardErrors)
             Initiative.consider({ event: "happened", what: "copied_error", name: text.split("\n").find(l => /error|exception|panic|fatal|failed/i.test(l)) ?? "",
