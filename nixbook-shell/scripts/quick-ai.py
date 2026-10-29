@@ -477,8 +477,23 @@ def ask(path, argv=None):
         purpose = f"Quick AI: {mode}" + (" (screen)" if req.get("image") else "")
         nixbook_ai.sent_note(purpose, f"{p.label.lower()}:{model}", prompt)
         # Replies come as JSON: only the suggestions are shown.
-        stream = (lambda piece: None) if mode == "reply" else (lambda piece: emit("delta", text=unmask(piece)))
+        # A placeholder split between two pieces ("⟦Person" + " 7 first⟧")
+        # is held back until whole, else it is shown and said as it is.
+        held = [""]
+
+        def stream(piece):
+            if mode == "reply":
+                return
+            s = held[0] + piece
+            open_ = s.rfind("⟦")
+            held[0] = s[open_:] if open_ >= 0 and "⟧" not in s[open_:] and len(s) - open_ < 40 else ""
+            if held[0]:
+                s = s[:open_]
+            if s:
+                emit("delta", text=unmask(s))
         text = answer_text(req, p, system, messages, stream)
+        if held[0]:
+            emit("delta", text=unmask(held[0]))
     except Exception as e:  # noqa: BLE001 — every failure is the card's to show
         emit("error", error=str(e) or e.__class__.__name__)
         emit("done", ms=int((time.monotonic() - started) * 1000))

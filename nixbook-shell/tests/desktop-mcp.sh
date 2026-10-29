@@ -2195,8 +2195,8 @@ expect_contains "pages: a password manager never" "$(call page_read '{"target":"
 out=$(call discord '{"action":"status"}')
 expect_contains "discord status: logged in, the open channel" "$out" "logged in as Me; open: #general (Friends) = 222222222222222222"
 expect_contains "discord find" "$(call discord '{"action":"find","query":"gen"}')" "- channel #general (Friends) = 222222222222222222"
-expect_contains "discord find: nobody, the contact's notes given (their Discord name)" \
-  "$(call discord '{"action":"find","query":"Bob"}')" "- Bob: notes: Discord: bobby_42"
+expect_contains "discord find: nobody by that name, the Discord name in their contact searched" \
+  "$(call discord '{"action":"find","query":"Bob"}')" "Bob's contact gives 'bobby_42' for Discord:"
 out=$(call discord '{"action":"read","channel":"general","limit":2}')
 expect_contains "discord read: who, when, what, its id" "$out" "- 10-28 09:15 ana: lunch? my token is [hidden] ⟨id 555, mentions you⟩"
 expect_contains "discord read: mine, a reply, reactions" "$out" "Me (you): sure ⟨id 556, reply to 555, 👍1⟩"
