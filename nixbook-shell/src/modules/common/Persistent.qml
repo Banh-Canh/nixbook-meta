@@ -76,6 +76,10 @@ Singleton {
                 // ai.voice.speak before Muse's voice was muted (the bubble's
                 // speaker button, `voice toggleMute`): what unmuting gives back.
                 property string speakBeforeMute: ""
+                // Muse's words the user has seen (Initiative.markRead), the
+                // last 300 ids: what is unread gets a small bubble, also
+                // after a restart; what was read doesn't come back.
+                property list<string> initiativeRead: []
             }
 
             property JsonObject cheatsheet: JsonObject {
