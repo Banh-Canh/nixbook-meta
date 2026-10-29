@@ -130,7 +130,7 @@ Singleton {
         const t = new Date();
         const mon = WM.focusedMonitor?.name ?? "";
         return Object.assign({}, ev, { fullAi: full === true, dnd: Notifications.silent === true,
-            meeting: CalendarEvents.eventsOn(t).some(e => !e.allDay && e.start <= t && e.end > t),
+            meeting: CalendarEvents.meetingNow(t),
             fullscreen: mon !== "" && WM.fullscreenOnMonitor(mon), hour: t.getHours(), lang: ConfigAssistant.uiLang() });
     }
     // The triage's verdicts lately, newest last (the IPC status, Settings):
