@@ -1,5 +1,7 @@
 # Nixbook
 
+> **nixbook-meta** is a fork of [didactiklabs/nixbook](https://github.com/didactiklabs/nixbook), made on 25 October 2026 for the Meta Global AI Developer Hackathon. It adds **Muse**, a desktop AI agent running on Meta's Muse models: an agent loop of its own (`nixbook-meta-agent`), voice through Muse Voice Transcribe and MMS-TTS, Full AI mode, the Kiroshi scan, the meeting companion, the smart clipboard and more. Everything up to the fork point (`597b2280`), including nixbook-shell (itself begun as a fork of [pctrade/end4-pC](https://github.com/pctrade/end4-pC), from end-4's illogical-impulse) and its desktop-control MCP server, comes from nixbook. The rest of this README is nixbook's.
+
 [![Build Totoro](https://github.com/didactiklabs/nixbook/actions/workflows/build-totoro.yaml/badge.svg)](https://github.com/didactiklabs/nixbook/actions/workflows/build-totoro.yaml)
 [![Build nishinoya](https://github.com/didactiklabs/nixbook/actions/workflows/build-nishinoya.yaml/badge.svg)](https://github.com/didactiklabs/nixbook/actions/workflows/build-nishinoya.yaml)
 [![Build anya](https://github.com/didactiklabs/nixbook/actions/workflows/build-anya.yaml/badge.svg)](https://github.com/didactiklabs/nixbook/actions/workflows/build-anya.yaml)
