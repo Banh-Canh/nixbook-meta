@@ -53,6 +53,11 @@ IPC = {
         "arrêter (mettre en pause) les agents IA qui contrôlent le bureau, ou les autoriser à nouveau : la touche d'urgence",
         "die KI-Agenten, die den Desktop steuern, stoppen (pausieren) oder wieder erlauben: die Nottaste",
         "dừng (tạm dừng) các tác nhân AI đang điều khiển màn hình, hoặc cho phép lại: phím khẩn cấp"),
+    ("meeting", "toggle"): t(
+        "start or stop Muse taking notes of a call, any app (live captions, then a summary with tasks and a follow-up)",
+        "lancer ou arrêter la prise de notes d'un appel par Muse, n'importe quelle app (sous-titres en direct, puis un résumé avec tâches et suivi)",
+        "Muse Notizen zu einem Anruf machen lassen oder damit aufhören, mit jeder App (Live-Untertitel, dann eine Zusammenfassung mit Aufgaben und Nachfassung)",
+        "bắt đầu hoặc dừng việc Muse ghi chép một cuộc gọi, ứng dụng nào cũng được (phụ đề trực tiếp, rồi bản tóm tắt với việc cần làm và thư tiếp theo)"),
     ("smartClipboard", "run"): t(
         "run the smart clipboard's first action for what you just copied (track a parcel, add a date to the calendar, translate…)",
         "lancer la première action du presse-papiers intelligent pour ce que vous venez de copier (suivre un colis, ajouter une date à l'agenda, traduire…)",

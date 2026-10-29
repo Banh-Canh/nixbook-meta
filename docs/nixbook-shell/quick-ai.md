@@ -511,9 +511,13 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 
 ## Meeting companion
 
-Muse listens to a call and helps while it goes on.
+Muse listens to a call and helps while it goes on. **Any call, whatever the
+app** (Discord, Meet, Zoom, Slack, a phone call on speaker…): it listens to
+what your computer plays and to your microphone, not to an app; the app
+detection below only decides when it offers itself and when it stops alone.
 
-- **Start it**: say or type _take notes_ in the bubble (Mod+C, or Mod+T to say
+- **Start it**: **Mod+Alt+N** (again: stop, and the summary is written), or
+  say or type _take notes_ in the bubble (Mod+C, or Mod+T to say
   it; also in French, German and Vietnamese), click **Take notes** when Muse
   offers it — a calendar event with a link starting, or a call app (Zoom,
   Teams, Meet in the browser, Discord, Vesktop, Slack…) taking the microphone —

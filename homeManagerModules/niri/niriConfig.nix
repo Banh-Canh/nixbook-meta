@@ -963,6 +963,13 @@ in
                   "muse"
                   "toggle"
                 ];
+                # The meeting companion: Muse takes notes of any call (what the
+                # computer plays and the microphone, whatever the app);
+                # again: stops and writes the summary.
+                "Mod+Alt+N" = [
+                  "meeting"
+                  "toggle"
+                ];
                 # Smart clipboard: the first action offered for what was just
                 # copied (Track it, Add to calendar, Translate…), while its
                 # chips show (they never take the keyboard).
