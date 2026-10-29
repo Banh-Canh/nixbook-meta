@@ -58,11 +58,14 @@ Singleton {
     // A web link also brings the browser to the front: a running one opens
     // the tab in its window without being focused (niri doesn't activate a
     // window for the remote call), so the link seemed to do nothing.
+    // A link opened (NextUp counts the user's habits from it).
+    signal urlOpened(string url)
     function openUrl(url) {
         const u = String(url ?? "");
         if (u.length === 0)
             return;
         root.spawn(["xdg-open", u]);
+        root.urlOpened(u);
         if (/^https?:\/\//i.test(u)) {
             if (!browserQuery.queried) {
                 browserQuery.queried = true;

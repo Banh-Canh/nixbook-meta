@@ -66,6 +66,8 @@ ShellRoot {
         // The meeting companion: its `meeting` IPC target, the offers, the
         // old transcripts pruned.
         Meeting.load()
+        // "Next up": its IPC target (the accept key) from the start.
+        NextUp.load()
     }
     
     PanelFamilyLoader {

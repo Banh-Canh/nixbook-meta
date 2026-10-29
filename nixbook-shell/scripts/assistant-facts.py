@@ -58,6 +58,11 @@ IPC = {
         "lancer la première action du presse-papiers intelligent pour ce que vous venez de copier (suivre un colis, ajouter une date à l'agenda, traduire…)",
         "die erste Aktion der intelligenten Zwischenablage für das gerade Kopierte ausführen (Paket verfolgen, Termin eintragen, übersetzen…)",
         "chạy hành động đầu tiên của bộ nhớ tạm thông minh cho thứ bạn vừa sao chép (theo dõi bưu kiện, thêm ngày vào lịch, dịch…)"),
+    ("predict", "accept"): t(
+        "do the next step Muse offers in its \"Next: …\" chip beside the mascot (Next up)",
+        "faire l'étape suivante que Muse propose dans sa pastille « Ensuite : … » à côté de la mascotte (Ensuite)",
+        "den nächsten Schritt tun, den Muse im Chip „Als Nächstes: …“ neben dem Maskottchen anbietet (Als Nächstes)",
+        "làm bước tiếp theo mà Muse gợi ý trong mẩu \"Tiếp theo: …\" cạnh linh vật (Tiếp theo)"),
     ("search", "clipboardToggle"): t(
         "open the clipboard history",
         "ouvrir l'historique du presse-papiers",

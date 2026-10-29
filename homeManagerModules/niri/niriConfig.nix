@@ -970,6 +970,12 @@ in
                   "smartClipboard"
                   "run"
                 ];
+                # "Next up": do the step the chip beside the mascot offers
+                # (nothing when none is offered).
+                "Mod+Shift+Return" = [
+                  "predict"
+                  "accept"
+                ];
               }
           )
         )

@@ -165,6 +165,8 @@ Singleton {
     }
     // "time\texit\tcwd\tcommand", the last failed command (overwritten).
     property string _lastLine: ""
+    // A command failed in a terminal (NextUp: what came next).
+    signal failedCommand(string command, string cwd)
     property var _fails: ({})
     property var _offered: ({})
     FileView {
@@ -186,6 +188,7 @@ Singleton {
         if (first && Date.now() - t > 60000) return
         if (!command || !cwd.startsWith("/")) return
         root._add({ kind: "command", command: command, cwd: cwd, exit: Number(exit) })
+        root.failedCommand(command, cwd)
         if (!root.terminal && !ContextTriggers.commandFailedAgain) return
         const now = Date.now()
         const before = (root._fails[command] ?? []).filter(x => now - x < 10 * 60000)

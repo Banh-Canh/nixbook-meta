@@ -36,7 +36,10 @@ Singleton {
         // journal of what Muse did and its Undo, the standing orders; the
         // instant triage in front of the model (services/Reactor.qml).
         trust: ["check", "record", "set", "list"], journal: ["add", "list", "undo"],
-        order: ["add", "accept", "decline", "list"], triage: ["score"]
+        order: ["add", "accept", "decline", "list"], triage: ["score"],
+        // "Next up" (services/NextUp.qml): what happened counted, and the
+        // step to offer, on every focus change.
+        predict: ["observe", "offer", "feedback", "explain", "status", "show", "unmute"]
     })
 
     function takes(argv) {

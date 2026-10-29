@@ -312,6 +312,15 @@ Singleton {
         }
     }
 
+    // "Next up" offered a step (its chip sits beside the mascot): it perks
+    // up, so the eye goes to the chip.
+    Connections {
+        target: NextUp
+        function onOffered(offer) {
+            if (root.asleep) return;
+            root.reaction("perk");
+        }
+    }
     IpcHandler {
         target: "mascot"
         function show(): void { root.hiddenByUser = false; }

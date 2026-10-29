@@ -1472,6 +1472,60 @@ ContentPage {
             }
         }
 
+        // "Next up" (services/NextUp.qml, nixbook-desktop-mcp predict).
+        ContentSection {
+            icon: "magic_button"
+            title: Translation.tr("Next up")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Muse gets ahead of you: from what you usually do after something (an app, a meeting ending, a download, a pull request, the time of day), it offers the likely next step as one quiet chip beside the mascot, \"Next: open Jira\". Guessed on this computer, in plain code, no model. A click or Super+Shift+Enter does it; left alone it fades after 12 seconds; right click: Not now, Never after this, Never suggest this. It learns from each answer. Hover the chip to see why it offers it. Nothing while Do Not Disturb, a meeting, a fullscreen window or quiet hours; a follow-up (writing a meeting's recap…) is done by Muse, only with AI online.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.predict.enable"
+                    buttonIcon: "magic_button"
+                    text: Translation.tr("Offer the next step before I ask")
+                    checked: Config.options.ai.predict.enable
+                    onCheckedChanged: Config.options.ai.predict.enable = checked
+                }
+            }
+            ConfigSpinBox {
+                configKey: "ai.predict.threshold"
+                icon: "percent"
+                text: Translation.tr("Only when this sure (%)")
+                value: Math.round((Config.options.ai.predict.threshold ?? 0.5) * 100)
+                from: 20; to: 95; stepSize: 5
+                onValueChanged: Config.options.ai.predict.threshold = value / 100
+            }
+            ConfigSpinBox {
+                configKey: "ai.predict.minCount"
+                icon: "repeat"
+                text: Translation.tr("Only after seeing it this many times")
+                value: Config.options.ai.predict.minCount ?? 4
+                from: 1; to: 30; stepSize: 1
+                onValueChanged: Config.options.ai.predict.minCount = value
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    font.pixelSize: Appearance.font.pixelSize.small
+                    text: NextUp.lastWhy.length > 0 ? Translation.tr("Last look: %1").arg(NextUp.lastWhy) : ""
+                }
+                SmallButton {
+                    materialIcon: "restart_alt"
+                    mainText: Translation.tr("Offer the muted ones again")
+                    onClicked: DesktopHelper.run(["predict", "unmute"], "", () => {})
+                }
+            }
+        }
+
         // The meeting companion (services/Meeting.qml, nixbook-meeting).
         ContentSection {
             icon: "record_voice_over"

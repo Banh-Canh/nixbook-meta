@@ -82,6 +82,8 @@ Scope {
     PanelLoader { component: MeetingCaptions {} }
     // Muse's visible cursor: mapped the first time an agent acts, so above the popups.
     PanelLoader { component: AgentCursorOverlay {} }
+    // "Next up": one chip beside the desktop mascot, mapped only while offering.
+    PanelLoader { component: NextUpChip {} }
     // Loading screen while the Preloader builds every popup (last, so it is
     // stacked above the other overlay surfaces mapped during boot).
     PanelLoader { component: BootSplash {} }

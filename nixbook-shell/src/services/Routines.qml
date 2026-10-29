@@ -103,6 +103,8 @@ Singleton {
 
     // Everything it sees happen, routines or not (Initiative.qml reacts to some).
     signal happened(var ev)
+    // A routine's run did its action (NextUp: what the user does after).
+    signal ran(var routine)
 
     // A digest on (do.digest, or a step of it): what happens is collected
     // for it between its runs.
@@ -148,6 +150,7 @@ Singleton {
             if (out.ran && (!music || root._musicNow() !== before))
                 root._fired = Object.assign({}, root._fired, { [r.id]: { time: Date.now(), music: music,
                     app: String(root._steps(r).find(s => s.tool === "launch_app")?.args?.app ?? "").toLowerCase() } })
+            if (out.ran) root.ran(r)
             const said = out.said && !out.said.endsWith(": done.") ? out.said : ""
             root.note(r.text, out.ran ? (said ? Translation.tr("ran: %1").arg(said) : Translation.tr("ran")) : out.why)
         } catch (e) {

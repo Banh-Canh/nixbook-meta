@@ -156,6 +156,11 @@
         "errorDialog": true
       }
     },
+    "predict": {
+      "enable": true,
+      "threshold": 0.5,
+      "minCount": 4
+    },
     "terminal": {
       "read": true,
       "suggest": true,

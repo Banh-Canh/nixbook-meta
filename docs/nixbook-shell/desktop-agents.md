@@ -490,6 +490,52 @@ At moments where one concrete thing would help, Muse offers it in the bubble, wi
 
 **Yes** gives that order to Muse in the bubble, **Not now** lets it go, **Never for this** stops that offer for 30 days (for that command or window; for every error copied or meeting) and keeps it as a preference Muse knows. Each kind waits 30 minutes before offering again. The words are plain code in your language (a small model names the error when the template has nothing to quote), within the same day's budget and quiet hours as everything Muse says. Offers need **Talk to me on its own** and the online model, and never come while the screen is locked or an agent drives the desktop. **Offer them again** (Settings) brings the stopped ones back.
 
+### Next up
+
+Muse gets ahead of you: the step you most likely take next, offered before you ask, as **one quiet chip beside the mascot**, "Next: open Jira ⇧⏎". Hover it for why ("You usually open Jira after your 09:00 Daily standup — 14 times"). **Click** it or press **`Mod+Shift+Return`** to do it; left alone it fades after 12 seconds; **right click**: Not now, Never after this, Never suggest this. It never takes the keyboard.
+
+It is guessed on this computer in plain code, no model, in a few milliseconds (`nixbook-desktop-mcp predict`, on the shell's helper). The shell tells it what you do and what happens:
+
+- **steps** (what it can offer, each done in one go as your own action): an app used (in front 5 seconds: focused if open, else started), a window layout restored, a link opened through the shell, a timer or a focus session (pomodoro) started, a routine run;
+- **cues** (what came just before): the last step, and events since: a meeting over (a timed calendar event ending, by its title: "after your 09:00 standup"), a download (by file type), a pull or merge request open in the browser (from its title), a command failing in a terminal, the day starting, unlocking, back from a break, a monitor, Wi-Fi network, audio output or Bluetooth device connecting, a routine having run.
+
+Each step is counted as what followed its cues, overall and by time of day (3-hour buckets, weekdays and weekends apart), every count halved after 3 weeks; when nothing just happened, the time of day alone. A step is offered only when its odds are at least **threshold** (50 %) and it was seen at least **minCount** times (4) after that cue; never the app already in front or a step just taken, the same one not again within 20 minutes, 6 offers an hour at most, nothing in quiet hours (`initiativeQuietHours`), with Do Not Disturb, in a meeting, over a fullscreen window, while locked, in Full AI mode, while Muse's bubble talks or while an agent drives the desktop.
+
+It learns from each answer: taken, the step counts again; let fade, "nothing" counts after its cue (its odds drop) and it rests 45 minutes; **Not now**, twice that, its count cut by 30 % and a 4-hour rest; **Never after this** mutes it after that cue, **Never suggest this** everywhere (Settings: **Offer the muted ones again**). A step you take by hand while it is offered counts as a good guess.
+
+**Follow-ups** are Muse's work, offered from the start after some events and learning the same way: after a meeting, "write the follow-up of “Daily standup”"; after a pull request, "review this pull request"; after a PDF download, "summarize it". Taken, they are an order for Muse in its bubble (a model), so only with AI online (`policies.ai` 1); plain steps also work with local AI only (2), and nothing at all with AI off (0).
+
+Private windows (`habitsIgnoreApps`, `habitsIgnoreTitles`: password managers, private browsing) are never counted, window titles never kept, links kept without their query. Everything stays in `~/.local/state/nixbook-shell/predictions.json` (0600, bounded: 300 cues, 16 steps after each, the last 60 events). Agents can't feed, answer or seed it (the `predict` IPC target and the CLI's `observe`, `feedback`, `seed`, `unmute`, `clear` are the user's).
+
+**Settings → Desktop agents → Next up**: the switch (`ai.predict.enable`), **Only when this sure** (`ai.predict.threshold`), **Only after seeing it this many times** (`ai.predict.minCount`). From a terminal:
+
+```sh
+nixbook-desktop-mcp predict show            # what it learned, strongest first
+nixbook-desktop-mcp predict explain         # the cues now, the candidates, what holds each back
+nixbook-desktop-mcp predict seed demo.json  # learned steps given (a demo)
+nixbook-shell ipc call predict offerNow     # the best step now, past the bar (a demo)
+nixbook-shell ipc call predict explain      # why the chip offers what it offers
+```
+
+A seed file gives labels and transitions (`from` a cue, `to` a step, `count`, the time `at` and `weekend`), or observations replayed:
+
+```json
+{
+  "labels": {
+    "app:jira": { "name": "Jira" },
+    "meeting_end:daily standup": { "name": "Daily standup", "at": "09:00" }
+  },
+  "transitions": [
+    {
+      "from": "meeting_end:daily standup",
+      "to": "app:jira",
+      "count": 14,
+      "at": "09:30"
+    }
+  ]
+}
+```
+
 ## Fixes it makes itself
 
 On machines that have it (totoro), tell an agent something of nixbook is broken ("report this") and, with **Fixes it makes itself** on, its `report_problem` tool files it for the fixer. The fixer makes a small fix in a confined `nixbook-meta-agent` session (Muse), checks it and opens a pull request you merge. Ask for something new instead ("I wish the bar showed…") and, with **Features it builds** on, its `request_feature` tool files it as a feature request: built the same way but bigger, never merged on its own. A fix found too big becomes a feature request by itself, and the agent may propose a fix or feature from what it saw get in your way. Ask "did you file it?" or "how's my feature going?" and its read-only `list_requests` tool shows what was filed: when, by whom (you or the fixer itself), and whether it is queued, building, a pull request (its link and checks), merged, dropped or too big. Say "build it now" (or "fix it now") and it starts at once, as **Build now** in Settings. See [Fixes it makes itself](./self-improve).

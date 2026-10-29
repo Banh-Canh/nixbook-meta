@@ -77,6 +77,8 @@ Singleton {
         // neither tells the agent of it nor asks it to make way).
         if (AgentCursor.shown) out.push("agentCursor")
         if (Meeting.shown) out.push("meetingCaptions")
+        // "Next up"'s chip: click-through but the pill, gone from screenshots.
+        if (NextUp.offer !== null) out.push("nextUp")
         return out
     }
     onOverlaysChanged: overlaysWrite.restart()

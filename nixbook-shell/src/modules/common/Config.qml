@@ -610,6 +610,16 @@ Singleton {
                         property bool errorDialog: true
                     }
                 }
+                // "Next up" (services/NextUp.qml): the step the user likely
+                // takes next, offered as one chip beside the desktop mascot,
+                // guessed in plain code from what they did before (no model):
+                // only when its odds are at least `threshold` and it was seen
+                // at least `minCount` times after the same thing.
+                property JsonObject predict: JsonObject {
+                    property bool enable: true
+                    property real threshold: 0.5
+                    property int minCount: 4
+                }
                 // Muse in the terminal and the editor (nixbook-desktop-mcp's
                 // `terminal` tools, kitty's remote control and nvim's server):
                 // `read`, the kitty windows and what they show (the last

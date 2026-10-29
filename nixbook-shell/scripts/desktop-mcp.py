@@ -103,9 +103,11 @@ DEFAULT_CONFIG = {
     # what it wrote).
     # smartClipboard: run would take the action offered for what the user
     # copied, offer would show chips the user never asked for.
+    # predict: "Next up" offers are the user's to take (accept runs the step
+    # as the user's own), and offerNow would let an agent make one up.
     "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay", "quickAi",
                             "voice", "fullAi", "mascot", "smartClipboard", "journal", "trust", "orders", "reactor",
-                            "meeting"],
+                            "meeting", "predict"],
     # Functions no agent calls on any target: the user's answers (a
     # background task's approval or question, an offer taken, an Undo, a
     # trust level, a standing order turned on), and fanOut (an order split
@@ -20345,6 +20347,860 @@ def offer_consider(cfg, kind, event, now):
 
 
 # --------------------------------------------------------------------------
+# "Next up" predictions
+# --------------------------------------------------------------------------
+# Muse getting ahead of the user (ai.predict; services/NextUp.qml, its chip
+# beside the desktop mascot): the step the user most likely takes next,
+# guessed in plain code — no model, a few milliseconds on the helper — from
+# what they did before. The shell tells `predict observe` what happens: an
+# action (an app used a few seconds, a layout restored, a link opened, a
+# timer or a focus session started, a routine run by hand) or an event (a
+# meeting over, a download, a pull request opened, a command failing, the
+# day starting, unlocking, back from a break…).
+#
+# The model: each action is counted as the next step of its cues — the events
+# since the last action (within PREDICT_EVENT_WINDOW: a meeting's specific
+# key "meeting_end:<its words>", then the kind) and the last action (within
+# PREDICT_ACTION_WINDOW) — a first-order Markov chain over normalized
+# actions, overall and by time of day (3-hour buckets, weekdays and weekends
+# apart), every count halved after PREDICT_HALF_LIFE; and by time of day
+# alone (the prior, for when nothing just happened). P(next | cue, hour) is
+# the hour's share shrunk towards the overall one (PREDICT_K), with a little
+# of the prior. A step is offered only when it clears the bar: probability at
+# least ai.predict.threshold, seen at least ai.predict.minCount times, not
+# turned down, muted, done or offered lately, at most PREDICT_PER_HOUR an
+# hour, never in quiet hours.
+#
+# Learning: taken, it is counted again (PREDICT_ACCEPT_BONUS); let fade, a
+# "nothing" is counted after its cue (its share drops) and it rests
+# PREDICT_COOL_IGNORED; "Not now", twice that, its count cut, a longer rest;
+# "Never" mutes it after that cue, or anywhere. Follow-ups (after a meeting, a
+# pull request, a PDF downloaded) start from a built-in weight
+# (PREDICT_FOLLOWUPS) and learn the same way; taken, they are an order for
+# Muse (a model), so only with policies.ai 1. Nothing at all with AI off.
+# Private windows (habitsIgnoreApps/Titles) are never counted, window titles
+# never kept, links without their query. predictions.json, 0600, bounded.
+PREDICT_HALF_LIFE = 21 * 86400
+PREDICT_ACTION_WINDOW = 15 * 60
+PREDICT_EVENT_WINDOW = 10 * 60
+PREDICT_SAME_AGAIN = 120  # s: back to the same action this soon is one use
+PREDICT_K = 2.0  # how much the overall share weighs against the hour's own
+PREDICT_PRIOR_SHARE = 0.15  # the time of day's part when something just happened
+PREDICT_ACCEPT_BONUS = 0.5
+PREDICT_NONE = "_none"  # what came after a cue when its offer was let go
+PREDICT_COOL_IGNORED = 45 * 60
+PREDICT_COOL_DISMISSED = 4 * 3600
+PREDICT_REOFFER = 20 * 60  # the same step not offered again this soon, whatever came of it
+PREDICT_JUST_DONE = 10 * 60  # nor a step the user just took
+PREDICT_PER_HOUR = 6
+PREDICT_MAX_CUES = 300
+PREDICT_MAX_NEXT = 16
+PREDICT_RECENT = 60
+PREDICT_OFFERS = 60
+PREDICT_THRESHOLD = 0.5
+PREDICT_MIN_COUNT = 4
+PREDICT_EVENTS = {"meeting_end", "download", "pr_page", "command_failed", "day_start", "unlocked", "back",
+                  "monitor_connected", "wifi_connected", "audio_output", "bluetooth_connected", "routine_ran"}
+# A cue -> the follow-up offered after it from the start (Muse does it, a
+# model): its weight before anything is learned (2: let fade three times in a
+# row and it falls under the default threshold).
+PREDICT_FOLLOWUPS = {"meeting_end": "meeting", "pr_page": "review", "download:pdf": "summarize"}
+PREDICT_FOLLOWUP_PRIOR = 2.0
+PREDICT_OUTCOMES = ("accepted", "ignored", "dismissed", "never", "never_any", "done")
+PREDICT_LANGS = ("en", "fr", "de", "vi")
+
+# The words, in the four languages ({Label}: the step, capitalised).
+PREDICT_SAY = {
+    "chip": {"en": "Next: {label}", "fr": "Ensuite : {label}", "de": "Als Nächstes: {label}", "vi": "Tiếp theo: {label}"},
+    "open": {"en": "open {name}", "fr": "ouvrir {name}", "de": "{name} öffnen", "vi": "mở {name}"},
+    "switch": {"en": "switch to {name}", "fr": "passer à {name}", "de": "zu {name} wechseln", "vi": "chuyển sang {name}"},
+    "layout": {"en": "restore the “{name}” layout", "fr": "restaurer la disposition « {name} »",
+               "de": "die Anordnung „{name}“ wiederherstellen", "vi": "khôi phục bố cục “{name}”"},
+    "timer": {"en": "start a {name}-minute timer", "fr": "lancer un minuteur de {name} min",
+              "de": "einen {name}-Minuten-Timer starten", "vi": "hẹn giờ {name} phút"},
+    "focus": {"en": "start a focus session", "fr": "lancer une session de concentration",
+              "de": "eine Fokus-Sitzung starten", "vi": "bắt đầu một phiên tập trung"},
+    "routine": {"en": "run “{name}”", "fr": "lancer « {name} »", "de": "„{name}“ ausführen", "vi": "chạy “{name}”"},
+    "followup:meeting": {"en": "write the follow-up of “{name}”", "fr": "rédiger le compte rendu de « {name} »",
+                         "de": "das Follow-up zu „{name}“ schreiben", "vi": "viết biên bản cuộc họp “{name}”"},
+    "followup:meeting-": {"en": "write the meeting's follow-up", "fr": "rédiger le compte rendu de la réunion",
+                          "de": "das Follow-up zum Meeting schreiben", "vi": "viết biên bản cuộc họp"},
+    "followup:review": {"en": "review this pull request", "fr": "relire cette pull request",
+                        "de": "diesen Pull Request prüfen", "vi": "xem lại pull request này"},
+    "followup:summarize": {"en": "summarize {name}", "fr": "résumer {name}", "de": "{name} zusammenfassen",
+                           "vi": "tóm tắt {name}"},
+    "usually": {"en": "You usually {label} {after} — {n} times", "fr": "{Label} : ce que tu fais d'habitude {after} ({n} fois)",
+                "de": "{Label}: das machst du meistens {after} ({n}-mal)", "vi": "Bạn thường {label} {after} — {n} lần"},
+    "builtin": {"en": "Muse offers this {after}: take it or let it fade, it learns",
+                "fr": "Muse le propose {after} : accepte ou laisse filer, il apprend",
+                "de": "Muse bietet das {after} an: annehmen oder verblassen lassen, es lernt dazu",
+                "vi": "Muse gợi ý việc này {after}: nhận hoặc bỏ qua, nó sẽ học"},
+}
+# "after …" for each kind of cue.
+PREDICT_AFTER = {
+    "app": {"en": "after {name}", "fr": "après {name}", "de": "nach {name}", "vi": "sau khi dùng {name}"},
+    "layout": {"en": "after the “{name}” layout", "fr": "après la disposition « {name} »",
+               "de": "nach der Anordnung „{name}“", "vi": "sau bố cục “{name}”"},
+    "url": {"en": "after opening {name}", "fr": "après avoir ouvert {name}", "de": "nachdem du {name} öffnest",
+            "vi": "sau khi mở {name}"},
+    "timer": {"en": "after starting a timer", "fr": "après un minuteur", "de": "nach einem Timer", "vi": "sau khi hẹn giờ"},
+    "focus": {"en": "after starting a focus session", "fr": "après une session de concentration",
+              "de": "nach einer Fokus-Sitzung", "vi": "sau một phiên tập trung"},
+    "routine": {"en": "after “{name}”", "fr": "après « {name} »", "de": "nach „{name}“", "vi": "sau “{name}”"},
+    "meeting_end:": {"en": "after your {at} {name}", "fr": "après « {name} » de {at}", "de": "nach „{name}“ um {at}",
+                     "vi": "sau cuộc họp “{name}” lúc {at}"},
+    "meeting_end:-": {"en": "after “{name}”", "fr": "après « {name} »", "de": "nach „{name}“", "vi": "sau cuộc họp “{name}”"},
+    "meeting_end": {"en": "after a meeting", "fr": "après une réunion", "de": "nach einem Meeting", "vi": "sau một cuộc họp"},
+    "download:": {"en": "after downloading a {name} file", "fr": "après le téléchargement d'un fichier {name}",
+                  "de": "nach dem Download einer {name}-Datei", "vi": "sau khi tải một tệp {name}"},
+    "download": {"en": "after a download", "fr": "après un téléchargement", "de": "nach einem Download",
+                 "vi": "sau khi tải xuống"},
+    "pr_page": {"en": "after opening a pull request", "fr": "après l'ouverture d'une pull request",
+                "de": "nach dem Öffnen eines Pull Requests", "vi": "sau khi mở một pull request"},
+    "command_failed:": {"en": "when “{name}” fails", "fr": "quand « {name} » échoue", "de": "wenn „{name}“ fehlschlägt",
+                        "vi": "khi “{name}” bị lỗi"},
+    "command_failed": {"en": "when a command fails", "fr": "quand une commande échoue",
+                       "de": "wenn ein Befehl fehlschlägt", "vi": "khi một lệnh bị lỗi"},
+    "day_start": {"en": "when your day starts", "fr": "en début de journée", "de": "zum Tagesbeginn",
+                  "vi": "khi bắt đầu ngày"},
+    "unlocked": {"en": "when you unlock", "fr": "quand tu déverrouilles", "de": "nach dem Entsperren",
+                 "vi": "khi mở khóa máy"},
+    "back": {"en": "when you're back", "fr": "à ton retour", "de": "wenn du zurück bist", "vi": "khi bạn quay lại"},
+    "routine_ran": {"en": "after a routine", "fr": "après une routine", "de": "nach einer Routine", "vi": "sau một routine"},
+    "connected": {"en": "when {name} connects", "fr": "quand {name} se connecte", "de": "wenn {name} verbunden ist",
+                  "vi": "khi {name} kết nối"},
+    "time:wd": {"en": "around {at} on weekdays", "fr": "vers {at} en semaine", "de": "gegen {at} an Werktagen",
+                "vi": "khoảng {at} ngày thường"},
+    "time:we": {"en": "around {at} at weekends", "fr": "vers {at} le week-end", "de": "gegen {at} am Wochenende",
+                "vi": "khoảng {at} cuối tuần"},
+}
+
+
+def predictions_path():
+    return os.path.join(xdg("XDG_STATE_HOME", "~/.local/state"), "nixbook-shell", "predictions.json")
+
+
+def empty_predictions():
+    # cues {cue: {next: entry}}, prior {bucket: {next: entry}}; an entry
+    # {w: weight, n: times seen, t: when w and h were brought to, h: {bucket:
+    # weight}, builtin?}. labels {key: {name, desktop?, url?, at?}}: how to say
+    # and do it. recent [[time, key, "action"|"event", cues]]. offers [{id,
+    # cue, x, t, p, n, outcome}]. muted {"cue>next" or "*>next": until (0:
+    # for good)}. cool {next: until}.
+    return {"version": 1, "cues": {}, "prior": {}, "labels": {}, "recent": [], "offers": [], "muted": {},
+            "cool": {}, "builtins": [], "dayStart": ""}
+
+
+class Predictions(Memory):
+    path = staticmethod(predictions_path)
+    empty = staticmethod(empty_predictions)
+
+    def migrate(self):
+        for k, v in empty_predictions().items():
+            if not isinstance(self.data.get(k), type(v)):
+                self.data[k] = v
+
+    def __exit__(self, exc_type, *rest):
+        try:
+            if self.changed and exc_type is None:
+                predict_prune(self.data, time.time())
+                path = self.path()
+                fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, separators=(",", ":"), ensure_ascii=False)
+                os.replace(path + ".tmp", path)
+        finally:
+            fcntl.flock(self.lockfd, fcntl.LOCK_UN)
+            os.close(self.lockfd)
+
+
+def read_predictions():
+    try:
+        with Predictions() as p:
+            return p.data
+    except OSError:
+        return empty_predictions()
+
+
+def predict_bucket(t, weekend=None):
+    lt = time.localtime(t)
+    we = lt.tm_wday >= 5 if weekend is None else weekend
+    return f"{'we' if we else 'wd'}{lt.tm_hour // 3}"
+
+
+def _pfactor(e, now):
+    return 0.5 ** (max(0.0, now - float(e.get("t", now))) / PREDICT_HALF_LIFE)
+
+
+def _pw(e, now):
+    """An entry's weight now (halved every PREDICT_HALF_LIFE)."""
+    return float(e.get("w", 0)) * _pfactor(e, now)
+
+
+def _ph(e, now, bucket):
+    return float((e.get("h") or {}).get(bucket, 0)) * _pfactor(e, now)
+
+
+def _padd(e, now, bucket, inc=1.0, count=True):
+    """Counted once more (inc in weight), brought to now first."""
+    f = _pfactor(e, now)
+    e["w"] = round(float(e.get("w", 0)) * f + inc, 4)
+    h = {b: round(v * f, 4) for b, v in (e.get("h") or {}).items() if v * f >= 0.01}
+    if bucket:
+        h[bucket] = round(h.get(bucket, 0) + inc, 4)
+    e["h"] = h
+    e["t"] = int(now)
+    if count:
+        e["n"] = int(e.get("n", 0)) + 1
+    return e
+
+
+def predict_url(url):
+    """A link as counted: http(s), host and path only (no query, no fragment)."""
+    import urllib.parse
+    try:
+        u = urllib.parse.urlsplit(str(url or "").strip())
+    except ValueError:
+        return ""
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return ""
+    path = re.sub(r"/+$", "", u.path or "")
+    return f"{u.scheme}://{u.hostname.lower()}{path}"[:200]
+
+
+def _pslug(text, n=4):
+    return " ".join(words(text)[:n])[:60]
+
+
+def predict_norm(obs):
+    """What the shell saw, as counted: (key, "action"|"event", cues it gives,
+    label), or None."""
+    import urllib.parse
+    kind = str(obs.get("kind") or "")
+    name = clean_text(str(obs.get("name") or ""), 80)
+    if kind == "app":
+        app = str(obs.get("app") or "").strip().lower()[:120]
+        if not app or app in LEARN_NOT_APPS or app in HABIT_IGNORED_IDS:
+            return None
+        label = {"name": name} if name else {}
+        if obs.get("desktop"):
+            label["desktop"] = clean_text(str(obs["desktop"]), 120)
+        return f"app:{app}", "action", None, label
+    if kind == "layout":
+        layout = str(obs.get("name") or "")
+        return (f"layout:{layout}", "action", None, {"name": layout}) if re.fullmatch(r"[\w.\-]{1,64}", layout) else None
+    if kind == "url":
+        u = predict_url(obs.get("url"))
+        if not u:
+            return None
+        return f"url:{u}", "action", None, {"name": name or urllib.parse.urlsplit(u).hostname, "url": u}
+    if kind == "timer":
+        try:
+            minutes = int(obs.get("minutes"))
+        except (TypeError, ValueError):
+            return None
+        return (f"timer:{minutes}", "action", None, {"name": str(minutes)}) if 1 <= minutes <= 600 else None
+    if kind == "focus":
+        return "focus", "action", None, {}
+    if kind == "routine":
+        rid = str(obs.get("id") or "")
+        return (f"routine:{rid}", "action", None, {"name": name}) if re.fullmatch(r"[\w-]{1,40}", rid) else None
+    if kind == "event":
+        ev = str(obs.get("event") or "")
+        if ev not in PREDICT_EVENTS:
+            return None
+        detail, label = "", {}
+        if ev == "meeting_end":
+            detail = _pslug(obs.get("title") or "")
+            label = {"name": clean_text(str(obs.get("title") or ""), 80), "at": str(obs.get("at") or "")[:5]}
+        elif ev == "download":
+            detail = re.sub(r"[^a-z0-9]", "", str(obs.get("ext") or "").lower())[:8]
+            label = {"name": clean_text(str(obs.get("name") or ""), 120), "path": str(obs.get("path") or "")[:400]}
+        elif ev == "command_failed":
+            detail = (words(str(obs.get("command") or "")) or [""])[0][:30]
+        elif ev in ("monitor_connected", "wifi_connected", "audio_output", "bluetooth_connected"):
+            detail = _pslug(name, 2)
+        elif ev == "routine_ran":
+            detail = re.sub(r"[^\w-]", "", str(obs.get("id") or ""))[:40]
+            label = {"name": name}
+        elif ev == "pr_page":
+            label = {"name": clean_text(str(obs.get("repo") or ""), 80)}
+        cues = ([f"{ev}:{detail}"] if detail else []) + [ev]
+        return cues[0], "event", cues, label
+    return None
+
+
+def predict_cues(d, now):
+    """What just happened, the cues for the next step: the events since the
+    last action (newest first, each its specific key then its kind; an event
+    already followed by an action has had its step), then the last action."""
+    cues = []
+    for t, key, kind, ctx in reversed(d["recent"]):
+        if kind == "action":
+            if now - t <= PREDICT_ACTION_WINDOW:
+                cues.append(key)
+            break
+        if now - t <= PREDICT_EVENT_WINDOW:
+            cues.extend(c for c in ctx if c not in cues)
+        elif now - t > PREDICT_ACTION_WINDOW:
+            break
+    return cues
+
+
+def predict_record(cfg, d, key, kind, cues_of, label, now):
+    """Counted: an action as the next step of the cues now; an event kept as a
+    cue. False when it isn't counted (said again at once, the day started
+    already today)."""
+    if label:
+        old = d["labels"].get(key) or {}
+        d["labels"][key] = {**old, **{k: v for k, v in label.items() if v}}
+    if kind == "event":
+        if key == "day_start":
+            today = day_of(now)
+            if d.get("dayStart") == today:
+                return False
+            d["dayStart"] = today
+        d["recent"].append([int(now), key, "event", cues_of])
+        # The follow-ups offered from the start after such an event.
+        for c in cues_of:
+            f = PREDICT_FOLLOWUPS.get(c)
+            if f and f"{c}>followup:{f}" not in d["builtins"]:
+                d["builtins"].append(f"{c}>followup:{f}")
+                d["cues"].setdefault(c, {})[f"followup:{f}"] = {"w": PREDICT_FOLLOWUP_PRIOR, "n": 0, "t": int(now),
+                                                                  "h": {}, "builtin": True}
+        d["recent"] = d["recent"][-PREDICT_RECENT:]
+        return True
+    last = next((r for r in reversed(d["recent"]) if r[2] == "action"), None)
+    if last and last[1] == key and now - last[0] <= PREDICT_SAME_AGAIN and d["recent"][-1] is last:
+        last[0] = int(now)  # still at it
+        return False
+    bucket = predict_bucket(now)
+    for c in predict_cues(d, now):
+        if c != key:
+            _padd(d["cues"].setdefault(c, {}).setdefault(key, {}), now, bucket)
+    _padd(d["prior"].setdefault(bucket, {}).setdefault(key, {}), now, bucket)
+    d["recent"].append([int(now), key, "action", [key]])
+    d["recent"] = d["recent"][-PREDICT_RECENT:]
+    # Done by hand while offered: no need to let it fade.
+    for o in d["offers"]:
+        if o.get("outcome") is None and o.get("x") == key:
+            o["outcome"] = "done"
+    return True
+
+
+def predict_prune(d, now):
+    """Bounded: the strongest cues, the strongest steps after each, the last
+    offers and observations, rests and mutes still running."""
+    for table, most in ((d["cues"], PREDICT_MAX_CUES), (d["prior"], 16)):
+        for c in list(table):
+            nexts = table[c]
+            if not isinstance(nexts, dict):
+                del table[c]
+                continue
+            for x in [x for x, e in nexts.items() if _pw(e, now) < 0.02 and not e.get("builtin")]:
+                del nexts[x]
+            if len(nexts) > PREDICT_MAX_NEXT:
+                keep = sorted(nexts, key=lambda x: -_pw(nexts[x], now))[:PREDICT_MAX_NEXT]
+                if PREDICT_NONE in nexts and PREDICT_NONE not in keep:
+                    keep[-1] = PREDICT_NONE
+                table[c] = {x: nexts[x] for x in keep}
+            if not table[c]:
+                del table[c]
+        if len(table) > most:
+            keep = sorted(table, key=lambda c: -sum(_pw(e, now) for e in table[c].values()))[:most]
+            for c in list(table):
+                if c not in keep:
+                    del table[c]
+    d["recent"] = d["recent"][-PREDICT_RECENT:]
+    d["offers"] = d["offers"][-PREDICT_OFFERS:]
+    d["cool"] = {x: u for x, u in d["cool"].items() if u > now}
+    d["muted"] = {k: u for k, u in d["muted"].items() if u == 0 or u > now}
+    d["builtins"] = d["builtins"][-100:]
+    used = set(d["cues"]) | {x for n in d["cues"].values() for x in n} | {x for n in d["prior"].values() for x in n} \
+        | {r[1] for r in d["recent"]} | {c for r in d["recent"] for c in r[3]}
+    d["labels"] = {k: v for k, v in d["labels"].items() if k in used}
+
+
+def predict_options(cfg, opts):
+    """The bar to clear (the shell sends its settings with each call; the
+    command line reads them)."""
+    def num(key, default, cast):
+        v = opts.get(key)
+        if v is None:
+            v = shell_setting(f"ai.predict.{key}", default)
+        try:
+            return cast(v)
+        except (TypeError, ValueError):
+            return default
+    return num("threshold", PREDICT_THRESHOLD, float), max(1, num("minCount", PREDICT_MIN_COUNT, int))
+
+
+def predict_candidates(cfg, d, opts, now, cues=None):
+    """Every step it could offer now, best first: [{x, cue, p, n, builtin,
+    why}] — `why` is what keeps it from being offered ("" when nothing). A
+    step the user was seen taking comes before a built-in follow-up not yet
+    taken minCount times, whatever their odds (what the user does wins over
+    what Muse guesses)."""
+    threshold, min_count = predict_options(cfg, opts)
+    cues = predict_cues(d, now) if cues is None else cues
+    bucket = predict_bucket(now)
+    prior = d["prior"].get(bucket) or {}
+    prior_total = sum(_pw(e, now) for e in prior.values())
+    focused = str(opts.get("focused") or "").lower()
+    online = ai_policy() == 1
+    just_done = {r[1] for r in d["recent"] if r[2] == "action" and now - r[0] <= PREDICT_JUST_DONE}
+    out = {}
+
+    def consider(x, cue, p, n, builtin):
+        if x == PREDICT_NONE:
+            return
+        why = ""
+        if x == f"app:{focused}":
+            why = "it is in front already"
+        elif x in just_done:
+            why = "just done"
+        elif x.startswith("followup:") and not online:
+            why = "a follow-up needs Muse online (policies.ai 1)"
+        elif d["muted"].get(f"{cue}>{x}") is not None or d["muted"].get(f"*>{x}") is not None:
+            why = "muted"
+        elif d["cool"].get(x, 0) > now:
+            why = "resting after being turned down or offered"
+        elif p < threshold:
+            why = f"below the threshold ({p:.2f} < {threshold:.2f})"
+        elif n + (min_count if builtin else 0) < min_count:
+            why = f"seen {n} times, fewer than {min_count}"
+        c = {"x": x, "cue": cue, "p": round(p, 3), "n": n, "builtin": builtin, "why": why,
+             "fresh": builtin and n < min_count}
+        best = out.get(x)
+        if best is None or (not c["why"], c["p"], c["n"]) > (not best["why"], best["p"], best["n"]):
+            out[x] = c
+
+    for cue in cues:
+        nexts = d["cues"].get(cue) or {}
+        total = sum(_pw(e, now) for e in nexts.values())
+        if total <= 0:
+            continue
+        hour_total = sum(_ph(e, now, bucket) for e in nexts.values())
+        for x, e in nexts.items():
+            if x.startswith("followup:"):
+                # Tied to the event, not to an hour (a built-in one has none):
+                # its share after the event.
+                consider(x, cue, _pw(e, now) / total, int(e.get("n", 0)), bool(e.get("builtin")))
+                continue
+            # This hour's share, shrunk towards the overall one, then a little
+            # of how much the step is done at this hour at all.
+            p = (_ph(e, now, bucket) + PREDICT_K * _pw(e, now) / total) / (hour_total + PREDICT_K)
+            share = _pw(prior[x], now) / prior_total if x in prior and prior_total > 0 else 0.0
+            p = (1 - PREDICT_PRIOR_SHARE) * p + PREDICT_PRIOR_SHARE * share
+            consider(x, cue, p, int(e.get("n", 0)), bool(e.get("builtin")))
+    if not cues and prior_total > 0:
+        # Nothing just happened: the time of day alone.
+        for x, e in prior.items():
+            consider(x, f"time:{bucket}", _pw(e, now) / prior_total, int(e.get("n", 0)), False)
+    return sorted(out.values(), key=lambda c: (bool(c["why"]), c["fresh"], -c["p"], -c["n"]))
+
+
+def _pcap(s):
+    return s[:1].upper() + s[1:]
+
+
+def predict_lang(lang):
+    lang = str(lang or "en")[:2].lower()
+    return lang if lang in PREDICT_LANGS else "en"
+
+
+def predict_name(d, key):
+    """How a step or a cue is named: its label's name, else the app's."""
+    import urllib.parse
+    label = d["labels"].get(key) or {}
+    if label.get("name"):
+        return label["name"]
+    kind, _, value = key.partition(":")
+    if kind == "app":
+        apps = applications()
+        desktop = label.get("desktop") or desktop_for_app(value, apps)
+        return (apps.get(desktop) or {}).get("Name") or value.rsplit(".", 1)[-1].replace("-", " ").title()
+    if kind == "url":
+        return urllib.parse.urlsplit(value).hostname or value
+    return value
+
+
+def predict_step_label(d, x, lang, open_apps=(), event=None):
+    kind, _, value = x.partition(":")
+    say = PREDICT_SAY
+    if kind == "app":
+        which = "switch" if value in [str(a).lower() for a in open_apps or []] else "open"
+        return say[which][lang].format(name=predict_name(d, x))
+    if kind == "url":
+        return say["open"][lang].format(name=predict_name(d, x))
+    if kind in ("layout", "timer", "routine"):
+        return say[kind][lang].format(name=predict_name(d, x) if kind != "timer" else value)
+    if x == "focus":
+        return say["focus"][lang]
+    if x == "followup:meeting":
+        title = (event or {}).get("name") or ""
+        return say["followup:meeting" if title else "followup:meeting-"][lang].format(name=title)
+    if x == "followup:summarize":
+        return say["followup:summarize"][lang].format(name=(event or {}).get("name") or "PDF")
+    if x == "followup:review":
+        return say["followup:review"][lang]
+    return x
+
+
+def predict_after(d, cue, lang):
+    """"after your 9:00 standup": the cue, in words."""
+    kind, _, value = cue.partition(":")
+    label = d["labels"].get(cue) or {}
+    if kind == "time":
+        h = int(value[2:] or 0) * 3
+        return PREDICT_AFTER["time:" + value[:2]][lang].format(at=f"{h:02d}:00–{h + 3:02d}:00")
+    if kind in ("app", "layout", "url", "routine"):
+        return PREDICT_AFTER[kind][lang].format(name=predict_name(d, cue))
+    if kind == "timer" or cue == "focus":
+        return PREDICT_AFTER["timer" if kind == "timer" else "focus"][lang]
+    if kind == "meeting_end" and value and label.get("name"):
+        if label.get("at"):
+            return PREDICT_AFTER["meeting_end:"][lang].format(name=label["name"], at=label["at"])
+        return PREDICT_AFTER["meeting_end:-"][lang].format(name=label["name"])
+    if kind in ("download", "command_failed") and value:
+        return PREDICT_AFTER[kind + ":"][lang].format(name=value.upper() if kind == "download" else value)
+    if kind in ("monitor_connected", "wifi_connected", "audio_output", "bluetooth_connected"):
+        return PREDICT_AFTER["connected"][lang].format(name=value or kind.split("_")[0])
+    if kind in PREDICT_AFTER:
+        return PREDICT_AFTER[kind][lang]
+    return cue
+
+
+def predict_event_label(d, cue):
+    """The event behind a cue just now (its title, file…): the follow-ups' words."""
+    for t, key, kind, ctx in reversed(d["recent"]):
+        if kind == "event" and cue in ctx:
+            return d["labels"].get(key) or {}
+        if kind == "action":
+            break
+    return {}
+
+
+def predict_instruction(x, event):
+    """A follow-up's order for Muse (it answers in the user's language)."""
+    name = (event or {}).get("name") or ""
+    if x == "followup:meeting":
+        return (f"The meeting{f' “{name}”' if name else ''} just ended. Write its follow-up for me: a short recap, "
+                "the decisions, and the action items with who does what. Use the calendar event (attendees, notes) and "
+                "anything I wrote about it. Show me the draft; don't send anything.")
+    if x == "followup:review":
+        return (f"I just opened a pull request{f' in {name}' if name else ''} in the browser. Read it from the page and "
+                "review it for me: what it changes, the risks, and the questions worth asking. Don't comment, approve "
+                "or merge anything.")
+    if x == "followup:summarize":
+        path = (event or {}).get("path") or name
+        return f"Summarize the PDF I just downloaded{f': {path}' if path else ''}. Key points first, short."
+    return ""
+
+
+def predict_describe(d, c, lang, opts):
+    """An offer as the shell shows and does it."""
+    x, cue = c["x"], c["cue"]
+    kind, _, value = x.partition(":")
+    event = predict_event_label(d, cue) if kind == "followup" else {}
+    label = predict_step_label(d, x, lang, opts.get("openApps") or (), event)
+    after = predict_after(d, cue, lang)
+    o = {"kind": kind if kind != x else x, "action": x, "cue": cue, "p": c["p"], "n": c["n"], "label": label,
+         "chip": PREDICT_SAY["chip"][lang].format(label=label), "model": kind == "followup",
+         "explain": (PREDICT_SAY["builtin"][lang].format(after=after) if c["builtin"] and c["n"] == 0 else
+                     PREDICT_SAY["usually"][lang].format(label=label, Label=_pcap(label), after=after, n=c["n"]))}
+    lab = d["labels"].get(x) or {}
+    if kind == "app":
+        o["app"] = value
+        o["desktop"] = lab.get("desktop") or desktop_for_app(value, applications()) or ""
+    elif kind == "layout":
+        o["layout"] = value
+    elif kind == "url":
+        o["url"] = lab.get("url") or value
+    elif kind == "timer":
+        o["minutes"] = int(value)
+    elif kind == "routine":
+        o["routine"] = value
+    elif kind == "followup":
+        o["instruction"] = predict_instruction(x, event)
+    return o
+
+
+def predict_make_offer(cfg, d, opts, now, cues=None):
+    """The one step to offer now, or None, and why."""
+    force = opts.get("force") is True
+    if not force and quiet_hours(cfg, now):
+        return None, "quiet hours"
+    if not force and sum(1 for o in d["offers"] if now - o.get("t", 0) < 3600) >= PREDICT_PER_HOUR:
+        return None, f"{PREDICT_PER_HOUR} offers this hour already"
+    cands = predict_candidates(cfg, d, opts, now, cues)
+    if not cands:
+        return None, "nothing learned after this yet"
+    best = cands[0]
+    if best["why"] and not force:
+        return None, f"{best['x']}: {best['why']}"
+    # Forced (a demo's offer-now): the best one past rests and the bar, never
+    # one muted or already in front.
+    hard = ("it is in front already", "muted", "a follow-up needs Muse online (policies.ai 1)")
+    best = next((c for c in cands if c["why"] not in hard), None)
+    if best is None:
+        return None, f"{cands[0]['x']}: {cands[0]['why']}"
+    lang = predict_lang(opts.get("lang"))
+    o = predict_describe(d, best, lang, opts)
+    o["id"] = secrets.token_hex(4)
+    # An earlier one still open was let go (the chip shows one at a time).
+    for prev in d["offers"]:
+        if prev.get("outcome") is None:
+            predict_apply(d, prev, "ignored", now)
+    d["offers"].append({"id": o["id"], "cue": best["cue"], "x": best["x"], "t": int(now), "p": best["p"],
+                        "n": best["n"], "outcome": None})
+    d["cool"][best["x"]] = max(d["cool"].get(best["x"], 0), int(now + PREDICT_REOFFER))
+    return o, ""
+
+
+def predict_table(d, cue):
+    """The steps counted after a cue (the prior's bucket for a time cue)."""
+    if cue.startswith("time:"):
+        return d["prior"].setdefault(cue[5:], {})
+    return d["cues"].setdefault(cue, {})
+
+
+def predict_apply(d, o, outcome, now):
+    """What came of an offer, learned."""
+    cue, x = o.get("cue", ""), o.get("x", "")
+    bucket = predict_bucket(o.get("t", now))
+    nexts = predict_table(d, cue)
+    if outcome == "accepted":
+        # Follow-ups and routines aren't seen happening otherwise: counted here.
+        seen_elsewhere = not (x.startswith("followup:") or x.startswith("routine:"))
+        _padd(nexts.setdefault(x, {}), now, bucket, PREDICT_ACCEPT_BONUS + (0 if seen_elsewhere else 1),
+              count=not seen_elsewhere)
+    elif outcome == "ignored":
+        _padd(nexts.setdefault(PREDICT_NONE, {}), now, bucket)
+        d["cool"][x] = max(d["cool"].get(x, 0), int(now + PREDICT_COOL_IGNORED))
+    elif outcome == "dismissed":
+        _padd(nexts.setdefault(PREDICT_NONE, {}), now, bucket, 2.0)
+        if x in nexts:
+            e = nexts[x]
+            f = _pfactor(e, now)
+            e["w"] = round(float(e.get("w", 0)) * f * 0.7, 4)
+            e["h"] = {b: round(v * f * 0.7, 4) for b, v in (e.get("h") or {}).items()}
+            e["t"] = int(now)
+        d["cool"][x] = max(d["cool"].get(x, 0), int(now + PREDICT_COOL_DISMISSED))
+    elif outcome == "never":
+        d["muted"][f"{cue}>{x}"] = 0
+    elif outcome == "never_any":
+        d["muted"][f"*>{x}"] = 0
+    o["outcome"] = outcome
+
+
+def predict_observe(cfg, obs, now=None):
+    """`predict observe`: counted, then the step to offer now: {recorded,
+    offer, why, done}."""
+    now = float(now if now is not None else obs.get("time") or time.time())
+    if ai_policy() == 0:
+        return {"recorded": False, "offer": None, "why": "AI features are off"}
+    if obs.get("kind") == "app" and habit_private(cfg, str(obs.get("app") or ""), str(obs.get("title") or "")):
+        return {"recorded": False, "offer": None, "why": "a private window: not counted"}
+    if obs.get("kind") == "url" and _any_match(cfg.get("habitsIgnoreTitles"), str(obs.get("url") or "")):
+        return {"recorded": False, "offer": None, "why": "a private page: not counted"}
+    norm = predict_norm(obs)
+    if not norm:
+        return {"recorded": False, "offer": None, "why": "not something counted"}
+    key, kind, cues_of, label = norm
+    with Predictions() as p:
+        d = p.data
+        open_before = {o["id"] for o in d["offers"] if o.get("outcome") is None}
+        recorded = predict_record(cfg, d, key, kind, cues_of, label, now)
+        done = [o["id"] for o in d["offers"] if o["id"] in open_before and o.get("outcome") == "done"]
+        offer, why = (None, "not asked") if obs.get("predict") is False else predict_make_offer(cfg, d, obs, now)
+        p.save()
+    return {"recorded": recorded, "offer": offer, "why": why, **({"done": done} if done else {})}
+
+
+def predict_offer_now(cfg, opts, now=None):
+    now = float(now if now is not None else time.time())
+    if ai_policy() == 0:
+        return {"offer": None, "why": "AI features are off"}
+    with Predictions() as p:
+        offer, why = predict_make_offer(cfg, p.data, opts, now)
+        if offer:
+            p.save()
+    return {"offer": offer, "why": why}
+
+
+def predict_feedback(oid, outcome, now=None):
+    now = float(now if now is not None else time.time())
+    with Predictions() as p:
+        o = next((o for o in p.data["offers"] if o.get("id") == oid), None)
+        if o is None:
+            return False
+        # "Never" after it faded still mutes; the rest only once.
+        if o.get("outcome") is not None and outcome not in ("never", "never_any"):
+            return False
+        predict_apply(p.data, o, outcome, now)
+        p.save()
+    return True
+
+
+def predict_seed(cfg, spec, now=None):
+    """`predict seed FILE`: what it learned, given (a demo, a test): {labels,
+    transitions: [{from, to, count, at?, weekend?}], observations: [{time,
+    kind…}] replayed}. Returns how many of each."""
+    now = float(now if now is not None else time.time())
+    counts = {"transitions": 0, "observations": 0, "labels": 0}
+    for obs in spec.get("observations") or []:
+        if isinstance(obs, dict) and predict_observe(cfg, {**obs, "predict": False}, obs.get("time"))["recorded"]:
+            counts["observations"] += 1
+    with Predictions() as p:
+        d = p.data
+        for key, label in (spec.get("labels") or {}).items():
+            if isinstance(label, dict):
+                d["labels"][str(key)[:200]] = {k: str(v)[:200] for k, v in label.items()}
+                counts["labels"] += 1
+        for t in spec.get("transitions") or []:
+            if not isinstance(t, dict) or not t.get("from") or not t.get("to"):
+                continue
+            try:
+                count = max(1, int(t.get("count", 1)))
+                hh, _, mm = str(t.get("at") or time.strftime("%H:%M", time.localtime(now))).partition(":")
+                lt = time.localtime(now)
+                at = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, int(hh), int(mm or 0), 0, 0, 0, -1))
+            except (TypeError, ValueError):
+                continue
+            bucket = predict_bucket(at, bool(t.get("weekend")) if "weekend" in t else None)
+            cue, x = str(t["from"])[:200], str(t["to"])[:200]
+            e = predict_table(d, cue).setdefault(x, {})
+            _padd(e, now, bucket, float(count), count=False)
+            e["n"] = int(e.get("n", 0)) + count
+            if not cue.startswith("time:") and not x.startswith("followup:"):
+                pe = d["prior"].setdefault(bucket, {}).setdefault(x, {})
+                _padd(pe, now, bucket, float(count), count=False)
+                pe["n"] = int(pe.get("n", 0)) + count
+            counts["transitions"] += 1
+        p.save()
+    return counts
+
+
+def predict_explain(cfg, opts, now=None):
+    """Why it would or wouldn't offer something now: the cues, then the best
+    steps after them with their odds and what holds each back."""
+    now = float(now if now is not None else time.time())
+    d = read_predictions()
+    lang = predict_lang(opts.get("lang"))
+    threshold, min_count = predict_options(cfg, opts)
+    cues = predict_cues(d, now)
+    lines = [f"threshold {threshold:.2f}, at least {min_count} times; quiet hours {'now' if quiet_hours(cfg, now) else 'not now'}",
+             "cues now: " + (", ".join(f"{c} ({predict_after(d, c, lang)})" for c in cues) if cues else
+                             f"none (the time of day alone: {predict_bucket(now)})")]
+    for c in predict_candidates(cfg, d, opts, now, cues)[:8]:
+        say = predict_step_label(d, c["x"], lang, opts.get("openApps") or (), predict_event_label(d, c["cue"]))
+        lines.append(f"  {c['p']:.2f} ×{c['n']}{' (built-in)' if c['builtin'] else ''}  {say}  after {c['cue']}"
+                     f"  — {c['why'] or 'would be offered'}")
+    return "\n".join(lines)
+
+
+def predict_show(d, now, lang="en"):
+    """What it learned, strongest first (Settings, `predict show`)."""
+    rows = []
+    for cue, nexts in d["cues"].items():
+        total = sum(_pw(e, now) for e in nexts.values())
+        for x, e in nexts.items():
+            if x == PREDICT_NONE or total <= 0:
+                continue
+            rows.append({"from": cue, "to": x, "p": round(_pw(e, now) / total, 2), "n": int(e.get("n", 0)),
+                         "builtin": bool(e.get("builtin")),
+                         "say": f"{predict_step_label(d, x, lang)} {predict_after(d, cue, lang)}"})
+    rows.sort(key=lambda r: (-r["n"], -r["p"]))
+    offers = d["offers"][-10:]
+    return {"transitions": rows[:40], "cues": len(d["cues"]), "offers": offers,
+            "taken": sum(1 for o in d["offers"] if o.get("outcome") == "accepted"),
+            "muted": sorted(d["muted"]), "path": predictions_path()}
+
+
+def predict_command(cfg, argv):
+    sub = argv[0] if argv else "show"
+
+    def payload(i):
+        raw = argv[i] if len(argv) > i and argv[i] != "-" else (sys.stdin.read() if len(argv) > i else "{}")
+        try:
+            obj = json.loads(raw or "{}")
+        except ValueError:
+            obj = None
+        if not isinstance(obj, dict):
+            print(f"predict {sub}: a JSON object", file=sys.stderr)
+            return None
+        return obj
+
+    if sub == "observe" and len(argv) in (1, 2):
+        obs = payload(1)
+        if obs is None:
+            return 2
+        print(json.dumps(predict_observe(cfg, obs), ensure_ascii=False))
+        return 0
+    if sub == "offer" and len(argv) <= 2:
+        opts = payload(1) if len(argv) == 2 else {}
+        if opts is None:
+            return 2
+        if "--force" in argv:
+            opts["force"] = True
+        print(json.dumps(predict_offer_now(cfg, opts), ensure_ascii=False))
+        return 0
+    if sub == "feedback" and len(argv) == 3 and argv[2] in PREDICT_OUTCOMES:
+        ok = predict_feedback(argv[1], argv[2])
+        print("ok" if ok else "no such offer, or already answered")
+        return 0 if ok else 1
+    if sub == "show":
+        d = read_predictions()
+        if "--raw" in argv:
+            print(json.dumps(d, ensure_ascii=False, indent=1))
+        else:
+            lang = argv[argv.index("--lang") + 1] if "--lang" in argv[:-1] else "en"
+            print(json.dumps(predict_show(d, time.time(), predict_lang(lang)), ensure_ascii=False, indent=1))
+        return 0
+    if sub == "explain" and len(argv) <= 2:
+        opts = payload(1) if len(argv) == 2 else {}
+        if opts is None:
+            return 2
+        print(predict_explain(cfg, opts))
+        return 0
+    if sub == "seed" and len(argv) == 2:
+        try:
+            with open(argv[1], encoding="utf-8") as f:
+                spec = json.load(f)
+            if not isinstance(spec, dict):
+                raise ValueError
+        except (OSError, ValueError):
+            print("predict seed: a readable JSON file ({labels, transitions, observations})", file=sys.stderr)
+            return 2
+        print(json.dumps(predict_seed(cfg, spec)))
+        return 0
+    if sub == "status":
+        d = read_predictions()
+        print(json.dumps({"enabled": ai_policy() != 0, "cues": len(d["cues"]),
+                          "transitions": sum(len(n) for n in d["cues"].values()),
+                          "recent": len(d["recent"]), "muted": len(d["muted"]),
+                          "taken": sum(1 for o in d["offers"] if o.get("outcome") == "accepted"),
+                          "offers": d["offers"][-5:], "path": predictions_path()}, ensure_ascii=False))
+        return 0
+    if sub == "unmute":
+        with Predictions() as p:
+            p.data["muted"] = {}
+            p.data["cool"] = {}
+            p.save()
+        print("offers muted with Never are back")
+        return 0
+    if sub == "clear":
+        with Predictions():  # not halfway through a write
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(predictions_path())
+        print("forgot what it learned about your next steps")
+        return 0
+    print(USAGE, end="", file=sys.stderr)
+    return 2
+
+
+# --------------------------------------------------------------------------
 # The shell's helper
 # --------------------------------------------------------------------------
 
@@ -20364,6 +21220,9 @@ HELPER_COMMANDS = {
     "prefs": ("add", "list"), "feedback": ("add", "list"), "episode": None,
     "order": ("add", "list", "accept", "decline"), "trust": ("check", "record", "list", "set"),
     "journal": ("add", "list", "undo"), "triage": ("score",),
+    # "Next up" (services/NextUp.qml): what happened, counted and answered
+    # with the step to offer, on every focus change.
+    "predict": ("observe", "offer", "feedback", "explain", "status", "show", "unmute"),
 }
 # The user's own answers, only from the shell (its helper's stdin) and the
 # command line, never on the socket (agents and their tools reach that): a
@@ -20384,6 +21243,10 @@ HELPER_SOCKET_COMMANDS = {
 # agent_environment): desktop control back on, its notice off, what is
 # hidden or was sent forgotten.
 USER_ONLY_COMMANDS = {("resume",), ("notify", "off"), ("notify", "toggle"), ("privacy", "unlearn"),
+                      # What "Next up" learns is the user's doing: no agent
+                      # feeds, answers, seeds or clears it.
+                      ("predict", "observe"), ("predict", "feedback"), ("predict", "seed"), ("predict", "clear"),
+                      ("predict", "unmute"),
                       ("privacy", "clear"), ("sent", "clear")}
 # Commands that may take seconds (a model's answer, a tool to undo): on a
 # thread of their own on stdin too, so the shell's quick ones aren't held.
@@ -20749,6 +21612,17 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
   journal undo ID         the user's Undo (the shell and the command line only)
   triage score EVENT_JSON  a notification or cue, in front of the model, no model:
                           (JSON: verdict drop|direct|model, score, why, text?)
+  predict observe JSON    "Next up": what the shell saw ({kind: app|layout|url|timer|
+                          focus|routine|event…}) counted, then the step to offer now
+                          (JSON: recorded, offer, why); no model
+  predict offer [JSON] [--force]  the step to offer now, nothing counted (--force:
+                          past the threshold, the rests and quiet hours: a demo)
+  predict feedback ID accepted|ignored|dismissed|never|never_any  what came of an offer
+  predict show [--raw] [--lang L] | explain [JSON] | status   what it learned, and why
+                          it would (not) offer something now
+  predict seed FILE       learned steps given ({labels, transitions: [{from, to,
+                          count, at, weekend}], observations: [{time, kind…}]})
+  predict unmute | clear  the offers muted with Never back | forget it all
   memory learn [--model M] [--delete] [EPISODE.json]
                           the memory pass on an agent's task (servers start it
                           in the background), the fading, the weekly tidy-up
@@ -20977,6 +21851,8 @@ def main(argv):
         return journal_command(cfg, argv[1:])
     if cmd == "triage":
         return triage_command(cfg, argv[1:])
+    if cmd == "predict":
+        return predict_command(cfg, argv[1:])
     if cmd == "privacy":
         sub = argv[1] if len(argv) > 1 else ""
         if sub in ("mask", "unmask"):
