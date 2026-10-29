@@ -240,6 +240,26 @@ expect_eq "stream-json: the init's session is the result's" "1" \
   "$(jq -r 'select(.type == "system" or .type == "result") | .session_id' <<<"$out" | sort -u | wc -l | tr -d ' ')"
 expect_eq "stream-json: streamed from the server" "true" "$(requests hello | tail -n1 | jq -c .stream)"
 
+# --quiet-steps: a turn's first line and its answer stream, not the words
+# between its steps (the conversation keeps them).
+script quiet "[[
+  {\"type\": \"text\", \"text\": \"Closing them all.\"},
+  {\"type\": \"tool_use\", \"id\": \"q1\", \"name\": \"Glob\", \"input\": {\"pattern\": \"*.txt\", \"path\": \"$tmp/rw\"}}
+], [
+  {\"type\": \"text\", \"text\": \"Need to close rest.\"},
+  {\"type\": \"tool_use\", \"id\": \"q2\", \"name\": \"Glob\", \"input\": {\"pattern\": \"*.txt\", \"path\": \"$tmp/rw\"}}
+], [
+  {\"type\": \"text\", \"text\": \"Still closing.\"},
+  {\"type\": \"tool_use\", \"id\": \"q3\", \"name\": \"Glob\", \"input\": {\"pattern\": \"*.txt\", \"path\": \"$tmp/rw\"}}
+], [{\"type\": \"text\", \"text\": \"All closed.\"}]]"
+streamed() { jq -r 'select(.type == "stream_event" and .event.delta.type == "text_delta") | .event.delta.text' | tr -d '\n'; }
+out=$(echo "AGENTTEST:quiet go" | agent -p --output-format stream-json --verbose --include-partial-messages --tools Glob --quiet-steps)
+expect_eq "quiet steps: the first line and the answer only" "Closing them all.All closed." "$(streamed <<<"$out")"
+expect_eq "quiet steps: the answer is the result" "All closed." "$(jq -r 'select(.type == "result") | .result' <<<"$out")"
+expect_eq "quiet steps: every step still ran" "3" "$(jq -r 'select(.type == "user") | .message.content[] | select(.type == "tool_result") | .tool_use_id' <<<"$out" | wc -l | tr -d ' ')"
+out=$(echo "AGENTTEST:quiet go" | agent -p --output-format stream-json --verbose --include-partial-messages --tools Glob)
+expect_eq "without it: every word streams" "Closing them all.Need to close rest.Still closing.All closed." "$(streamed <<<"$out")"
+
 # -- The model names -------------------------------------------------------------
 : >"$tmp/requests.log"
 for m in haiku small sonnet opus big muse-x; do echo "AGENTTEST:hello $m" | agent -p --model "$m" >/dev/null; done

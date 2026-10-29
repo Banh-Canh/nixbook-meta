@@ -31,6 +31,9 @@ to do behind the options below (all off by default).
   --output-format text|json|stream-json
   --input-format text|stream-json      stream-json: one turn per stdin line
   --include-partial-messages           stream-json: the deltas too
+  --quiet-steps              with the deltas: only a turn's first line and
+                             its answer are streamed, not the words between
+                             its steps (shown and read out otherwise)
   --json-schema S            the answer as JSON for S (a final
                              `structured_output` tool call)
   --mcp-config JSON|FILE     stdio (or streamable HTTP) MCP servers
@@ -159,7 +162,7 @@ MULTI_FLAGS = {"--allowedTools", "--allowed-tools", "--disallowedTools", "--disa
 BOOL_FLAGS = {"-p", "--print", "--verbose", "--include-partial-messages", "--strict-mcp-config",
               "--no-session-persistence", "--privacy", "--restricted", "--safe-mode", "--continue", "-c",
               "--dangerously-skip-permissions", "--fork-session", "--replay-user-messages", "--debug", "-d",
-              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools"}
+              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools", "--quiet-steps"}
 
 MAX_TOKENS = int(os.environ.get("NIXBOOK_AI_MAX_TOKENS") or 16000)
 CUT_MAX_TOKENS = 32000  # the most a reply cut by the output limit is asked again with
@@ -491,6 +494,7 @@ class Options:
         self.report = False
         self.lazy_mcp = 0
         self.learn = False
+        self.quiet_steps = False
         self.resolve = False
         self.verify = False
         self.trust = False
@@ -623,6 +627,8 @@ class Options:
             setattr(self, name[2:], True)
         elif name == "--core-tools":
             self.core_tools = True
+        elif name == "--quiet-steps":
+            self.quiet_steps = True
         elif name in ("--tool-result-max", "--max-tokens"):
             try:
                 n = int(v)
@@ -2029,6 +2035,7 @@ class Agent:
         # with the session, so a resumed one doesn't fail first again).
         k = self.state.get("keepTurns")
         self.keep_turns = k if isinstance(k, int) and k >= 2 else None
+        self.stepped = False
         self.mcp = Mcp(opts.mcp_configs, opts.allowed, opts.disallowed, opts.lazy_mcp, opts.core_tools)
         # The lazy servers and desktop groups this conversation already
         # opened, open again.
@@ -2134,6 +2141,14 @@ class Agent:
         partial = self.opts.partial and self.opts.output_format == "stream-json"
         on_event = (lambda ev: self.emit({"type": "stream_event", "event": ev, "parent_tool_use_id": None})) \
             if partial else None
+        # --quiet-steps: after a turn's first step, what a message writes
+        # waits for the message's end: the answer (no tool call) is then
+        # streamed, words between steps ("Still closing…", a note to itself)
+        # never shown nor read out. The conversation keeps them.
+        held = None
+        if on_event and self.opts.quiet_steps and self.stepped:
+            held, live = [], on_event
+            on_event = held.append
         history = repair(self.messages + list(extra or []))
         while True:
             try:
@@ -2158,6 +2173,15 @@ class Agent:
                     continue
                 raise AgentError(str(e))
         self.count_usage(msg)
+        if held is not None:
+            calls = any(b.get("type") == "tool_use" for b in msg.get("content") or [])
+            texts = {e.get("index") for e in held
+                     if e.get("type") == "content_block_start" and (e.get("content_block") or {}).get("type") == "text"}
+            for e in held:
+                if not calls or e.get("index") not in texts or e.get("type") in ("message_start", "message_delta", "message_stop"):
+                    live(e)
+        if record and any(b.get("type") == "tool_use" for b in msg.get("content") or []):
+            self.stepped = True
         # A tool call the output limit cut off is neither shown nor kept: it
         # never runs (loop() asks for it again).
         cut = set(msg.get("cut") or [])
@@ -2930,6 +2954,8 @@ class Agent:
         self.steps = []
         self.trust_cache = {}
         self.focused_app = ""
+        # A step taken this turn (--quiet-steps holds what follows).
+        self.stepped = False
         self.gate_ = Gate()
         self.cancel = nixbook_ai.Cancel()
         if not as_blocks(content):
