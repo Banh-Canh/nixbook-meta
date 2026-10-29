@@ -89,7 +89,7 @@
       "speak": "voice",
       "bargeIn": true,
       "style": "cute",
-      "addressee": "smart"
+      "addressee": "all"
     },
     "agent": {
       "allowedTools": ["WebSearch", "WebFetch"],

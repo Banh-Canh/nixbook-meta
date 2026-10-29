@@ -239,6 +239,16 @@ check(
   decide("Paul, can you pass the salt?", { mode: "all" }).verdict,
   "yes",
 );
+check(
+  'all mode: still stopped by "not you"',
+  decide("No, not you", { mode: "all" }).why,
+  "not-you",
+);
+check(
+  "all mode: an order unnamed",
+  decide("open the calendar", { mode: "all" }).order,
+  "open the calendar",
+);
 check("empty", decide("   ").verdict, "no");
 
 // Speed: plain code, no model.

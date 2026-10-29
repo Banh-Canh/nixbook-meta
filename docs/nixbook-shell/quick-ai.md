@@ -289,10 +289,15 @@ reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
 
 ### Only what is said to Muse
 
-Full AI mode's microphone never closes, so it also hears someone else in the
-room, you on a call, you thinking aloud. Muse follows the conversation and only
-acts on what you say **to it**. Each sentence heard is judged at once, in plain
-code, in English, French, German and Vietnamese:
+By default Muse takes **everything** you say in Full AI mode as meant for it,
+without its name. When it picks up something you said to someone else, say _not
+you_ (_pas toi_, _nicht du_, _không phải bạn_) and it stops what it started.
+
+Full AI mode's microphone never closes, though, so it also hears someone else in
+the room, you on a call, you thinking aloud. With _What's said to Muse_ chosen
+in Settings, Muse follows the conversation and only acts on what you say **to
+it**. Each sentence heard is then judged at once, in plain code, in English,
+French, German and Vietnamese:
 
 1. **Its name**, at the start, after a greeting or at the end ("Muse, open
    Firefox", "hey Muse…", "dis Muse…", "Hallo Muse…", "Muse ơi…", "what time is
@@ -327,8 +332,9 @@ stops what it started on your last sentence, and the model is shown that
 sentence as one that wasn't for it. Right after Muse speaks, a short reply or an
 order is still taken as for it; a longer sentence that reads like talk to
 someone in the room goes to the model instead. Settings > Desktop agents > Talk to your desktop >
-**In Full AI mode, act on** (`ai.voice.addressee`): _What's said to Muse_
-(`smart`, the default), _Only when called by name_ (`name`: the name, an answer
+**In Full AI mode, act on** (`ai.voice.addressee`): _Everything heard_ (`all`,
+the default: every sentence is for Muse, and _not you_ stops what it started),
+_What's said to Muse_ (`smart`), _Only when called by name_ (`name`: the name, an answer
 to its question or a stop word; no model) or _Everything heard_ (`all`: every
 sentence is an order, as before). With the AI features off or local only, only
 the name counts. Outside Full AI mode nothing changes: what you say after the

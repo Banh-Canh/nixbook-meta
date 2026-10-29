@@ -126,6 +126,16 @@ Singleton {
                 mascot.enable = false;
             done.mascotFullAiOnly = true;
         }
+        // Full AI mode first judged whether each sentence was for Muse
+        // ("smart", written into config.json); the user had to keep calling
+        // it by name. Everything heard is for it again, once (Settings can
+        // put the check back).
+        if (!done.addresseeAll) {
+            const voice = root.options.ai.voice;
+            if (voice && voice.addressee === "smart" && !NixManaged.isPinned("ai.voice.addressee"))
+                voice.addressee = "all";
+            done.addresseeAll = true;
+        }
     }
     property int readWriteDelay: 50 // milliseconds
     property bool blockWrites: false
@@ -430,7 +440,7 @@ Singleton {
                     // else the small model judges; not the user's call nor
                     // someone else in the room); "name": only when called by
                     // name (or answering its question); "all": every sentence.
-                    property string addressee: "smart"
+                    property string addressee: "all"
                 }
                 // Muse in the side panel: nixbook-meta-agent (the shell's own
                 // agent, on the model provider: Meta's Model API by default),

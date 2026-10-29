@@ -232,8 +232,9 @@ function decide(text, ctx) {
     var c = ctx || {}
     var t = String(text || "").trim()
     var mode = c.mode === "name" || c.mode === "all" ? c.mode : "smart"
-    if (mode === "all") return { verdict: "yes", order: t, why: "all" }
     if (t.length === 0) return { verdict: "no", order: "", why: "empty" }
+    // Everything heard is for it, but "not you" (the user correcting it).
+    if (mode === "all") return notYou(t) ? { verdict: "no", order: "", why: "not-you" } : { verdict: "yes", order: t, why: "all" }
     var now = c.now || Date.now()
     // 0. The user correcting it ("not you"), or claiming it ("yes, I'm
     // talking to you"): before its name, which they often carry. A claim

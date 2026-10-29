@@ -37,12 +37,13 @@ Singleton {
 
     // "smart" | "name" | "all"; only by name with AI features not fully on
     // (no model then).
-    readonly property string setting: Config.options.ai.voice?.addressee ?? "smart"
+    readonly property string setting: Config.options.ai.voice?.addressee ?? "all"
     readonly property string mode: (Config.options.policies?.ai ?? 1) !== 1 ? (root.setting === "all" ? "all" : "name")
         : (root.setting === "name" || root.setting === "all" ? root.setting : "smart")
     // Judged here: Full AI mode's always-open microphone ("all": every
     // sentence goes on, as before).
-    readonly property bool active: FullAi.active && root.mode !== "all"
+    // "all" still comes here: "not you" stops what it started.
+    readonly property bool active: FullAi.active
     // The model's verdict is taken from this confidence up.
     readonly property real threshold: 0.6
 

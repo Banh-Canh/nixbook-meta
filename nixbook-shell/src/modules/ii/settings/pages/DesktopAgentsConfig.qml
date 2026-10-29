@@ -224,12 +224,12 @@ ContentPage {
                 configKey: "ai.voice.addressee"
                 text: Translation.tr("In Full AI mode, act on")
                 icon: "hearing"
-                currentValue: Config.options.ai.voice?.addressee ?? "smart"
+                currentValue: Config.options.ai.voice?.addressee ?? "all"
                 onSelected: newValue => { if (Config.options.ai.voice) Config.options.ai.voice.addressee = newValue }
                 options: [
+                    { displayName: Translation.tr("Everything heard"), icon: "hearing", value: "all" },
                     { displayName: Translation.tr("What's said to Muse"), icon: "psychology", value: "smart" },
-                    { displayName: Translation.tr("Only when called by name"), icon: "badge", value: "name" },
-                    { displayName: Translation.tr("Everything heard"), icon: "hearing", value: "all" }
+                    { displayName: Translation.tr("Only when called by name"), icon: "badge", value: "name" }
                 ]
             }
             StyledText {
@@ -237,7 +237,7 @@ ContentPage {
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
                 font.pixelSize: Appearance.font.pixelSize.small
-                text: Translation.tr("Full AI mode's microphone stays open, so it hears the room too. \"What's said to Muse\": its name (\"Muse, …\", \"hey Muse\"), an answer to it, or a reply right after it spoke; not someone else called by name, nor you on a call; when it can't tell, a quick check with the small model. Words it thinks weren't for it show dimmed by the mascot with \"Was that for me?\" for a few seconds: tap it to send them after all (it learns from that). Outside Full AI mode, what you say after Mod+T or type is always for it.")
+                text: Translation.tr("Full AI mode's microphone stays open. \"Everything heard\" (the default): every sentence is for Muse; say \"not you\" to stop what it started on something meant for someone else. \"What's said to Muse\": its name (\"Muse, …\", \"hey Muse\"), an answer to it, or a reply right after it spoke; not someone else called by name, nor you on a call; when it can't tell, a quick check with the small model. Words it thinks weren't for it show dimmed by the mascot with \"Was that for me?\" for a few seconds: tap it to send them after all (it learns from that). Outside Full AI mode, what you say after Mod+T or type is always for it.")
             }
             ConfigSelectionArray {
                 configKey: "ai.quick.bubble"
