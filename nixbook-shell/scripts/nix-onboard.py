@@ -131,8 +131,11 @@ def masked_post(system, convo, effort):
     emails… as placeholders, and the answer (the configuration included)
     comes back with the real values."""
     p = nixbook_ai.Provider.from_env()
-    sent = [dict(m, content=nixbook_ai.mask(m["content"])) if m["role"] == "user" else m for m in convo]
-    text = nixbook_ai.answer(system, sent, model="main", effort=effort, max_tokens=8000, provider=p)
+    # Every turn: its earlier answers were unmasked for the user, so they
+    # hold the real names too (only the user's used to be masked, and the
+    # model's own answers went back to the provider with them).
+    sent = [dict(m, content=nixbook_ai.mask(m["content"])) for m in convo]
+    text = nixbook_ai.answer(nixbook_ai.mask(system), sent, model="main", effort=effort, max_tokens=8000, provider=p)
     return p.model("main"), nixbook_ai.unmask(text)
 
 

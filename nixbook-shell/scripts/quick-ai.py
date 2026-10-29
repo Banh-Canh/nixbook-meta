@@ -91,6 +91,13 @@ IMAGE_MAX = 8 * 1024 * 1024
 
 
 def emit(kind, **fields):
+    """An event for the shell, with the real names: the mask is for the
+    model provider only, never for what the user sees (a scan's items, a
+    reaction's words, suggested replies…). The deltas come unmasked already
+    (a name split between pieces held back)."""
+    if kind != "delta" and nixbook_ai.maybe_hidden(json.dumps(fields, ensure_ascii=False)):
+        back = nixbook_ai.unmask_json(fields)
+        fields = back if isinstance(back, dict) else fields
     sys.stdout.write(json.dumps({"type": kind, **fields}, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 

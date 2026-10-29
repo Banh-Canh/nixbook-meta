@@ -8370,7 +8370,9 @@ def app_desktop_id(app):
 def add_pref(cfg, kind, body, keys=None, app="", signature="", source="chat"):
     """A preference or a correction, saved: (id, new). The same one said
     again (its signature, else its text) counts once more."""
-    body = clean_text(str(body or ""), PERSONAL_TEXT_MAX if kind == "correction" else PREF_TEXT_MAX)
+    # Kept with the real names (a model's words come masked; Settings shows
+    # them, and they are masked again on their way to a model).
+    body = clean_text(unmask_text(str(body or "")), PERSONAL_TEXT_MAX if kind == "correction" else PREF_TEXT_MAX)
     if not body:
         raise ToolError("text can't be empty")
     if NOTE_OVERRIDES.search(body):
@@ -18798,7 +18800,8 @@ def journal_add(cfg, data, now=None):
         return {"id": None, "off": True}
     now = int(now or time.time())
     source = data.get("source") if data.get("source") in JOURNAL_SOURCES else "agent"
-    summary = clean_text(str(data.get("summary") or ""), 300)
+    # Shown in "What Muse did": the real names (an agent's summary comes masked).
+    summary = clean_text(unmask_text(str(data.get("summary") or "")), 300)
     tool_name = clean_text(str(data.get("tool") or ""), 80)
     cls = str(data.get("class") or "") or (action_class(tool_name, data.get("args")) if tool_name else "")
     if not re.fullmatch(TRUST_CLASS, cls or "-"):

@@ -2082,9 +2082,27 @@ class Agent:
                          "with the JSON it asks for; nothing after it.")
         return [{"type": "text", "text": "\n\n".join(p for p in parts if p), "cache_control": CACHE}]
 
+    # The fields of its events a person reads (the bubble, the Allow / No
+    # chips, the "Did: …" lines, the report, a task's notifications and list):
+    # the real names back. The mask is for the model provider only; the
+    # transcript and the stream's deltas stay masked (the shell unmasks those,
+    # holding back half a name).
+    SHOWN_FIELDS = {"approval_request": ("input", "summary"), "told": ("summary",), "trust_suggest": ("summary",),
+                    "verify": ("note",), "answer": ("text",), "result": ("result", "report", "structured_output"),
+                    "assistant": ("message",)}
+
+    def for_people(self, ev):
+        keys = self.SHOWN_FIELDS.get(ev.get("type"))
+        part = {k: ev[k] for k in keys or () if k in ev}
+        if not part or not nixbook_ai.maybe_hidden(json.dumps(part, ensure_ascii=False)):
+            return ev
+        back = nixbook_ai.unmask_json(part)
+        return {**ev, **back} if isinstance(back, dict) else ev
+
     def emit(self, obj):
         if self.opts.output_format != "stream-json":
             return
+        obj = self.for_people(obj)
         if "session_id" not in obj:
             obj["session_id"] = self.session_id
         with self.lock:
@@ -3002,12 +3020,12 @@ class Agent:
         if fmt == "stream-json":
             self.emit(ev)
         elif fmt == "json":
-            self.out.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            self.out.write(json.dumps(self.for_people(ev), ensure_ascii=False) + "\n")
             self.out.flush()
         elif ev["is_error"]:
             sys.stderr.write(str(ev["result"]) + "\n")
         else:
-            self.out.write(str(ev["result"]) + "\n")
+            self.out.write(str(self.for_people(ev)["result"]) + "\n")
             self.out.flush()
 
 
