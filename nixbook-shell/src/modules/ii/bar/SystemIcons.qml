@@ -234,6 +234,38 @@ Item {
                 }
             }
         }
+        // The meeting companion listening to a call (services/Meeting.qml):
+        // always said in the bar while it does; a click shows its window.
+        Revealer {
+            reveal: Meeting.running
+            Item {
+                implicitWidth: meetingIcon.implicitWidth
+                implicitHeight: meetingIcon.implicitHeight
+                MaterialSymbol {
+                    id: meetingIcon
+                    anchors.centerIn: parent
+                    text: "record_voice_over"
+                    iconSize: Appearance.font.pixelSize.larger
+                    color: Meeting.active ? Appearance.colors.colError : root.iconColor
+                }
+                MouseArea {
+                    id: meetingArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onPressed: {
+                        Meeting.keepShown = true
+                        Meeting.panelOpen = true
+                    }
+                }
+                IconHint {
+                    hoverTarget: meetingArea
+                    title: Meeting.active ? Translation.tr("Listening to the call") : Translation.tr("Writing the call's summary")
+                    detail: [Meeting.title, Meeting.active ? Meeting.elapsed : ""].filter(x => x).join(" · ")
+                    action: Translation.tr("Click to show the notes")
+                }
+            }
+        }
         Revealer {
             reveal: Audio.source?.audio?.muted ?? false
             HintedIcon {

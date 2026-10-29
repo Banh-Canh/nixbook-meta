@@ -49,7 +49,16 @@
       "quick": "small",
       "resolve": "small",
       "verify": "small",
-      "effortMinimal": true
+      "effortMinimal": true,
+      "meeting": "big"
+    },
+    "meeting": {
+      "enable": true,
+      "offer": true,
+      "includeMic": true,
+      "translate": true,
+      "notesEveryS": 75,
+      "keepDays": 30
     },
     "voice": {
       "enable": true,

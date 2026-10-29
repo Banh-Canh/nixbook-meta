@@ -1344,6 +1344,98 @@ ContentPage {
             }
         }
 
+        // The meeting companion (services/Meeting.qml, nixbook-meeting).
+        ContentSection {
+            icon: "record_voice_over"
+            title: Translation.tr("Meeting companion")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Muse listens to a call and helps, live: captions of what you hear (and of your microphone, as \"You\") from Meta's Muse Voice Transcribe in a small window you can drag, the lines in another language translated, running notes (topics, decisions, action items with an owner) every minute or so, and when the call ends a summary by Muse Wonder with Add tasks, Save as note and Draft follow-up. It never listens silently: you start it (\"take notes\" in the bubble or by voice, the window's offer, `meeting start`), the bar shows a red icon and the window says \"Listening to the call\" the whole time, with Stop. The transcript stays on this computer; what goes to the model is masked. Needs Meta as the model provider.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.meeting.enable"
+                    buttonIcon: "record_voice_over"
+                    text: Translation.tr("Meeting companion")
+                    checked: Config.options.ai.meeting.enable
+                    onCheckedChanged: Config.options.ai.meeting.enable = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.meeting.offer"
+                    buttonIcon: "video_call"
+                    enabled: !nixManaged && Config.options.ai.meeting.enable
+                    text: Translation.tr("Offer it when a meeting starts or a call app takes the microphone")
+                    checked: Config.options.ai.meeting.offer
+                    onCheckedChanged: Config.options.ai.meeting.offer = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.meeting.includeMic"
+                    buttonIcon: "mic"
+                    enabled: !nixManaged && Config.options.ai.meeting.enable
+                    text: Translation.tr("Caption my microphone too (\"You\")")
+                    checked: Config.options.ai.meeting.includeMic
+                    onCheckedChanged: Config.options.ai.meeting.includeMic = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.meeting.translate"
+                    buttonIcon: "translate"
+                    enabled: !nixManaged && Config.options.ai.meeting.enable
+                    text: Translation.tr("Translate what is said in another language")
+                    checked: Config.options.ai.meeting.translate
+                    onCheckedChanged: Config.options.ai.meeting.translate = checked
+                }
+            }
+            ConfigSpinBox {
+                configKey: "ai.meeting.notesEveryS"
+                icon: "notes"
+                text: Translation.tr("Running notes every (seconds)")
+                value: Config.options.ai.meeting.notesEveryS
+                from: 30; to: 600; stepSize: 15
+                onValueChanged: Config.options.ai.meeting.notesEveryS = value
+            }
+            ConfigSpinBox {
+                configKey: "ai.meeting.keepDays"
+                icon: "auto_delete"
+                text: Translation.tr("Keep transcripts (days)")
+                value: Config.options.ai.meeting.keepDays
+                from: 1; to: 365; stepSize: 1
+                onValueChanged: Config.options.ai.meeting.keepDays = value
+            }
+            ConfigSelectionArray {
+                configKey: "ai.routing.meeting"
+                text: Translation.tr("Model that writes the call's summary")
+                icon: "summarize"
+                currentValue: Config.options.ai.routing.meeting
+                onSelected: newValue => { Config.options.ai.routing.meeting = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big (Muse Wonder)"), icon: "psychology", value: "big" }
+                ]
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    text: Meeting.running ? Translation.tr("Listening to a call now.")
+                        : !Meeting.ready ? Translation.tr("Needs Meta as the model provider, with its key, and AI on.")
+                        : Translation.tr("Captions, translations and live notes use the small model.")
+                }
+                SmallButton {
+                    visible: Meeting.ready || Meeting.running
+                    materialIcon: Meeting.active ? "stop" : "play_arrow"
+                    mainText: Meeting.active ? Translation.tr("Stop") : Translation.tr("Take notes now")
+                    onClicked: Meeting.active ? Meeting.stop() : Meeting.start({ from: "settings" })
+                }
+            }
+        }
+
         // services/SelfImprove.qml, nixbook-improve: only where Nix made it
         // available (programs.nixbook-shell.selfImprove.enable).
         ContentSection {

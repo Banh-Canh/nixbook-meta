@@ -121,6 +121,8 @@ cmd_shell() {
   bash nixbook-shell/tests/meta-agent.sh || failed=1
   section "nixbook-shell background tasks (nixbook-muse-task)"
   bash nixbook-shell/tests/muse-task.sh || failed=1
+  section "nixbook-shell meeting companion (nixbook-meeting)"
+  bash nixbook-shell/tests/meeting.sh || failed=1
   section "jellyfin-mcp (customPkgs) against a fake Jellyfin"
   bash customPkgs/jellyfin-mcp/tests/test.sh || failed=1
   section "nixbook-shell accounts backend (nixbook-accounts)"

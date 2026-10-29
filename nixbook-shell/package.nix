@@ -83,12 +83,13 @@ let
     cp ${./scripts/quick-ai.py} $out/quick-ai.py
     cp ${./scripts/nix-onboard.py} $out/nix-onboard.py
     cp ${./scripts/muse-task.py} $out/muse-task.py
+    cp ${./scripts/meeting.py} $out/meeting.py
     ${pkgs.python3}/bin/python3 -c '
     import importlib.util, py_compile, sys
     out = sys.argv[1]
     mode = py_compile.PycInvalidationMode.UNCHECKED_HASH
     py_compile.compile(out + "/nixbook_ai.py", cfile=importlib.util.cache_from_source(out + "/nixbook_ai.py"), doraise=True, invalidation_mode=mode)
-    for name in ("meta-agent", "quick-ai", "nix-onboard", "muse-task"):
+    for name in ("meta-agent", "quick-ai", "nix-onboard", "muse-task", "meeting"):
         py_compile.compile(f"{out}/{name}.py", cfile=f"{out}/{name}.pyc", dfile=f"{out}/{name}.py", doraise=True, invalidation_mode=mode)
     ' $out
   '';
@@ -180,6 +181,21 @@ let
       ]
     }:$PATH
     exec ${pkgs.python3}/bin/python3 -I ${./scripts/voice-stream.py} "$@"
+  '';
+
+  # The meeting companion (scripts/meeting.py, services/Meeting.qml): a
+  # call's captions through Muse Voice Transcribe (one voice stream for what
+  # is heard, one for the microphone), the running notes and the record
+  # through the model provider; the transcript kept on this computer.
+  meeting = pkgs.writeShellScriptBin "nixbook-meeting" ''
+    export PATH=${
+      lib.makeBinPath [
+        voiceStream
+        modelProvider
+        pkgs.util-linux # setpriv: the streams never outlive it
+      ]
+    }:$PATH
+    exec ${pkgs.python3}/bin/python3 -I ${aiScripts}/meeting.pyc "$@"
   '';
 
   # The desktop agent's voice (scripts/voice-speak.py, ai.voice.speak):
@@ -462,6 +478,7 @@ let
       nixOnboard # `nixbook-nix-onboard` — setting up the desktop by talking (services/NixOnboarding.qml)
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
       voiceStream # `nixbook-voice-stream` — Quick AI's voice through Meta's Muse Voice Transcribe
+      meeting # `nixbook-meeting` — the meeting companion: live captions, notes, the record (services/Meeting.qml)
       voiceSpeak # `nixbook-voice-speak` — the agent's answers read out loud (Meta MMS, cute)
       desktopMcp # `nixbook-desktop-mcp` — desktop tools of the AI chat
       updateCheck # `nixbook-update-check` — the update check (services/UpdateState.qml)
@@ -586,6 +603,7 @@ launcher.overrideAttrs (old: {
       quickAi
       voiceTranscribe
       voiceStream
+      meeting
       voiceSpeak
       nixOnboard
       configName

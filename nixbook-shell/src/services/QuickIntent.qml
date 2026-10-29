@@ -16,7 +16,7 @@ import QtQuick
  * number, the next, the previous; the window moved to one), dark or light
  * mode, Do Not Disturb, night light, a screenshot, locking the screen, a
  * timer or a pomodoro, a saved window layout, a task added, the shell's
- * settings. In English, French, German and Vietnamese (`_english` turns the
+ * settings, the meeting companion started or stopped ("take notes"). In English, French, German and Vietnamese (`_english` turns the
  * three others into the English commands first).
  *
  * Strict patterns only: anything else, or anything unsure (an app it can't
@@ -86,6 +86,8 @@ Singleton {
         [/^verrouille$/, "lock"],
         [/^(?:lance |d[eé]marre )?(?:un )?(?:minuteur|minuterie|timer|compte [aà] rebours) (?:de )?(\d{1,3}) ?(?:min|minutes?)$/, "timer $1 minutes"],
         [/^(?:ouvre |affiche )?(?:les )?(?:param[eè]tres|r[eé]glages)(?: du shell)?$/, "settings"],
+        [/^(?:prends?|commence [aà] prendre) (?:des |les )?notes(?: de (?:la )?r[eé]union| de l'appel)?$|^(?:sous-titre|transcris) (?:la r[eé]union|l'appel)$/, "take meeting notes"],
+        [/^(?:arr[eê]te|stoppe|termine) (?:de prendre )?(?:les )?notes(?: de (?:la )?r[eé]union| de l'appel)?$/, "stop taking notes"],
         [/^(?:(?:va|passe|bascule) (?:sur|au|à|vers) (?:le |l')?)?(?:bureau|espace(?: de travail)?) (?:num[eé]ro )?(\d{1,2})$/, "workspace $1"],
         [/^(?:(?:va|passe) (?:sur|au|à) (?:le |l')?)?(?:bureau|espace(?: de travail)?) suivant$/, "next workspace"],
         [/^(?:(?:va|passe) (?:sur|au|à) (?:le |l')?)?(?:bureau|espace(?: de travail)?) pr[eé]c[eé]dent$/, "previous workspace"],
@@ -122,6 +124,8 @@ Singleton {
         [/^sperren$/, "lock"],
         [/^(?:starte |stell )?(?:einen )?(?:timer|countdown) (?:f[uü]r |auf )?(\d{1,3}) ?(?:min|minuten?)$/, "timer $1 minutes"],
         [/^(?:[oö]ffne )?(?:die )?einstellungen$/, "settings"],
+        [/^(?:mach|mache|schreib|schreibe) (?:die )?(?:meeting-?)?notizen(?: zum (?:meeting|anruf|termin))?$|^protokolliere (?:das meeting|den anruf)$/, "take meeting notes"],
+        [/^(?:h[oö]r|h[oö]re) auf(?:,)? notizen zu (?:machen|schreiben)$|^(?:beende|stoppe) (?:die )?(?:meeting-?)?notizen$/, "stop taking notes"],
         [/^(?:(?:wechsle|wechsel|geh|gehe) (?:zu|zum|auf|zur) )?(?:arbeitsbereich|arbeitsfl[aä]che|desktop) (?:nummer )?(\d{1,2})$/, "workspace $1"],
         [/^(?:n[aä]chster|n[aä]chste|n[aä]chstes) (?:arbeitsbereich|arbeitsfl[aä]che|desktop)$/, "next workspace"],
         [/^(?:vorheriger|vorherige|vorheriges|letzter) (?:arbeitsbereich|arbeitsfl[aä]che|desktop)$/, "previous workspace"],
@@ -154,6 +158,8 @@ Singleton {
         [/^kh[oó]a (?:m[aà]n h[iì]nh|m[aá]y)$|^kho[aá] (?:m[aà]n h[iì]nh|m[aá]y)$/, "lock the screen"],
         [/^(?:h[eẹ]n gi[oờ]|[dđ][eế]m ng[uư][oợ]c) (\d{1,3}) ?ph[uú]t$/, "timer $1 minutes"],
         [/^(?:m[oở] )?c[aà]i [dđ][aặ]t$/, "settings"],
+        [/^ghi (?:ch[eé]p|ch[uú]|bi[eê]n b[aả]n)(?: cu[oộ]c h[oọ]p| cu[oộ]c g[oọ]i)?$/, "take meeting notes"],
+        [/^(?:d[uừ]ng|th[oô]i) ghi (?:ch[eé]p|ch[uú]|bi[eê]n b[aả]n)(?: cu[oộ]c h[oọ]p| cu[oộ]c g[oọ]i)?$/, "stop taking notes"],
         [/^(?:chuy[eể]n (?:sang|qua|t[oớ]i|[dđ][eế]n) )?(?:kh[oô]ng gian l[aà]m vi[eệ]c|workspace|m[aà]n h[iì]nh [aả]o) (?:s[oố] )?(\d{1,2})$/, "workspace $1"],
         [/^(?:kh[oô]ng gian l[aà]m vi[eệ]c|workspace|m[aà]n h[iì]nh [aả]o) (?:ti[eế]p theo|k[eế] ti[eế]p|sau)$/, "next workspace"],
         [/^(?:kh[oô]ng gian l[aà]m vi[eệ]c|workspace|m[aà]n h[iì]nh [aả]o) tr[uư][oớ]c$/, "previous workspace"],
@@ -299,6 +305,17 @@ Singleton {
         if ((m = /^lock( the| my)?( screen| computer| session| pc| laptop)?$/.exec(t)) && (bare || m[2])) {
             Qt.callLater(() => GlobalStates.screenLocked = true);
             return root._done(Translation.tr("Locking."));
+        }
+
+        // ── The meeting companion (Meeting.qml): it listens to the call ──
+        if (/^(?:start )?(?:take |taking )(?:meeting |call )?notes(?: (?:of|for|on) (?:the |this |my )?(?:meeting|call))?$|^(?:caption|transcribe) (?:the |this |my )?(?:meeting|call)$|^(?:start )?(?:the )?meeting (?:notes|companion|captions)$/.test(t)) {
+            const why = Meeting.start({ from: "voice" });
+            return root._done(why || Translation.tr("Listening to the call: live captions and notes."), why ? null : () => Meeting.cancel());
+        }
+        if (/^(?:stop|end|finish) (?:taking )?(?:the )?(?:meeting |call )?(?:notes|captions|companion)$|^stop (?:listening to|transcribing) (?:the |this )?(?:meeting|call)$/.test(t)) {
+            if (!Meeting.running) return null;
+            Meeting.stop();
+            return root._done(Translation.tr("Stopped listening: writing the summary."));
         }
 
         // ── A timer, a pomodoro ──

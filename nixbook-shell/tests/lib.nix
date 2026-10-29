@@ -158,12 +158,26 @@ lib.runTests {
         resolve = "small";
         verify = "small";
         effortMinimal = true;
+        meeting = "big";
       }
       true
       true
       true
       30
     ];
+  };
+  # The meeting companion: on, offered, the microphone and the translation
+  # on, notes every 75 s, transcripts kept 30 days.
+  testMeetingDefaults = {
+    expr = shellLib.builtinDefaults.ai.meeting;
+    expected = {
+      enable = true;
+      offer = true;
+      includeMic = true;
+      translate = true;
+      notesEveryS = 75;
+      keepDays = 30;
+    };
   };
   # Speed: the checks on the small model at minimal effort, the agent kept
   # warm an hour, the desktop server's core tools up front.

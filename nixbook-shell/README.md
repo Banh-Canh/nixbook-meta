@@ -1086,6 +1086,25 @@ the latest triage verdicts).
 The six how-tos (`standingOrders`, `trustLadder`, `journalUndo`,
 `backgroundTasks`, `instantTriage`, `contextTriggers`) are in `hm-module.nix`.
 
+**Meeting companion** (`ai.meeting`, `services/Meeting.qml`,
+`scripts/meeting.py` = `nixbook-meeting`): Muse listens to a call and helps,
+live — only once the user starts it (`take notes` in the bubble or by
+voice, the offer when a calendar event with a link starts or a call app takes
+the microphone, `meeting start`), shown the whole time (the bar's red icon,
+the caption window `modules/ii/meeting/MeetingCaptions.qml` saying
+"Listening to the call", with Stop). One `nixbook-voice-stream --segments`
+per side (`--source monitor`: what the user hears; `--source mic`: their
+microphone, "You") streams to Muse Voice Transcribe; the lines in another
+language are translated (small model, batched), running notes are folded in
+every `notesEveryS` (small model), and on stop the big model
+(`ai.routing.meeting`) writes the summary, decisions, action items and a
+follow-up draft, said in the bubble with Add tasks / Save as note / Draft
+follow-up (sending is Muse's, through its approval). Every prompt is masked,
+every answer unmasked; the transcript is kept in
+`$XDG_STATE_HOME/nixbook-shell/meetings/` (0600) for `keepDays`. Agents can't
+start it (`meeting` is a denied IPC target) but read it with `meeting_notes`.
+How-to `meetingCompanion`.
+
 **Personal memory**, so a conversation knows what the user told agents
 before: life events (past or planned, with dates), plans, people close to
 them, preferences, interests. Agents are told to save the meaningful part
@@ -2182,6 +2201,7 @@ bash tests/scripts.sh        # the shell's scripts (context-summary.py included)
 bash tests/desktop-mcp.sh    # the desktop control MCP server, against stub niri/wtype/grim… and a fake compositor
 bash tests/electron-bridge.sh # the Electron apps' bridge (nixbook-electron-app), against a fake DevTools pipe (tests/fake-cdp.py)
 bash tests/muse-task.sh      # background tasks (nixbook-muse-task), against the fake Messages API and a stub desktop-mcp
+bash tests/meeting.sh        # the meeting companion (nixbook-meeting, voice-stream --segments), against a fake Meta (tests/fake-meeting.py)
 nix-instantiate --eval --strict --json --expr 'import ./tests/lib.nix { }'   # []
 nix-instantiate --eval --strict --read-write-mode tests/standalone.nix \
   --arg homeManager '<home-manager checkout>'                                  # "ok"

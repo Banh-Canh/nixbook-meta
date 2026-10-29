@@ -76,6 +76,7 @@ Singleton {
         // Muse's own cursor: only hidden from its screenshots (the server
         // neither tells the agent of it nor asks it to make way).
         if (AgentCursor.shown) out.push("agentCursor")
+        if (Meeting.shown) out.push("meetingCaptions")
         return out
     }
     onOverlaysChanged: overlaysWrite.restart()

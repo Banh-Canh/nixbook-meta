@@ -170,9 +170,11 @@ Scope {
             out.push({ label: Translation.tr("Yes, please"), main: true, run: () => Initiative.reply(Translation.tr("Yes, please.")) })
             out.push({ label: Translation.tr("No thanks"), main: false, run: () => Initiative.hush("dismissed") })
         }
-        // A watch the user asked for, the journal's line: seen, nothing to silence.
-        if (it.id && (it.kind === "watch" || it.kind === "journal"))
-            out.push({ label: Translation.tr("OK"), main: out.length === 0, run: () => Initiative.hush("later") })
+        // A watch the user asked for, the journal's line, the meeting
+        // companion's: seen, nothing to silence.
+        if (it.id && (it.kind === "watch" || it.kind === "journal" || it.kind === "meeting"))
+            out.push({ label: it.offer ? Translation.tr("Not now") : Translation.tr("OK"), main: out.length === 0,
+                       run: () => Initiative.hush("later") })
         else if (it.id) {
             out.push({ label: Translation.tr("Not now"), main: false, run: () => Initiative.hush("later") })
             out.push({ label: Translation.tr("Don't tell me this"), main: false, run: () => Initiative.hush("never") })

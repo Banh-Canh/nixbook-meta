@@ -22,6 +22,13 @@ stdin: "stop" (the key again: the audio ends, the last words are awaited),
 "cancel" (gone at once), "hold" / "resume" (the agent speaking: silence
 streamed instead of the microphone; --held starts held). --file streams a WAV (16 kHz mono 16-bit) at real
 time instead of the microphone (tests).
+
+The meeting companion (scripts/meeting.py) runs one per side of a call:
+--source monitor (what the user hears: the default output's monitor) or
+--source mic (the microphone, echo-cancelled when it can be), with
+--segments: one stream for the whole call (like --continuous), each turn
+the server ends sent as a "final" at once (a caption line), the partials
+those of the turn being said only; --no-level leaves the meter out.
 """
 
 import base64
@@ -174,9 +181,15 @@ def microphone():
     return "default"
 
 
-def audio_source(path):
-    """The microphone (ffmpeg from PipeWire's default source), or a WAV
-    paced at real time: a file-like object of raw 16 kHz mono PCM."""
+# What the user hears: the default output's monitor (PipeWire's pulse server
+# knows the name).
+MONITOR_SOURCE = "@DEFAULT_MONITOR@"
+
+
+def audio_source(path, which=""):
+    """The microphone (ffmpeg from PipeWire's default source), the monitor
+    of what is played (which: "monitor"), a source by name, or a WAV paced
+    at real time: a file-like object of raw 16 kHz mono PCM."""
     if path:
         f = open(path, "rb")
         head = f.read(12)
@@ -191,7 +204,7 @@ def audio_source(path):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg isn't installed")
-    source = microphone()
+    source = MONITOR_SOURCE if which == "monitor" else microphone() if which in ("", "mic") else which
     emit("source", name=source)
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "pulse", "-i", source,
            "-ac", "1", "-ar", str(RATE), "-f", "s16le", "-"]
@@ -224,6 +237,7 @@ def through_provider(argv):
 def main(argv):
     through_provider(argv)
     langs, path, continuous, held = [], None, False, False
+    segments, levels, which = False, True, ""
     pause, longest = PAUSE_SECONDS, MAX_SECONDS
     args = list(argv[1:])
     while args:
@@ -243,6 +257,16 @@ def main(argv):
         if a == "--held":
             held = True
             continue
+        if a == "--segments":
+            # Captions (the meeting companion): every turn its own final.
+            segments = continuous = True
+            continue
+        if a == "--no-level":
+            levels = False
+            continue
+        if a == "--source" and args:
+            which = args.pop(0).strip()
+            continue
         if a == "--lang" and args:
             # A hint, not a constraint: "fr,en" (the interface's, then English).
             langs = [LANGS[c.strip()[:2].lower()] for c in args.pop(0).split(",") if c.strip()[:2].lower() in LANGS]
@@ -259,7 +283,7 @@ def main(argv):
     # The microphone first: what is said while the connection opens (about
     # a second) waits in the queue (the server takes up to 5 s of backlog).
     try:
-        source, proc = audio_source(path)
+        source, proc = audio_source(path, which)
     except Exception as e:  # noqa: BLE001
         emit("error", error=f"the microphone: {e}")
         return 1
@@ -273,7 +297,8 @@ def main(argv):
                 if not chunk:
                     break
                 chunks.put(chunk)
-                emit("level", db=level_db(chunk))
+                if levels:
+                    emit("level", db=level_db(chunk))
                 if paced:
                     time.sleep(len(chunk) / (RATE * 2))
         except (OSError, ValueError):
@@ -320,7 +345,8 @@ def main(argv):
                     emit("speech")
                 elif kind == "transcript":
                     state["partial"] = ev.get("transcript", "")
-                    whole = " ".join(state["parts"] + [state["partial"]]).strip()
+                    # Captions: the turn being said; else all of it so far.
+                    whole = (state["partial"] if segments else " ".join(state["parts"] + [state["partial"]])).strip()
                     if whole:
                         state["heard"] = True
                         emit("partial", text=whole)
@@ -329,7 +355,10 @@ def main(argv):
                     state["lastEnd"] = time.monotonic()
                 elif kind == "speechComplete":
                     said = (ev.get("transcript") or state["partial"]).strip()
-                    if said:
+                    if said and segments:
+                        # A caption line, at once (nothing waits for a pause).
+                        emit("final", text=said)
+                    elif said:
                         state["parts"].append(said)
                     state["partial"] = ""
                     state["speaking"] = False
@@ -363,7 +392,8 @@ def main(argv):
 
     started = time.monotonic()
     if continuous:
-        longest = 3600.0
+        # A call can last: four hours (its caller opens a new one after).
+        longest = 4 * 3600.0 if segments else 3600.0
     finished = False
     try:
         while not done.is_set() and not state["ending"]:

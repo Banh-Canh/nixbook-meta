@@ -452,6 +452,55 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
 - **Auto** (the default): Meta when it is the model provider, otherwise this
   computer.
 
+## Meeting companion
+
+Muse listens to a call and helps while it goes on.
+
+- **Start it**: say or type _take notes_ in the bubble (Mod+C, or Mod+T to say
+  it; also in French, German and Vietnamese), click **Take notes** when Muse
+  offers it — a calendar event with a link starting, or a call app (Zoom,
+  Teams, Meet in the browser, Discord, Vesktop, Slack…) taking the microphone —
+  or **Take notes now** in Settings > Desktop agents > Meeting companion. It
+  never starts silently: the bar shows a red icon and a small window says
+  _Listening to the call_ with the time the whole time, with **Stop**. The
+  first time, it reminds you to tell the others you're taking AI notes.
+- **Live captions**: what you hear (the default output's monitor) and, unless
+  you leave it out with the window's microphone button, your own microphone
+  (labelled _You_; the echo-cancelled one when there is one) are streamed to
+  Meta's Muse Voice Transcribe — one stream each, the server ending each turn.
+  The window shows the last lines, the words still being said dimmer; drag it
+  by its top bar (its place is remembered), clicks elsewhere go through to the
+  call. Lines in another language than yours are translated under them (the
+  small model, a batch every few seconds, only for the lines that need it).
+- **Running notes**: every `ai.meeting.notesEveryS` seconds (75) the small
+  model folds what was said into the notes — topics, decisions, action items
+  with an owner, open questions — shown by the window's notes button.
+- **After the call** (Stop, _stop taking notes_, the call app letting the
+  microphone go, or five minutes after the event's end): Muse Wonder
+  (`ai.routing.meeting`, big) writes the summary, decisions, action items and
+  a follow-up draft, shown in Muse's bubble and in the window with **Add
+  tasks** (your to-do list), **Save as note** (the Notes app) and **Draft
+  follow-up**: Copy, or _Send it with Muse_, which goes through Muse's usual
+  approval — nothing is ever sent by itself.
+- Ask Muse afterwards: _what did we decide in the meeting?_ — its read-only
+  `meeting_notes` tool reads what the companion wrote.
+
+The transcript stays on this computer
+(`$XDG_STATE_HOME/nixbook-shell/meetings/`, only you can read it), kept
+`ai.meeting.keepDays` days (30). Every text sent to a model goes through the
+privacy mask and comes back unmasked, so the window, the bubble and the notes
+show the real names; each request is listed under _What it sent_. Nothing runs
+with AI off or local only; Do Not Disturb keeps the offers away; it needs Meta
+as the model provider. Agents can't start it (the `meeting` IPC target is
+refused to them).
+
+Settings > Desktop agents > **Meeting companion**: on or off
+(`ai.meeting.enable`), the offers (`offer`), your microphone (`includeMic`),
+the translation (`translate`), how often the notes come (`notesEveryS`), how
+long transcripts are kept (`keepDays`) and the summary's model
+(`ai.routing.meeting`). From a script: `nixbook-shell ipc call meeting
+start|stop|toggle|mic|status`; `nixbook-meeting list|show [ID]|summarize ID`.
+
 ## Privacy
 
 Text goes through the [privacy mask](./desktop-agents.md) on the way out and the

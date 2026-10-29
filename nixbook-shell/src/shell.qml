@@ -62,6 +62,9 @@ ShellRoot {
         Autonomy.load()
         MuseTasks.load()
         ContextTriggers.load()
+        // The meeting companion: its `meeting` IPC target, the offers, the
+        // old transcripts pruned.
+        Meeting.load()
     }
     
     PanelFamilyLoader {

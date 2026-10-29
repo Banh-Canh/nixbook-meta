@@ -12,6 +12,7 @@ import qs.modules.ii.fullAi
 import qs.modules.ii.layoutRestore
 import qs.modules.ii.lock
 import qs.modules.ii.mediaControls
+import qs.modules.ii.meeting
 import qs.modules.ii.nixOnboarding
 import qs.modules.ii.notificationPopup
 import qs.modules.ii.onScreenDisplay
@@ -76,6 +77,7 @@ Scope {
     PanelLoader { component: KiroshiScan {} }
     PanelLoader { component: DesktopMascot {} }
     PanelLoader { component: FullAiOverlay {} }
+    PanelLoader { component: MeetingCaptions {} }
     // Muse's visible cursor: mapped the first time an agent acts, so above the popups.
     PanelLoader { component: AgentCursorOverlay {} }
     // Loading screen while the Preloader builds every popup (last, so it is

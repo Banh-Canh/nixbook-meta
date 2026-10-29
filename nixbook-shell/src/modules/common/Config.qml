@@ -342,9 +342,28 @@ Singleton {
                     // already confirmed it). small, main or big.
                     property string resolve: "small"
                     property string verify: "small"
+                    // The meeting companion's record of a call (its summary,
+                    // decisions, action items, follow-up): Muse Wonder by
+                    // default. Its live passes (translation, running notes)
+                    // stay on the small model.
+                    property string meeting: "big"
                     // Those checks, the reactions and the one-shot modes ask
                     // for minimal effort (no thinking where the model allows).
                     property bool effortMinimal: true
+                }
+                // The meeting companion (services/Meeting.qml, nixbook-meeting):
+                // a call's live captions (Muse Voice Transcribe: what you hear,
+                // and your microphone as "You" with includeMic), the lines in
+                // another language translated, running notes every
+                // notesEveryS seconds, the record when it ends. Offered when
+                // a meeting starts (offer); the transcript kept keepDays days.
+                property JsonObject meeting: JsonObject {
+                    property bool enable: true
+                    property bool offer: true
+                    property bool includeMic: true
+                    property bool translate: true
+                    property int notesEveryS: 75
+                    property int keepDays: 30
                 }
                 property JsonObject voice: JsonObject {
                     property bool enable: true

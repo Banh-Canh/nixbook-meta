@@ -99,8 +99,10 @@ DEFAULT_CONFIG = {
     # simulate* would let an agent make up events (a notification, a cue);
     # mascot: its say would put an agent's words in Muse's own mouth on the
     # desktop, its quip spends model calls outside the day's budget.
+    # meeting: the meeting companion listens to a call (meeting_notes reads
+    # what it wrote).
     "shellIpcDenyTargets": ["session", "nixManaged", "desktopControl", "layouts", "settings", "makeWay", "quickAi",
-                            "voice", "fullAi", "mascot", "journal", "trust", "orders", "reactor"],
+                            "voice", "fullAi", "mascot", "journal", "trust", "orders", "reactor", "meeting"],
     # Functions no agent calls on any target: the user's answers (a
     # background task's approval or question, an offer taken, an Undo, a
     # trust level, a standing order turned on), and fanOut (an order split
@@ -1161,7 +1163,7 @@ TOOL_BUNDLES = {
     "widget": "widgets", "set_theme": "look", "list_themes": "look", "set_wallpaper": "look",
     "equalizer": "media", "conversation": "conversations", "delete_conversations": "conversations",
     "report_problem": "improve", "request_feature": "improve", "list_improvements": "improve",
-    "start_improvement": "improve", "list_requests": "improve",
+    "start_improvement": "improve", "list_requests": "improve", "meeting_notes": "pim",
 }
 
 
@@ -1609,6 +1611,91 @@ def t_machine_help(ctx, args):
     if not isinstance(query, str):
         raise ToolError("`query` must be a string")
     return [text(machine_help(clean_text(query, 300)))]
+
+
+# -- the meeting companion's notes (scripts/meeting.py) ------------------------
+# Read from its files: what was said on a call, its running notes and its
+# record. Listening is the user's to start (the shell's `meeting` IPC target
+# is denied to agents); reading what it wrote is not acting.
+
+
+def meetings_folder():
+    return os.path.join(xdg("XDG_STATE_HOME", "~/.local/state"), "nixbook-shell", "meetings")
+
+
+def saved_meetings():
+    try:
+        names = [n for n in os.listdir(meetings_folder()) if n.endswith(".json")]
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        try:
+            with open(os.path.join(meetings_folder(), n), encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict) and d.get("id"):
+            out.append(d)
+    return sorted(out, key=lambda d: d.get("started") or 0, reverse=True)
+
+
+def meeting_text(m, query_words, transcript):
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(m.get("started") or 0))
+    out = [f"{m.get('title') or 'Untitled call'} ({when}{'' if m.get('ended') else ', still going'})"]
+    s = m.get("summary") if isinstance(m.get("summary"), dict) else {}
+    n = m.get("notes") if isinstance(m.get("notes"), dict) else {}
+    if s.get("summary"):
+        out.append(s["summary"])
+    for label, key in (("Decisions", "decisions"), ("Open questions", "questions"), ("Topics", "topics")):
+        items = s.get(key) or n.get(key)
+        if items:
+            out.append(label + ": " + "; ".join(str(x) for x in items[:15]))
+    actions = s.get("actions") or n.get("actions") or []
+    if actions:
+        out.append("Action items: " + "; ".join(
+            str(a.get("what")) + (f" ({a['owner']})" if a.get("owner") else "") + (f", {a['due']}" if a.get("due") else "")
+            for a in actions[:15] if isinstance(a, dict)))
+    lines = [ln for ln in m.get("lines") or [] if isinstance(ln, dict)]
+    if transcript or query_words:
+        said = [f"{'You' if ln.get('who') == 'you' else 'Them'}: {ln.get('text', '')}" for ln in lines
+                if transcript or set(words(str(ln.get("text", "")))) & query_words]
+        if said:
+            out.append(("Transcript" if transcript else "Said about it") + ":\n" + "\n".join(said[-40:]))
+    return "\n".join(out)
+
+
+@tool(
+    "meeting_notes",
+    "observe",
+    "What the meeting companion wrote of the user's calls (the call going on, or past ones kept on this computer): "
+    "a call's summary, decisions, action items with owners, open questions, and with `query` the lines said "
+    "about it. For \"what did we decide?\", \"who does what after the meeting?\". `meeting`: last (default), "
+    "list, or an id from list; `transcript`: true for the call's last 40 lines.",
+    obj({"meeting": {"type": "string", "description": "last (default), list, or a meeting id"},
+         "query": {"type": "string", "description": "Words to look for in what was said"},
+         "transcript": {"type": "boolean"}}),
+    read_only=True,
+)
+def t_meeting_notes(ctx, args):
+    which = args.get("meeting", "last")
+    query = args.get("query", "")
+    transcript = args.get("transcript", False)
+    if not isinstance(which, str) or not isinstance(query, str) or not isinstance(transcript, bool):
+        raise ToolError("`meeting` and `query` are strings, `transcript` true or false")
+    meetings = saved_meetings()
+    if not meetings:
+        return [text("No call was noted yet (the meeting companion: Settings > Desktop agents > Meeting companion)")]
+    if which.strip().lower() == "list":
+        return [text("\n".join(
+            f"{m['id']}: {m.get('title') or 'Untitled call'} "
+            f"({time.strftime('%Y-%m-%d %H:%M', time.localtime(m.get('started') or 0))}, "
+            f"{len(m.get('lines') or [])} lines)" for m in meetings[:20]))]
+    ref = which.strip() or "last"
+    m = meetings[0] if ref in ("last", "latest") else next((x for x in meetings if x["id"] == ref), None)
+    if not m:
+        raise ToolError(f"no meeting {ref!r} (meeting: list)")
+    return [text(short(meeting_text(m, set(words(clean_text(query, 300))), transcript), 8000))]
 
 
 # -- the machine itself --------------------------------------------------------
@@ -18239,7 +18326,7 @@ def call_tool_run(ctx, t, name, args, session=None, meta=None):
 
 
 # Tools that don't touch the desktop: they answer while it is paused.
-PAUSE_FREE = ("get_status", "system_info", "machine_help", "tool_help")
+PAUSE_FREE = ("get_status", "system_info", "machine_help", "tool_help", "meeting_notes")
 
 
 def call_personal(ctx, t, name, args):

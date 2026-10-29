@@ -81,6 +81,12 @@ Singleton {
                 // last 300 ids: what is unread gets a small bubble, also
                 // after a restart; what was read doesn't come back.
                 property list<string> initiativeRead: []
+                // The meeting companion's first call: the line asking to tell
+                // the others, until "Got it". Its caption window's place
+                // (-1: the default, top centre).
+                property bool meetingConsentShown: false
+                property real meetingCaptionsX: -1
+                property real meetingCaptionsY: -1
             }
 
             property JsonObject cheatsheet: JsonObject {

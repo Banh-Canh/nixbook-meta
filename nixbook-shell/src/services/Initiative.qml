@@ -632,6 +632,16 @@ Singleton {
     function act(a, from) {
         const item = from ?? root.speaking
         if (!a || !item) return
+        // The meeting companion's (Meeting.qml): Add tasks, Save as note and
+        // Copy leave the record where it is (the others are a click away).
+        if (a.do === "meeting") {
+            if (!["tasks", "note", "copy"].includes(a.what)) {
+                root._taken(item)
+                if (root.speaking === item) root.speaking = null
+            }
+            Meeting.act(a)
+            return
+        }
         if (a.do === "ask") {
             if (item !== root.speaking) root.open(item)
             root.reply(a.text, a.attach ?? "")
@@ -840,6 +850,18 @@ Singleton {
         } else root._say(item)
         root.log = [...root.log, { time: t / 1000, event: ev?.event ?? "", action: "direct", said: item.text, why: item.why }].slice(-30)
         return true
+    }
+    // The meeting companion's words (Meeting.qml): the offer to take notes
+    // of a call, its record, the follow-up draft; made here (no
+    // nixbook-desktop-mcp), whether or not the initiative is on: the user
+    // started the call's notes, or will say yes to them.
+    function meetingWord(w) {
+        const t = Date.now()
+        const item = Object.assign({ id: Qt.md5(`meeting|${w.text}|${t}`).slice(0, 12), level: "notify", title: "Muse",
+                                     time: t / 1000, expires: t / 1000 + (w.offer ? 15 * 60 : 6 * 3600) }, w)
+        item.text = String(item.text ?? "").slice(0, 4000)
+        root._local(item)
+        root._say(item)
     }
     // The day's line about what Muse did yesterday (Autonomy.daySummary):
     // a quiet word, the journal one click away.
