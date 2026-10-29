@@ -1052,6 +1052,9 @@ Singleton {
             pinned: old?.pinned ?? false,
             turns: turns.length,
             fromAgent: old?.fromAgent ?? chat.fromAgent,
+            // Started in Muse's speech bubble (Mod+C, the voice, Full AI):
+            // listed there with Muse's own threads (Initiative.threads).
+            fromBubble: old?.fromBubble ?? chat.fromBubble,
         };
         historyChatFile.path = root.historyChatPath(chat.chatId);
         historyChatFile.setText(JSON.stringify({ version: 1, id: chat.chatId, agentSessionId: chat.agentSessionId, messages }));

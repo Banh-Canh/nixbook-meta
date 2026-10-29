@@ -457,15 +457,16 @@ Singleton {
         return { id: "", kind: "ask", text: root._pick([Translation.tr("What can I do for you?"),
             Translation.tr("I'm here. What do you need?"), Translation.tr("Yes? Ask me anything.")]) }
     }
-    // Its threads (the "From Muse" ones of the history), newest first, to
-    // go back to one in the bubble.
-    readonly property var threads: Ai.history.filter(c => c.fromAgent).slice(0, 8)
+    // Its threads (the "From Muse" ones of the history, and those the user
+    // started in the bubble), newest first, to go back to one in the bubble.
+    readonly property var threads: Ai.history.filter(c => c.fromAgent || c.fromBubble).slice(0, 8)
     function openThread(id) {
         let chat = Ai.chats.find(c => c.chatId === id)
         if (!chat) {
             if (root.chat?.chatId === id) chat = root.chat
             else {
-                chat = Ai.agentThread(false)
+                // One the user started comes back as theirs, not Muse's.
+                chat = Ai.history.find(c => c.id === id)?.fromBubble ? Ai.askThread(false) : Ai.agentThread(false)
                 if (!Ai.openChatIn(chat, id)) return
             }
         }
