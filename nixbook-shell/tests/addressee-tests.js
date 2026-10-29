@@ -15,7 +15,7 @@ const src = fs
   .replace(/^\.pragma library/m, "");
 const lib = new Function(
   src +
-    "\nreturn { decide: decide, calledByName: calledByName, otherPerson: otherPerson }",
+    "\nreturn { decide: decide, calledByName: calledByName, otherPerson: otherPerson, claimOf: claimOf, notYou: notYou }",
 )();
 
 const NOW = 1000000000;
@@ -150,6 +150,68 @@ no("euh", "filler");
 no("äh, hm", "filler");
 no("ờ", "filler");
 yes("hmm", undefined, { asking: true });
+
+// 6. Correcting it: "not you" (before its name), and claiming it.
+for (const t of [
+  "No, not you",
+  "not you Muse",
+  "I'm not talking to you",
+  "I wasn't talking to you, Muse",
+  "that wasn't for you",
+  "Non, pas toi",
+  "je ne te parle pas Muse",
+  "c'était pas pour toi",
+  "Nein, nicht du",
+  "ich rede nicht mit dir",
+  "das war nicht für dich",
+  "không phải nói với bạn",
+  "tôi không nói với bạn đâu",
+])
+  no(t, "not-you");
+// A claim alone: named always, unnamed only with words let go lately.
+for (const t of [
+  "Yes I'm talking to you Muse",
+  "yes, I'm talking to you, Muse!",
+  "Muse, that was for you",
+  "Oui Muse, c'est à toi que je parle",
+  "Muse, je te parle",
+  "Ja Muse, ich rede mit dir",
+  "Muse ơi, tôi đang nói với bạn đó",
+])
+  check(`claim, named: ${t}`, decide(t).verdict, "claim");
+check(
+  "claim, unnamed, something let go",
+  decide("I'm talking to you", { overheardAt: NOW - 10000 }).verdict,
+  "claim",
+);
+check(
+  "claim, unnamed, nothing let go: someone else's",
+  decide("I'm talking to you!").verdict === "claim",
+  false,
+);
+check(
+  "claim, unnamed, let go too long ago",
+  decide("c'est à toi que je parle", { overheardAt: NOW - 200000 }).verdict ===
+    "claim",
+  false,
+);
+// A claim with an order: the order alone.
+yes("I'm talking to you, open Firefox", "open Firefox");
+yes("Muse, I'm talking to you: play some jazz", "play some jazz");
+// Talk to a person that looks like a claim: not one.
+unsure("c'est à toi de jouer");
+unsure("je te parle de mon boulot demain");
+// Right after it spoke, a long sentence for the room: the model judges it.
+unsure("I told my sister we would visit them next weekend after lunch", {
+  spokeAt: NOW - 3000,
+});
+unsure("tu crois qu'on aura le temps de passer chez ta mère ce soir", {
+  speaking: true,
+});
+yes("and make it louder please", undefined, { spokeAt: NOW - 3000 });
+yes("ouvre aussi le calendrier s'il te plaît", undefined, {
+  spokeAt: NOW - 3000,
+});
 
 // Modes.
 check(

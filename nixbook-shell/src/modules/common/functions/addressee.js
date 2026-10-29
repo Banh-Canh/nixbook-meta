@@ -11,11 +11,12 @@
 // works on an order), halt (a stop word: Voice._halt), spokeAt (when Muse
 // last said or wrote something), addressedAt (when the user last spoke to
 // it), inCall}.
-// The rules, in order: Muse's name; another person's name or another
+// The rules, in order: "not you" and "I'm talking to you" (ctx.overheardAt:
+// when words were last let go); Muse's name; another person's name or another
 // assistant's; an answer to the step waiting for an OK or to Muse's own
 // question, a stop word; a call in progress; name mode stops there; Muse
-// talking now or a moment ago, a back-and-forth going on; fillers; then the
-// model.
+// talking now or a moment ago, a back-and-forth going on (a reply-like
+// sentence only); fillers; then the model.
 // QML's JS engine: no ES2019+, no \p{L} (Latin ranges spelled out).
 
 function wordSet(s) {
@@ -90,6 +91,84 @@ var greetCommaName = new RegExp("^\\s*(?:" + GREET + ")\\s*,\\s*(" + CAP + WORD 
 var nameEnd = new RegExp(",\\s*(" + CAP + WORD + ")\\s*[.!?…]*\\s*$")
 var nameOi = new RegExp("(?:^|\\s)(" + WORD + ")\\s+(?:ơi|oi)(?=" + PUNCT + "|$)", "i")
 
+// The user correcting it: "not you", "I wasn't talking to you", "c'est pas
+// pour toi", "nicht mit dir", "không phải nói với bạn": the words before
+// weren't for it (Addressee.qml stops what it started on them).
+var NOT_YOU = new RegExp("(?:^|[\\s,.!?])(?:" + [
+    "i(?:'m| am| was)? not (?:talking|speaking) to (?:you|muse)",
+    "i wasn'?t (?:talking|speaking) to (?:you|muse)",
+    "(?:that|this|it) (?:wasn'?t|was not|isn'?t|is not|'s not) (?:meant )?(?:for|to) (?:you|muse)",
+    "not (?:meant )?(?:for |to )?(?:you|muse)(?=[\\s,.!?]|$)",
+    "pas (?:à |a |pour )?toi(?=[\\s,.!?]|$)",
+    "je (?:ne )?te (?:parle|parlais) pas",
+    "je (?:ne )?(?:parle|parlais) pas (?:à|a) toi",
+    "(?:c'|ce n')?(?:é|e)tait pas (?:pour|à|a) toi",
+    "(?:c'|ce n')?est pas (?:pour|à|a) toi",
+    "nicht (?:du|dich|dir|mit dir|für dich|zu dir)(?=[\\s,.!?]|$)",
+    "(?:ich )?(?:rede|spreche?|redete|sprach) nicht (?:mit|zu) dir",
+    "das (?:war|ist) nicht für dich",
+    "(?:ich )?meinte? nicht dich",
+    "du bist nicht gemeint",
+    "không phải (?:nói )?(?:với |cho )?(?:bạn|mày|em|muse)",
+    "(?:không|đâu có) (?:có )?nói với (?:bạn|mày|em|muse)"
+].join("|") + ")", "i")
+// Claiming it: "yes I'm talking to you", "that was for you", "c'est à toi
+// que je parle", "ich rede mit dir", "tôi đang nói với bạn".
+var CLAIM = new RegExp("(?:^|[\\s,.!?])(?:" + [
+    "(?:i'?m|i am|i was) (?:talking|speaking) to you",
+    "(?:that|this|it) (?:was|is|'s) (?:meant )?(?:for|to) you",
+    "i (?:mean|meant) you",
+    "i'?m asking you",
+    "(?:it'?s|it is) (?:you|for you)(?=[\\s,.!?]|$)",
+    "(?:yes|yeah|yep),? (?:you|for you|to you)(?=[\\s,.!?]|$)",
+    "je (?:te )?(?:parle|parlais) (?:à|a) toi",
+    "je te (?:parle|parlais|cause|demande)",
+    "je m'adresse (?:à|a) toi",
+    "c'(?:é|e)tait (?:pour|à|a) toi",
+    "c'est (?:pour|à|a) toi(?: que je (?:parle|parlais))?",
+    "c'est toi que je (?:parle|parlais|veux|demande)",
+    "oui,? (?:toi|à toi|a toi|pour toi)(?=[\\s,.!?]|$)",
+    "(?:ich )?(?:rede|spreche?|redete|sprach) (?:mit|zu) dir",
+    "das (?:war|ist) für dich",
+    "(?:du bist|dich) gemeint",
+    "ich meinte? dich",
+    "ich frage? dich",
+    "ja,? (?:du|dich|dir)(?=[\\s,.!?]|$)",
+    "(?:tôi |em |anh |mình )?(?:đang )?nói với (?:bạn|mày|em|anh|muse)",
+    "hỏi (?:bạn|mày|em) (?:đó|đấy)",
+    "(?:là )?(?:cho|nói với) bạn (?:đó|đấy)"
+].join("|") + ")([\\s,.!?:;…—–-]*)", "i")
+// What may come with a claim without being an order.
+var CLAIM_FILL = wordSet("yes yeah yep yup really now here right oui ouais si vraiment là la bien ja doch wirklich "
+    + "jetzt hier vâng dạ đúng ừ đó đấy mà thật really i do am talking to you")
+function notYou(text) {
+    var t = String(text || "").toLowerCase()
+    return words(t).length <= 12 && NOT_YOU.test(t)
+}
+// {order} what was said with the claim (its name and the claim taken
+// out; "" for a claim alone), or null.
+function claimOf(text) {
+    var t = String(text || "").toLowerCase()
+    var m = t.match(CLAIM)
+    if (!m) return null
+    var nameRe = "(?:^|[\\s,.!?])(?:(?:" + GREET + ")\\s+)?(?:" + STRONG + "|" + WEAK + ")" + OI + "(?=[\\s,.!?]|$)"
+    var hasName = new RegExp(nameRe, "i").test(String(text))
+    var named = new RegExp(nameRe, "gi")
+    var before = String(text).slice(0, m.index)
+    var after = String(text).slice(m.index + m[0].length)
+    var rest = (before + " " + after).replace(named, " ")
+    var left = words(rest).filter(function (w) { return !CLAIM_FILL[w] && !FILLERS[w] && !greetOnly.test(w) })
+    return { order: left.length === 0 ? "" : after.replace(named, " ").replace(/^[\s,.!?:;…—–-]+/, "").trim(),
+             cut: /[,.!?:;…—–-]/.test(m[1] || ""), named: hasName }
+}
+// A reply that goes on with it ("and the next one", "louder", "yes"): short,
+// or starting like an order or a follow-up; else the model judges it.
+var FOLLOW = /^(?:and|also|then|now|actually|no|yes|ok|okay|et|puis|aussi|non|oui|und|auch|dann|nein|ja|còn|và|thế|rồi|không|vâng|open|close|play|pause|stop|show|put|set|turn|make|add|remove|start|find|search|tell|give|go|call|send|read|skip|mute|ouvre|ferme|joue|mets|montre|lance|arrête|arrete|ajoute|cherche|dis|envoie|baisse|monte|passe|öffne|schließ|schliess|spiel|zeig|mach|stell|such|sag|schick|leiser|lauter|mở|đóng|phát|tắt|bật|tìm|gửi|cho)\b/i
+function replyLike(text) {
+    var n = words(text).length
+    return n <= 5 || FOLLOW.test(String(text || "").trim())
+}
+
 function words(text) {
     return String(text || "").toLowerCase().replace(/[,.!?:;…"“”«»()\-–—]+/g, " ").trim().split(/\s+/)
         .filter(function (w) { return w.length > 0 })
@@ -156,6 +235,17 @@ function decide(text, ctx) {
     if (mode === "all") return { verdict: "yes", order: t, why: "all" }
     if (t.length === 0) return { verdict: "no", order: "", why: "empty" }
     var now = c.now || Date.now()
+    // 0. The user correcting it ("not you"), or claiming it ("yes, I'm
+    // talking to you"): before its name, which they often carry. A claim
+    // alone takes back the words it let go (Addressee.qml); named, it
+    // always answers; unnamed, only with something let go lately.
+    if (notYou(t)) return { verdict: "no", order: "", why: "not-you" }
+    var claim = claimOf(t)
+    if (claim) {
+        var recent = (c.overheardAt || 0) > 0 && now - c.overheardAt <= 90000
+        if (!claim.order && (claim.named || recent)) return { verdict: "claim", order: "", why: "claim" }
+        if (claim.order && (claim.named || claim.cut)) return { verdict: "yes", order: claim.order, why: "claim-order" }
+    }
     // 1. Its name: for it, whatever else goes on (taken out of the order;
     // the name alone calls it).
     var named = calledByName(t)
@@ -174,12 +264,15 @@ function decide(text, ctx) {
     if (c.inCall) return { verdict: "no", order: "", why: "call" }
     if (mode === "name") return { verdict: "no", order: "", why: "not-named" }
     if (onlyFillers(t)) return { verdict: "no", order: "", why: "filler" }
-    // 5. Speaking up while it talks, or right after: a reply.
-    if (c.speaking) return { verdict: "yes", order: t, why: "speaking" }
+    // 5. Speaking up while it talks, or right after: a reply, when it reads
+    // like one (short, an order, a follow-up); a longer sentence may be
+    // for someone in the room: the model judges it.
+    var reply = replyLike(t)
+    if (c.speaking && reply) return { verdict: "yes", order: t, why: "speaking" }
     var spoke = c.spokeAt || 0, addressed = c.addressedAt || 0
-    if (spoke > 0 && now - spoke <= 8000) return { verdict: "yes", order: t, why: "just-spoke" }
+    if (reply && spoke > 0 && now - spoke <= 8000) return { verdict: "yes", order: t, why: "just-spoke" }
     // A back-and-forth: the user spoke to it lately and it answered.
-    if (addressed > 0 && now - addressed <= 25000 && spoke >= addressed)
+    if (reply && addressed > 0 && now - addressed <= 25000 && spoke >= addressed)
         return { verdict: "yes", order: t, why: "conversation" }
     // 6. The model decides.
     return { verdict: "ask", order: t, why: "unsure" }

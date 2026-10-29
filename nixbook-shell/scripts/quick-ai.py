@@ -468,9 +468,13 @@ ADDRESSEE_SYSTEM = (
     "phone or video call, to themselves, reading aloud, or a TV. Decide whether the LAST words heard were said "
     "TO you, as an order or a question for you, or a reply to what you just said or asked. Signs they were: an "
     "order or a question for a computer (open, play, show, close, what's the weather, remind me…), an answer to "
-    "your last words, the conversation with you going on. Signs they weren't: a call in progress, chit-chat with "
-    "another person, a question only a person in the room could answer, talking about you in the third person, "
-    "thinking aloud, half a sentence. When you aren't sure, they weren't for you. order: the words as an order "
+    "your last words, the conversation with you going on (same topic, a follow-up of your answer). Signs they "
+    "weren't: a call in progress, chit-chat with another person, a question only a person in the room could "
+    "answer (their day, their plans, their feelings, \"are you coming?\", \"did you eat?\"), \"you\" meaning "
+    "someone who can walk, eat, come or go, a reply to something you never said, a change of topic away from "
+    "your last answer, talking about you in the third person, thinking aloud, half a sentence. Having talked "
+    "with you a moment ago doesn't make these words for you: judge them by what they say. When you aren't sure, "
+    "they weren't for you. order: the words as an order "
     "for you, in their language, fillers and your name taken out; empty when they weren't for you. confidence: "
     "how sure you are of `addressed`, 0 to 1. Answer with the JSON alone."
 )
@@ -508,6 +512,10 @@ def addressee_prompt(req):
     if examples:
         parts.append("The user told you these were for you, though you thought they weren't:\n"
                      + "\n".join("- " + x for x in examples))
+    not_examples = [str(x)[:200] for x in (req.get("notExamples") or []) if str(x).strip()][-6:]
+    if not_examples:
+        parts.append("The user told you these were NOT for you (they were talking to someone else), though you "
+                     "took them as for you:\n" + "\n".join("- " + x for x in not_examples))
     parts.append("The last words heard (decide for these): " + str(req.get("heard") or "")[:600])
     return "\n\n".join(parts)
 

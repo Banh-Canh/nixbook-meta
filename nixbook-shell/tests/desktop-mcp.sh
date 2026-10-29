@@ -259,6 +259,8 @@ case "$*" in
   *"conversation remove"*) echo '{"deleted":1,"keptOpen":1,"left":1}' ;;
   *"conversation clear"*) echo "ok: a new conversation once this answer is done (this one stays in the history)" ;;
   *"conversation hide"*) echo "ok: the bubble put away (the conversation comes back with Mod+C)" ;;
+  *"conversation dismiss"*) echo '{"dismissed":2}' ;;
+  *"meetingNotes close"*) echo "ok: the call notes window closed (the notes stay saved: meeting_notes)" ;;
   *"notifications invoke 3 Nope"*) echo '{"error":"no action \"Nope\"; it has: Mark as read"}' ;;
   *"notifications invoke"*) echo '{"ok":true,"invoked":"Mark as read","notification":{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}}' ;;
   *"notifications reply"*) echo '{"ok":true,"replied":"oui","notification":{"id":3,"app":"Vesktop","summary":"build bot","body":"the build passed"}}' ;;
@@ -1206,6 +1208,12 @@ expect_contains "do_not_disturb: off" "$(call do_not_disturb '{"state":"off"}')"
 expect_contains "clear_notification_history" "$(call clear_notification_history '{}')" "12 → 0 entries"
 expect_contains "conversation: clear (after the answer)" "$(call conversation '{"action":"clear"}')" "once this answer is done"
 expect_contains "conversation: hide" "$(call conversation '{"action":"hide"}')" "put away"
+out=$(call conversation '{"action":"dismiss"}')
+expect_contains "conversation: dismiss puts the small bubbles away" "$out" "2 small bubbles put away"
+expect_contains "conversation: dismiss closes the call notes" "$out" "call notes window closed"
+expect_contains "conversation: call notes alone" "$(call conversation '{"action":"dismiss","what":"call_notes"}')" "call notes window closed"
+expect_contains "conversation: call notes through their own target" "$(grep -c 'meetingNotes close' "$calls")" "2"
+expect_contains "conversation: dismiss what checked" "$(call conversation '{"action":"dismiss","what":"mic"}')" "all or call_notes"
 out=$(call conversation '{"action":"history"}')
 expect_contains "conversation: history, the open one said" "$out" "c1 "
 expect_contains "conversation: history flags" "$out" "(pinned)"

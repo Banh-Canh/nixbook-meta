@@ -114,6 +114,22 @@ Singleton {
         root.markRead(item)
         if (item?.id) root.answer(item.id, outcome ?? "later")
     }
+    // Put away for the user (an agent's `conversation dismiss`, the call's
+    // notes closed): its words matching `match` (all without one), read and
+    // gone from the small bubbles and the bar's bubble, answered "later".
+    // The bubble itself only when it holds a word, never a conversation.
+    function putAway(match) {
+        const hit = p => !!p?.id && (!match || match(p))
+        const words = [...root.stack, ...root.pending].filter(hit)
+        if (hit(root.speaking) && !root.conversing) {
+            words.push(root.speaking)
+            root.hush("wait")
+        }
+        const ids = [...new Set(words.map(p => p.id))]
+        for (const p of words) root.markRead(p)
+        for (const id of ids) root.answer(id, "later")
+        return ids.length
+    }
     // Read: what the user has seen in the bubble (hovered, answered, closed
     // or opened from the bar), by id. Still there, but the bar's bubble only
     // lights up for what they haven't, and for a routine it offered until
@@ -1067,6 +1083,12 @@ Singleton {
             if (!root.speaking) return "ok: the bubble is already away"
             root.hush("wait")
             return "ok: the bubble put away (the conversation comes back with Mod+C)"
+        }
+        // Its small bubbles (offers, a call's notes…), WHAT: "" all, or
+        // "meeting" the call notes only. JSON {dismissed}.
+        function dismiss(what: string): string {
+            const meeting = String(what ?? "").trim() === "meeting"
+            return JSON.stringify({ dismissed: root.putAway(meeting ? (p => p.kind === "meeting" && !p.offer) : null) })
         }
         function show(): string {
             root.quiet = false

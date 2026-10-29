@@ -419,7 +419,7 @@ rm -f "$caps"
 : >"$tmp/requests.log"
 : >"$tmp/sent.log"
 addr='{"mode": "addressee", "heard": "FORYOU can you show me tomorrow", "lang": "en", "app": "firefox", "title": "Inbox",
-  "call": false, "museSpokeAgo": 30, "examples": ["put some music on"],
+  "call": false, "museSpokeAgo": 30, "examples": ["put some music on"], "notExamples": ["are you hungry"],
   "transcript": [{"ago": 40, "who": "user", "text": "Julien is coming at eight", "verdict": "no"},
                  {"ago": 30, "who": "muse", "text": "The music is paused.", "verdict": ""}]}'
 t0=$(date +%s%N)
@@ -433,6 +433,7 @@ req=$(grep -F FORYOU "$tmp/requests.log" | head -n1)
 expect_contains_ "addressee: the transcript, oldest first, its verdicts" "$req" 'heard [taken as not for you]: ⟦Person 1⟧ is coming at eight\n- 30 s ago, you said: The music is paused.'
 expect_contains_ "addressee: the window in front, no call" "$req" 'The window in front: firefox — Inbox\n\nNo call is in progress.'
 expect_contains_ "addressee: the user's corrections as examples" "$req" 'though you thought they weren'"'"'t:\n- put some music on'
+expect_contains_ "addressee: the ones the user disowned as counter-examples" "$req" 'though you took them as for you:\n- are you hungry'
 if grep -F FORYOU "$tmp/requests.log" | grep -q Julien; then fail "addressee: a name left unmasked"; else pass "addressee: masked on the way"; fi
 expect_eq "addressee: recorded as sent, after the verdict" "Full AI: was it for Muse?|custom:small-model" "$(cat "$tmp/sent.log")"
 if [ "$ms" -lt 1200 ]; then pass "addressee: answered in ${ms} ms (fake model, under 1.2 s)"; else fail "addressee: too slow (${ms} ms)"; fi

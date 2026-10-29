@@ -567,7 +567,8 @@ def overlays_note(ctx, shown):
                 "hidden from your screenshots while you work, so act on the windows under them as if they "
                 "weren't there. If one still gets in your way, set_aside hides notificationPopups, a "
                 "cutIn or the speechBubble while you work (they come back for the user after; never the "
-                "sidePanel: the user's chat with you).")
+                "sidePanel: the user's chat with you). Clearing your speech bubble, its small bubbles or "
+                "the call notes is the conversation tool (clear, dismiss), not a window.")
 
 
 # Muse's visible cursor (the shell's services/AgentCursor.qml, drawn by
@@ -12984,20 +12985,48 @@ def shell_conversation(fn, *args):
     "conversation",
     "shell",
     "The user's conversation with you in the shell's speech bubble (Mod+C, Full AI mode): `clear` starts a "
-    "fresh one (once the answer you are writing is done; the last one stays in the history), `hide` puts "
-    "the bubble away, `show` calls it up, `history` lists the saved conversations (id, title, when, pinned, "
-    "open). Deleting them: delete_conversations.",
-    obj({"action": {"type": "string", "enum": ["clear", "hide", "show", "history"]},
+    "fresh one (once the answer you are writing is done; the last one stays in the history), `dismiss` puts "
+    "away your small bubbles under it (offers, a call's notes with Save as note / Draft follow-up…) and closes "
+    "the call notes window once the call is over (`what: \"call_notes\"`: only those; the notes stay saved, "
+    "meeting_notes reads them), `hide` puts the bubble away, `show` calls it up, `history` lists the saved "
+    "conversations (id, title, when, pinned, open). \"Clear all that\": clear, then dismiss. These are the "
+    "shell's own panels, not windows: never look for them with the window tools. Deleting conversations: "
+    "delete_conversations.",
+    obj({"action": {"type": "string", "enum": ["clear", "dismiss", "hide", "show", "history"]},
+         "what": {"type": "string", "enum": ["all", "call_notes"],
+                  "description": "dismiss: all (default) or only the call notes"},
          "count": {"type": "integer", "description": "history: at most this many, newest first (default 20)"}},
         ["action"]),
-    brief=("The user's speech-bubble conversation with you: clear (a fresh one, after your answer), hide, "
-           "show, history (saved ones). Deleting: delete_conversations."),
-    props={"count": None},
+    brief=("The user's speech-bubble conversation with you: clear (a fresh one, after your answer), dismiss "
+           "(your small bubbles and the call notes window), hide, show, history (saved ones). Deleting: "
+           "delete_conversations."),
+    props={"count": None, "what": None},
 )
 def t_conversation(ctx, args):
     action = as_str(args, "action", max_len=16)
-    if action not in ("clear", "hide", "show", "history"):
-        raise ToolError("`action`: clear, hide, show or history")
+    if action not in ("clear", "dismiss", "hide", "show", "history"):
+        raise ToolError("`action`: clear, dismiss, hide, show or history")
+    if action == "dismiss":
+        what = args.get("what", "all")
+        if what not in ("all", "call_notes"):
+            raise ToolError("`what`: all or call_notes")
+        ctx.guard.check_rate()
+        out = []
+        if what == "all":
+            try:
+                n = json.loads(shell_conversation("dismiss", "")).get("dismissed", 0)
+            except (ValueError, AttributeError):
+                raise ToolError("the shell's answer is unreadable")
+            out.append(f"ok: {n} small bubble{'s' if n != 1 else ''} put away" if n else "ok: no small bubbles")
+        p = qs_ipc("call", "meetingNotes", "close")
+        notes = (p.stdout or "").strip()
+        if p.returncode != 0 or not notes:
+            raise ToolError(f"the shell didn't answer ({short((p.stderr or notes).strip(), 200) or 'is it running?'})")
+        if what == "call_notes" or notes != "ok: no call notes on screen":
+            out.append(notes)
+        if notes.startswith("error:") and what == "call_notes":
+            raise ToolError(notes[6:].strip())
+        return [text("\n".join(out))]
     if action != "history":
         ctx.guard.check_rate()
         return [text(shell_conversation(action))]

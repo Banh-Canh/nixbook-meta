@@ -415,6 +415,25 @@ Singleton {
             String(Config.options?.ai?.meeting?.keepDays ?? 30)]
     }
 
+    // What an agent may do with the call notes (`meeting` itself is denied
+    // to agents: it opens the microphone): close the record's window and its
+    // word in the bubble once the call is over; never start nor stop one.
+    IpcHandler {
+        target: "meetingNotes"
+        function close(): string {
+            if (root.active || root.ending)
+                return "error: still taking notes of the call (the user stops it with Mod+Alt+N)"
+            const words = Initiative.putAway(p => p.kind === "meeting" && !p.offer)
+            if (!root.keepShown) return words > 0 ? "ok: the call notes put away from the bubble" : "ok: no call notes on screen"
+            root.panelOpen = false
+            root.close()
+            return "ok: the call notes window closed (the notes stay saved: meeting_notes)"
+        }
+        function status(): string {
+            return JSON.stringify({ shown: root.shown, listening: root.active, ending: root.ending,
+                record: root.summary !== null, title: root.summaryTitle })
+        }
+    }
     IpcHandler {
         target: "meeting"
         // Starts listening to the call (TITLE: optional): "" or why not.

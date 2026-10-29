@@ -90,6 +90,7 @@ Singleton {
                 // Addressee.qml): the last words it wrongly took for
                 // someone else's, given to the model as examples.
                 property list<string> addresseeExamples: []
+                property list<string> addresseeNotExamples: []
                 property real meetingCaptionsX: -1
                 property real meetingCaptionsY: -1
             }

@@ -319,7 +319,14 @@ code, in English, French, German and Vietnamese:
 Words it takes for someone else's are **never sent**: they show dimmed in the
 mascot's balloon ("👂 … (not for me?)") with **Was that for me?** for about six
 seconds. Tap it to send them after all; the last few you corrected are shown to
-the model the next time. Settings > Desktop agents > Talk to your desktop >
+the model the next time. Or just say it: _yes, I'm talking to you, Muse_
+(_c'est à toi que je parle_, _ich rede mit dir_, _tôi đang nói với bạn_)
+sends the words it let go in the last minute and a half. The other way round,
+_not you_ or _I wasn't talking to you_ (_pas toi_, _nicht du_, _không phải bạn_)
+stops what it started on your last sentence, and the model is shown that
+sentence as one that wasn't for it. Right after Muse speaks, a short reply or an
+order is still taken as for it; a longer sentence that reads like talk to
+someone in the room goes to the model instead. Settings > Desktop agents > Talk to your desktop >
 **In Full AI mode, act on** (`ai.voice.addressee`): _What's said to Muse_
 (`smart`, the default), _Only when called by name_ (`name`: the name, an answer
 to its question or a stop word; no model) or _Everything heard_ (`all`: every
@@ -587,6 +594,11 @@ detection below only decides when it offers itself and when it stops alone.
   approval — nothing is ever sent by itself.
 - Ask Muse afterwards: _what did we decide in the meeting?_ — its read-only
   `meeting_notes` tool reads what the companion wrote.
+- Done with it? Ask Muse to _clear all that_: it starts a fresh conversation,
+  puts its small bubbles away and closes the call notes window (its
+  `conversation` tool, `dismiss`). The notes stay saved. An agent can close
+  the window but never start or stop the notes: only you can open the
+  microphone.
 
 The transcript stays on this computer
 (`$XDG_STATE_HOME/nixbook-shell/meetings/`, only you can read it), kept

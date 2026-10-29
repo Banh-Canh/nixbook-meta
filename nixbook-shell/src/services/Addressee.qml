@@ -25,7 +25,10 @@ import QtQuick
  *     `threshold`; a timeout or an error is "not for me".
  * What isn't for it is never sent: it shows dimmed in the mascot's balloon
  * ("not for me?") with a "Was that for me?" chip for a few seconds, which
- * sends it after all and is remembered as an example for the model.
+ * sends it after all and is remembered as an example for the model; so
+ * does saying "yes, I'm talking to you (Muse)" (any of the four languages).
+ * "Not you" / "I wasn't talking to you" stops what it started on the last
+ * sentence and keeps that one as a counter-example.
  * Mod+T push-to-talk and typed messages never come here (always for it).
  */
 Singleton {
@@ -57,6 +60,10 @@ Singleton {
     // seconds with "Was that for me?".
     property var overheard: null
     property string lastWhy: ""
+    // The last words let go and the last taken ({text, at}): what "yes, I'm
+    // talking to you" takes back, and what "not you" disowns.
+    property var lastNo: null
+    property var lastYes: null
 
     function _push(who, text, verdict) {
         const now = Date.now();
@@ -77,6 +84,7 @@ Singleton {
             busy: QuickAi.busy || Initiative.thinking,
             halt: (Initiative.thinking || QuickAi.busy || Voice.speaking) && Voice._halt(text) !== null,
             spokeAt: root.spokeAt, addressedAt: root.addressedAt,
+            overheardAt: root.lastNo?.at ?? 0,
             inCall: Meeting.inCall,
         };
     }
@@ -87,7 +95,9 @@ Singleton {
         if (t.length === 0) return;
         const d = AddresseeRules.decide(t, root._context(t));
         root.lastWhy = d.why;
+        if (d.verdict === "claim") return root._claimed(t);
         if (d.verdict === "yes") return root._forMe(t, d.order, d.why);
+        if (d.verdict === "no" && d.why === "not-you") return root._disown(t);
         if (d.verdict === "no") return root._notForMe(t, d.why);
         // The model, one sentence at a time (the rules above never wait).
         root.queue = root.queue.concat([t]).slice(-3);
@@ -95,6 +105,7 @@ Singleton {
     }
     function _forMe(heard, order, why) {
         root.addressedAt = Date.now();
+        root.lastYes = { text: heard, at: Date.now() };
         root._push("user", heard, "yes");
         if (root.overheard) root.overheard = null;
         // The name alone ("Muse?", "hey Muse"): it answers, the next words
@@ -108,6 +119,7 @@ Singleton {
     function _notForMe(heard, why) {
         root._push("user", heard, "no");
         root.overheard = { text: heard, why: why, at: Date.now() };
+        if (why !== "filler") root.lastNo = { text: heard, at: Date.now() };
         overheardOff.restart();
     }
     Timer {
@@ -117,18 +129,48 @@ Singleton {
     }
     // "Was that for me?": sent after all, and remembered (the model is
     // shown the last few next time).
-    function claim() {
-        const o = root.overheard;
+    function claim(from) {
+        const o = from ?? root.overheard;
         if (!o) return;
         root.overheard = null;
+        root.lastNo = null;
         overheardOff.stop();
         const ex = (Persistent.states.ai.addresseeExamples ?? []).filter(x => x !== o.text);
         Persistent.states.ai.addresseeExamples = ex.concat([o.text.slice(0, 200)]).slice(-6);
         root.transcript = root.transcript.map(x => x.who === "user" && x.text === o.text.slice(0, 300) ? Object.assign({}, x, { verdict: "yes" }) : x);
         root.addressedAt = Date.now();
+        root.lastYes = { text: o.text, at: Date.now() };
         // Its name taken out, if it was there.
         const named = AddresseeRules.calledByName(o.text);
         Voice.deliver(named && named.order ? named.order : o.text, true);
+    }
+
+    // "Yes, I'm talking to you (Muse)": the words it let go lately sent after
+    // all, as "Was that for me?" does; nothing let go: it answers.
+    function _claimed(heard) {
+        root._push("user", heard, "yes");
+        root.addressedAt = Date.now();
+        const o = root.lastNo;
+        if (o && Date.now() - o.at <= 90000) return root.claim(o);
+        FullAi.say(Translation.tr("Yes, I'm listening."));
+    }
+    // "Not you", "I wasn't talking to you": what it took from the last
+    // sentence is stopped (while it still works on it or talks), and that
+    // sentence kept as an example of words not for it.
+    function _disown(heard) {
+        root._push("user", heard, "no");
+        const y = root.lastYes;
+        root.lastYes = null;
+        if (!y || Date.now() - y.at > 45000) return;
+        const text = y.text.slice(0, 200);
+        root.transcript = root.transcript.map(x => x.who === "user" && x.text === y.text.slice(0, 300) ? Object.assign({}, x, { verdict: "no" }) : x);
+        Persistent.states.ai.addresseeExamples = (Persistent.states.ai.addresseeExamples ?? []).filter(x => x !== text);
+        Persistent.states.ai.addresseeNotExamples = (Persistent.states.ai.addresseeNotExamples ?? []).filter(x => x !== text).concat([text]).slice(-6);
+        root.addressedAt = 0;
+        if (QuickAi.busy || Initiative.thinking || Voice.speaking) {
+            Voice.interrupt();
+            FullAi.say(Translation.tr("Sorry, that wasn't for me. Stopped."));
+        }
     }
 
     // A judgement under way, tracked here: `running` only turns true once
@@ -151,6 +193,7 @@ Singleton {
             transcript: root.transcript.map(x => ({ ago: Math.round((now - x.t) / 1000), who: x.who, text: x.text, verdict: x.verdict })),
             app: focus.app, title: focus.title, call: Meeting.inCall, callApp: Meeting.callNow || Meeting.callApp,
             examples: Persistent.states.ai.addresseeExamples ?? [],
+            notExamples: Persistent.states.ai.addresseeNotExamples ?? [],
             museSpokeAgo: root.spokeAt > 0 ? Math.round((now - root.spokeAt) / 1000) : -1,
             model: "small" });
         judge.running = true;
@@ -224,6 +267,8 @@ Singleton {
             if (FullAi.active) return;
             root.queue = [];
             root.overheard = null;
+            root.lastNo = null;
+            root.lastYes = null;
             root.transcript = [];
             root.spokeAt = 0;
             root.addressedAt = 0;
