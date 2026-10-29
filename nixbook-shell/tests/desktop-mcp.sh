@@ -974,6 +974,84 @@ expect_contains "click into a terminal refused before connecting" "$out" "refuse
 expect_eq "no Wayland request while refused" "" "$(cat "$wl_log")"
 echo firefox >"$STUB_FOCUS"
 
+# Muse's visible cursor (services/AgentCursor.qml): each step written to
+# agent-cursor.json before its input (desktop pixels, a label in real
+# words), a look after it; the lead waited only while the shell shows the
+# cursor (agent-cursor.ready); nothing with it off, paused or on the agent
+# desktop.
+cursor="$XDG_RUNTIME_DIR/nixbook-shell/agent-cursor.json"
+shell_cfg="$XDG_CONFIG_HOME/nixbook-shell/config.json"
+cursor_event() { jq -c "$1" "$cursor" 2>/dev/null || echo none; }
+rm -f "$cursor"
+call click '{"x":3200.5,"y":300}' >/dev/null
+expect_eq "cursor: a click, where it lands" '{"kind":"click","x":3200.5,"y":300,"button":"left","label":"clicking"}' \
+  "$(cursor_event '{kind, x, y, button, label}')"
+expect_eq "cursor: private to the user" 600 "$(stat -c %a "$cursor")"
+call click '{"x":100,"y":50,"screenshot":{"x":3136,"y":200,"scale":2},"button":"right","double":true}' >/dev/null
+expect_eq "cursor: screenshot pixels mapped, the button said" '{"x":3186,"y":225,"double":true,"label":"right-clicking"}' \
+  "$(cursor_event '{x, y, double, label}')"
+call drag '{"x":100,"y":100,"to_x":220,"to_y":340}' >/dev/null
+expect_eq "cursor: a drag, both ends" '{"kind":"drag","x":100,"y":100,"toX":220,"toY":340}' "$(cursor_event '{kind, x, y, toX, toY}')"
+call scroll '{"dy":3,"x":50,"y":60}' >/dev/null
+expect_eq "cursor: a scroll" '{"kind":"scroll","x":50,"y":60,"label":"scrolling down"}' "$(cursor_event '{kind, x, y, label}')"
+call type_text '{"text":"hello world"}' >/dev/null
+expect_eq "cursor: typing, in the focused window" '{"kind":"type","window":1,"app":"firefox","label":"typing 11 characters","count":11}' \
+  "$(cursor_event '{kind, window, app, label, count}')"
+call press_keys '{"keys":["ctrl+shift+t","Return"]}' >/dev/null
+expect_eq "cursor: keys, as people write them" "pressing Ctrl+Shift+T, Return" "$(jq -r .label "$cursor")"
+call screenshot '{"region":{"x":3140,"y":210,"width":100,"height":50}}' >/dev/null
+expect_eq "cursor: a region looked at, outlined" '{"kind":"read","x":3140,"y":210,"w":100,"h":50,"lead":0}' \
+  "$(cursor_event '{kind, x, y, w, h, lead}')"
+call screenshot '{"window_id":5}' >/dev/null
+expect_eq "cursor: a window looked at (the shell names its app)" '{"kind":"read","window":5,"label":"looking at {app}"}' \
+  "$(cursor_event '{kind, window, label}')"
+rm -f "$cursor"
+call screenshot '{}' >/dev/null
+expect_eq "cursor: a whole monitor isn't outlined" none "$(cursor_event .kind)"
+# The words a later click presses, from the session's last read_screen.
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_screen","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"click","arguments":{"x":232,"y":90}}}' |
+  python3 "$mcp" >/dev/null 2>&1
+expect_eq "cursor: a click names what it presses" "clicking “Mark as Read”" "$(jq -r .label "$cursor")"
+# The lead: waited only while the shell shows it.
+echo 1 >"$XDG_RUNTIME_DIR/nixbook-shell/agent-cursor.ready"
+start=$(date +%s%N)
+NIXBOOK_DESKTOP_MCP_CURSOR_LEAD_MS=400 call click '{"x":10,"y":10}' >/dev/null
+waited=$((($(date +%s%N) - start) / 1000000))
+expect_eq "cursor: the click waits the lead" "400 yes" "$(jq -r .lead "$cursor") $([ "$waited" -ge 400 ] && echo yes || echo "no ($waited ms)")"
+echo 0 >"$XDG_RUNTIME_DIR/nixbook-shell/agent-cursor.ready"
+# Only Muse's cursor on screen: hidden from a screenshot, never asked to make
+# way for an action, never told to the agent.
+echo '{"overlays":["agentCursor"]}' >"$XDG_RUNTIME_DIR/nixbook-shell/overlays.json"
+rm -f "$XDG_RUNTIME_DIR/nixbook-shell/make-way.json" "$STUB_CALLS.mw"
+call click '{"x":10,"y":10}' >/dev/null
+expect_eq "cursor: an action asks it nothing" absent "$([ -e "$XDG_RUNTIME_DIR/nixbook-shell/make-way.json" ] && echo present || echo absent)"
+out=$(call screenshot '{"region":{"x":0,"y":0,"width":100,"height":50}}')
+expect_eq "cursor: hidden from the screenshot" '{"capture":true}' "$(head -n 1 "$STUB_CALLS.mw" 2>/dev/null)"
+expect_eq "cursor: given back after it" false "$(jq .capture "$XDG_RUNTIME_DIR/nixbook-shell/make-way.json")"
+expect_not_contains "cursor: never told to the agent" "$out" "agentCursor"
+rm -f "$XDG_RUNTIME_DIR/nixbook-shell/overlays.json" "$XDG_RUNTIME_DIR/nixbook-shell/make-way.json" "$STUB_CALLS.mw"
+# Off: the setting, the pause, the agent desktop.
+cp "$shell_cfg" "$tmp/cursor-config.saved" 2>/dev/null || echo '{}' >"$tmp/cursor-config.saved"
+jq '.ai.agent.showCursor = false' "$tmp/cursor-config.saved" >"$shell_cfg"
+rm -f "$cursor"
+call click '{"x":10,"y":10}' >/dev/null
+expect_eq "cursor: nothing with ai.agent.showCursor off" none "$(cursor_event .kind)"
+jq '.policies.ai = 0' "$tmp/cursor-config.saved" >"$shell_cfg"
+call click '{"x":10,"y":10}' >/dev/null
+expect_eq "cursor: nothing with AI off" none "$(cursor_event .kind)"
+cp "$tmp/cursor-config.saved" "$shell_cfg"
+python3 "$mcp" pause >/dev/null
+call click '{"x":10,"y":10}' >/dev/null
+expect_eq "cursor: nothing while paused" none "$(cursor_event .kind)"
+python3 "$mcp" resume >/dev/null
+touch "$XDG_STATE_HOME/nixbook-shell/agent-desktop"
+call press_keys '{"keys":["Return"]}' >/dev/null
+expect_eq "cursor: nothing on the agent desktop" none "$(cursor_event .kind)"
+rm -f "$XDG_STATE_HOME/nixbook-shell/agent-desktop"
+
 start_compositor --no-virtual-pointer
 reset_calls
 out=$(call click '{"x":10,"y":20}')
@@ -2758,6 +2836,13 @@ expect_contains "ui_act target: nothing by that name" "$(uicall ui_act '{"target
 uicall ui_read '{"find":"reload"}' >/dev/null
 uicall ui_act '{"index":1,"action":"click"}' >/dev/null
 expect_eq "ui_act index: learned too" Reload "$(jq -r '.targets.firefox[] | select(.name=="Reload") | .name' "$mem")"
+rm -f "$cursor"
+uicall ui_act '{"target":"Send","action":"click"}' >/dev/null
+expect_eq "cursor: ui_act names the element, in its window" '{"kind":"click","window":1,"app":"firefox","label":"clicking “Send”"}' \
+  "$(cursor_event '{kind, window, app, label}')"
+uicall ui_read '{"find":"reload"}' >/dev/null
+expect_eq "cursor: ui_read outlines its window" '{"kind":"read","window":1,"label":"looking for “reload” in {app}"}' \
+  "$(cursor_event '{kind, window, label}')"
 echo kitty >"$STUB_FOCUS"
 expect_contains "ui_act target: terminals refused" "$(uicall ui_act '{"target":"Send","action":"click"}')" "refused: 'kitty' is off limits"
 echo firefox >"$STUB_FOCUS"
@@ -3948,6 +4033,9 @@ expect_not_contains "privacy: no real email in a tool's reply" "$out" "elodie@ex
 reset_calls
 call type_text '{"text":"Hi ⟦Person 2⟧"}' >/dev/null
 expect_eq "privacy: typed with the real values" "wtype - <<Hi Noor Durand" "$(last_call)"
+rm -f "$cursor"
+uicall ui_read '{"find":"⟦Person 2⟧"}' >/dev/null
+expect_eq "cursor: its labels carry the real names" "looking for “Noor Durand” in {app}" "$(jq -r .label "$cursor")"
 
 # JSON values (nixbook-meta-agent --privacy: what goes to and comes from
 # other MCP servers), both ways, the shape kept.

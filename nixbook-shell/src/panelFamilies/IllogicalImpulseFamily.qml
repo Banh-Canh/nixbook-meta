@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 
 import qs.modules.common
+import qs.modules.ii.agentCursor
 import qs.modules.ii.background
 import qs.modules.ii.bar
 import qs.modules.ii.dock
@@ -75,6 +76,8 @@ Scope {
     PanelLoader { component: KiroshiScan {} }
     PanelLoader { component: DesktopMascot {} }
     PanelLoader { component: FullAiOverlay {} }
+    // Muse's visible cursor: mapped the first time an agent acts, so above the popups.
+    PanelLoader { component: AgentCursorOverlay {} }
     // Loading screen while the Preloader builds every popup (last, so it is
     // stacked above the other overlay surfaces mapped during boot).
     PanelLoader { component: BootSplash {} }

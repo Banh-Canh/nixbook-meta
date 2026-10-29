@@ -113,6 +113,10 @@ DEFAULT_CONFIG = {
     "maxNoteLength": 100000,
     "actionsPerMinute": 120,
     "notifyOnControl": True,
+    # Muse's visible cursor (ai.agent.showCursor in the shell): each click,
+    # drag, scroll or key waits this long after showing where it goes, so
+    # the cursor gets there first (0: no wait).
+    "cursorLeadMs": 300,
     "screenshotMaxEdge": 1280,
     # JPEG: a fraction of a PNG's size, so screenshots reach the model sooner.
     "screenshotFormat": "jpeg",
@@ -465,15 +469,27 @@ def shell_overlays():
         return []
 
 
-def make_way(capture=False, wait=True, hold_ms=MAKE_WAY_ACTION_MS, clear=False):
+class MadeWay(list):
+    """make_way's answer: the overlays on screen the agent is told of, and
+    whether the shell was asked anything (`asked`: also when only Muse's
+    cursor was there, which the agent is never told of)."""
+    asked = False
+
+
+def make_way(capture=False, wait=True, hold_ms=MAKE_WAY_ACTION_MS, clear=False, release=False):
     """Asks the shell's overlays to let the agent through (and, `capture`, to
     vanish for a screenshot; `clear`, an action starting, to dismiss a
-    cut-in): the ones on screen, [] when none."""
+    cut-in; `release`, a look done, to come back: written whatever is on
+    screen now): the ones on screen, [] when none."""
     if on_agent_desktop():
-        return []
-    overlays = shell_overlays()
-    if not overlays:
-        return []
+        return MadeWay()
+    listed = shell_overlays()
+    # Muse's own cursor (agent_cursor): click-through already, so an action
+    # has nothing to ask of it, and the agent is never told of it; only a
+    # screenshot hides it.
+    overlays = MadeWay(n for n in listed if n != AGENT_CURSOR_OVERLAY)
+    if not overlays and not release and not (capture and listed):
+        return overlays
     path = os.path.join(shell_runtime_dir(), "make-way.json")
     now = int(time.time() * 1000)
     try:
@@ -494,6 +510,7 @@ def make_way(capture=False, wait=True, hold_ms=MAKE_WAY_ACTION_MS, clear=False):
             json.dump(request, f)
     except OSError:
         return overlays
+    overlays.asked = True
     if wait and not same:
         ack = os.path.join(shell_runtime_dir(), "make-way.ack")
         deadline = time.monotonic() + MAKE_WAY_WAIT
@@ -524,9 +541,9 @@ def overlays_hidden(ctx):
         yield shown
     finally:
         ctx.hiding = depth
-        if depth == 0 and shown:
+        if depth == 0 and getattr(shown, "asked", bool(shown)):
             # Still in the action: held for it, else only a moment more.
-            make_way(capture=False, wait=False,
+            make_way(capture=False, wait=False, release=True,
                      hold_ms=MAKE_WAY_ACTION_MS if getattr(ctx, "in_action", False) else MAKE_WAY_AFTER_MS)
 
 
@@ -541,6 +558,147 @@ def overlays_note(ctx, shown):
                 "weren't there. If one still gets in your way, set_aside hides notificationPopups, a "
                 "cutIn or the speechBubble while you work (they come back for the user after; never the "
                 "sidePanel: the user's chat with you).")
+
+
+# Muse's visible cursor (the shell's services/AgentCursor.qml, drawn by
+# modules/ii/agentCursor/): before each pointer action, key press or typing
+# on the user's desktop, and after each look at a window or a region, one
+# small event in agent-cursor.json, which the shell watches. A second,
+# glowing cursor glides to the target with a word of what it does, a ripple
+# on a click, corner brackets around what was read. The input then waits the
+# lead (cursorLeadMs) so that the cursor gets there first: whoever watches
+# sees where the agent goes before it acts. Never on the agent desktop, and
+# nothing with ai.agent.showCursor off or AI off (paused, no tool runs at
+# all). Labels carry real names: the user sees them, the privacy mask is for
+# the model provider only. Written in place, like make-way.json (the shell's
+# FileView watches the path; a half-written read is read again).
+AGENT_CURSOR_OVERLAY = "agentCursor"
+AGENT_CURSOR_LABEL_MAX = 48
+_cursor_seq = [0]
+
+
+def agent_cursor_path():
+    return os.path.join(shell_runtime_dir(), "agent-cursor.json")
+
+
+def cursor_lead_ms(cfg):
+    env = os.environ.get("NIXBOOK_DESKTOP_MCP_CURSOR_LEAD_MS")
+    try:
+        value = int(env) if env not in (None, "") else int(cfg.get("cursorLeadMs", 300))
+    except (TypeError, ValueError):
+        value = 300
+    return min(max(value, 0), 1500)
+
+
+def agent_cursor_on(ctx):
+    if getattr(ctx, "desktop", "user") != "user" or on_agent_desktop():
+        return False
+    return shell_setting("ai.agent.showCursor", True) is not False and ai_policy() != 0
+
+
+def cursor_label(value):
+    """A label as the user reads it: real names, one line, short."""
+    value = " ".join(str(value or "").split())
+    if value and privacy_on():
+        with contextlib.suppress(Exception):
+            value = unmask_text(value)
+    return value if len(value) <= AGENT_CURSOR_LABEL_MAX else value[: AGENT_CURSOR_LABEL_MAX - 1].rstrip() + "…"
+
+
+def cursor_quote(name):
+    """A target's name inside a label (“Send”), "" when there is none."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        return ""
+    if len(name) > 30:
+        name = name[:29].rstrip() + "…"
+    return f"“{name}”"
+
+
+def agent_cursor(ctx, kind, label="", lead=True, **where):
+    """Shows the agent's step on the user's desktop (kind: move, click, drag,
+    scroll, type, keys or read; where: x, y, toX, toY, w, h in desktop
+    logical pixels, window (an id: the shell places it), rel (an element's
+    box inside that window), app, button…), then waits the lead before the
+    input when the shell's cursor is up to show it (agent_cursor_ready).
+    Never fails the tool."""
+    try:
+        if not agent_cursor_on(ctx):
+            return
+        _cursor_seq[0] += 1
+        ms = cursor_lead_ms(ctx.cfg) if lead else 0
+        # Keys and text land where the cursor already is: a shorter wait.
+        if kind in ("type", "keys"):
+            ms //= 2
+        event = {"id": f"{os.getpid()}-{_cursor_seq[0]}", "time": int(time.time() * 1000), "kind": kind,
+                 "label": cursor_label(label), "lead": ms}
+        for k, v in where.items():
+            if v is None:
+                continue
+            if isinstance(v, float):
+                v = round(v, 1)
+                v = int(v) if v.is_integer() else v
+            event[k] = v
+        os.makedirs(shell_runtime_dir(), mode=0o700, exist_ok=True)
+        fd = os.open(agent_cursor_path(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False))
+        if ms > 0 and agent_cursor_ready():
+            time.sleep(ms / 1000)
+    except (OSError, ToolError, ValueError):
+        pass
+
+
+def agent_cursor_ready():
+    """Whether the shell shows the cursor now (its agent-cursor.ready says
+    1): only then is the lead worth waiting."""
+    try:
+        with open(os.path.join(shell_runtime_dir(), "agent-cursor.ready"), encoding="utf-8") as f:
+            return f.read(4).strip() == "1"
+    except OSError:
+        return False
+
+
+def cursor_target_name(ctx, x, y):
+    """The text under a point from the session's last read_screen (its
+    lines' boxes, a few pixels of slack), within two minutes: what a click
+    there presses, for its label."""
+    seen = getattr(ctx, "ocr_seen", None)
+    if not seen or time.monotonic() - seen[0] > 120:
+        return ""
+    for cx, cy, line, lw, lh in seen[1]:
+        if abs(x - cx) <= lw / 2 + 6 and abs(y - cy) <= lh / 2 + 6:
+            return line
+    return ""
+
+
+def cursor_window(ctx):
+    """The focused window the last input check looked at (Guard.target):
+    its id and app_id, for the shell to place the cursor in, without
+    another niri call."""
+    w = getattr(ctx.guard, "target", None) or {}
+    return w.get("id"), w.get("app_id")
+
+
+def cursor_read(ctx, args, label):
+    """A look at a window (`window_id`) or a `region`, outlined for a moment
+    (a whole monitor isn't: nothing to point at). The window's app and box
+    come from the shell's own window list."""
+    if isinstance(args.get("window_id"), int) and not isinstance(args.get("window_id"), bool):
+        agent_cursor(ctx, "read", label, lead=False, window=args["window_id"])
+    elif isinstance(args.get("region"), dict):
+        try:
+            x, y = point(args["region"])
+            w, h = point(args["region"], "width", "height")
+        except ToolError:
+            return
+        agent_cursor(ctx, "read", label, lead=False, x=x, y=y, w=w, h=h)
+
+
+def cursor_keys(combo):
+    """A key combination as people write it: ctrl+shift+t → Ctrl+Shift+T."""
+    parts = [p for p in str(combo).split("+") if p]
+    return "+".join(p.upper() if len(p) == 1 else p[:1].upper() + p[1:] for p in parts)
 
 
 def focused_a11y_role(w):
@@ -905,6 +1063,8 @@ class Guard:
         editor's: by its accessibility role) and the keys that open one, and
         browsers' developer tools. Then marks the input (mark_agent_input)."""
         w = focused_window()
+        # Where Muse's cursor shows the keys or the click (agent_cursor).
+        self.target = w
         mark_agent_input()
         if not w:
             return
@@ -11859,6 +12019,8 @@ COORD = {"type": "number"}
 def t_screenshot(ctx, args):
     with overlays_hidden(ctx) as shown:
         out = screenshot_now(ctx, args)
+    # Shown once the capture is done: Muse's cursor hides from it.
+    cursor_read(ctx, args, "looking at {app}" if args.get("window_id") is not None else "looking here")
     note = overlays_note(ctx, shown) if getattr(ctx, "hiding", 0) == 0 else None
     return out + [note] if note else out
 
@@ -12297,7 +12459,10 @@ OCR_MAX_CHARS = 6000
 )
 def t_read_screen(ctx, args):
     with overlays_hidden(ctx):
-        return read_screen_now(ctx, args)
+        out = read_screen_now(ctx, args)
+    find = as_str(args, "find", required=False, max_len=200)
+    cursor_read(ctx, args, f"looking for {cursor_quote(find)}" if find else "reading the text here")
+    return out
 
 
 def read_screen_now(ctx, args):
@@ -12335,6 +12500,8 @@ def read_screen_now(ctx, args):
         raise ToolError("`ocrLanguages` must be like eng or eng+fra")
     tsv = run(["tesseract", "stdin", "stdout", "--psm", "11", "-l", lang, "tsv"], input=gray, timeout=30, binary=True)
     lines = ocr_lines(tsv.stdout.decode(errors="replace"), x, y, scale)
+    # What a later click there presses, for Muse's cursor's label.
+    ctx.ocr_seen = (time.monotonic(), lines)
     if find:
         want = fold(find)
         found = [ln for ln in lines if want in fold(ln[2])]
@@ -12941,6 +13108,9 @@ def t_type_text(ctx, args):
     ctx.guard.check_text(value)
     ctx.guard.check_input_target()
     ctx.guard.check_rate()
+    wid, app = cursor_window(ctx)
+    agent_cursor(ctx, "type", f"typing {len(value)} character{'s' if len(value) != 1 else ''}", window=wid, app=app,
+                 count=len(value))
     if shutil.which("wtype") and PLAIN_TEXT.fullmatch(value) is None and shutil.which("wl-copy"):
         paste_text(value)
         return [text(f"pasted {len(value)} characters" + focus_note(ctx))]
@@ -12977,6 +13147,8 @@ def t_press_keys(ctx, args):
     combos = [parse_combo(k, allow_super) for k in keys]
     ctx.guard.check_input_target(combos)
     ctx.guard.check_rate()
+    wid, app = cursor_window(ctx)
+    agent_cursor(ctx, "keys", "pressing " + ", ".join(cursor_keys(k) for k in keys), window=wid, app=app)
     argv = ["wtype"]
     for mods, key in combos:
         for m in mods:
@@ -13315,6 +13487,8 @@ def t_move_pointer(ctx, args):
     x, y = point(args)
     mark_agent_input()
     ctx.guard.check_rate()
+    name = cursor_quote(cursor_target_name(ctx, x, y))
+    agent_cursor(ctx, "move", f"pointing at {name}" if name else "pointing", x=x, y=y)
     with Pointer() as p:
         p.move(x, y)
     return [text(f"pointer at {fmt(x, y)}" + precision_note(p))]
@@ -13348,6 +13522,11 @@ def t_click(ctx, args):
         x, y = point(args)
     ctx.guard.check_input_target()
     ctx.guard.check_rate()
+    double = args.get("double") is True
+    verb = ("double-clicking" if double else "clicking") if button == "left" else f"{button}-clicking"
+    name = cursor_quote(cursor_target_name(ctx, x, y)) if has_xy else ""
+    agent_cursor(ctx, "click", f"{verb} {name}" if name else verb, x=x if has_xy else None,
+                 y=y if has_xy else None, button=button, double=double or None)
     with Pointer() as p:
         if has_xy:
             p.move(x, y)
@@ -13384,6 +13563,8 @@ def t_drag(ctx, args):
     tx, ty = point(args, "to_x", "to_y")
     ctx.guard.check_input_target()
     ctx.guard.check_rate()
+    name = cursor_quote(cursor_target_name(ctx, x, y))
+    agent_cursor(ctx, "drag", f"dragging {name}" if name else "dragging", x=x, y=y, toX=tx, toY=ty)
     with Pointer() as p:
         p.move(x, y)
         time.sleep(0.03)
@@ -13419,6 +13600,9 @@ def t_scroll(ctx, args):
         x, y = point(args)
     mark_agent_input()
     ctx.guard.check_rate()
+    ways = [w for n, w in ((dy, "down" if dy > 0 else "up"), (dx, "right" if dx > 0 else "left")) if n]
+    agent_cursor(ctx, "scroll", "scrolling " + " and ".join(ways) if ways else "scrolling",
+                 x=x if has_xy else None, y=y if has_xy else None, dx=dx or None, dy=dy or None)
     with Pointer() as p:
         if has_xy:
             p.move(x, y)
@@ -15684,6 +15868,21 @@ def ui_walk(Atspi, frame, frame_path, find, cap):
     return out, truncated
 
 
+def ui_extents(Atspi, node):
+    """An element's box inside its window ({x, y, w, h}, logical pixels),
+    for Muse's cursor; None when the app doesn't say. Window coordinates:
+    under Wayland, apps don't know where their window is on screen."""
+    try:
+        if node.get_component_iface() is None:
+            return None
+        r = Atspi.Component.get_extents(node, Atspi.CoordType.WINDOW)
+        if r.width <= 0 or r.height <= 0 or r.x < -50 or r.y < -50 or r.width > 20000 or r.height > 20000:
+            return None
+        return {"x": r.x, "y": r.y, "w": r.width, "h": r.height}
+    except Exception:
+        return None
+
+
 def ui_resolve(Atspi, path):
     node = Atspi.get_desktop(0)
     for i in path:
@@ -15717,8 +15916,11 @@ def ui_resolve(Atspi, path):
 def t_ui_read(ctx, args):
     w = ui_window(ctx, args)
     Atspi = atspi()
-    find = (as_str(args, "find", max_len=200, required=False) or "").lower()
+    shown_find = as_str(args, "find", max_len=200, required=False) or ""
+    find = shown_find.lower()
     cap = min(max(int(args.get("max_elements") or 80), 1), 400)
+    agent_cursor(ctx, "read", f"looking for {cursor_quote(shown_find)} in {{app}}" if shown_find else "reading {app}",
+                 lead=False, window=w.get("id"), app=w.get("app_id"))
     frame_path, frame = ui_frame(Atspi, w)
     found, truncated = ui_walk(Atspi, frame, frame_path, find, cap)
     head = f"{w.get('app_id')} — {w.get('title')!r} (window {w.get('id')})"
@@ -16017,6 +16219,14 @@ def t_ui_act(ctx, args):
     if role == "terminal":
         raise ToolError("refused: terminals are off limits; ask the user to do this step")
     ctx.guard.check_rate()
+    # Muse's cursor on the element: its box inside the window, when the app
+    # says (the shell adds where the window is), else the window itself.
+    shown = cursor_quote(name) or role or ""
+    value = args.get("value") if isinstance(args.get("value"), str) else ""
+    label = {"click": f"clicking {shown}", "focus": f"focusing {shown}",
+             "set_text": f"typing {len(value)} characters into {shown}"}.get(action, f"{action} {shown}")
+    agent_cursor(ctx, "type" if action == "set_text" else "click", label, window=w.get("id"), app=w.get("app_id"),
+                 rel=ui_extents(Atspi, node), count=len(value) if action == "set_text" else None)
 
     def element():
         """The element as it reads now: (its line, its text, its states)."""

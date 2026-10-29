@@ -30,7 +30,8 @@ import QtQuick
  *     cut-in or the bubble hidden while the agent works, back when it
  *     stops; never the side panel (it lets the agent through already) nor
  *     the lock screen or a password prompt.
- * Also the Kiroshi scan.
+ * Also the Kiroshi scan, and Muse's own cursor (AgentCursor.qml: only
+ * hidden for screenshots).
  * The windows read `active`, `capture`, `fade(base, name)`.
  */
 Singleton {
@@ -72,6 +73,9 @@ Singleton {
         if (Kiroshi.open) out.push("kiroshi")
         if (FullAi.active) out.push("fullAi")
         if (MascotState.shown) out.push("mascot")
+        // Muse's own cursor: only hidden from its screenshots (the server
+        // neither tells the agent of it nor asks it to make way).
+        if (AgentCursor.shown) out.push("agentCursor")
         return out
     }
     onOverlaysChanged: overlaysWrite.restart()

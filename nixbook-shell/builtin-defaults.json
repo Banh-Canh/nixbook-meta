@@ -77,7 +77,8 @@
       "resolve": true,
       "verify": true,
       "keepWarmMinutes": 60,
-      "coreTools": true
+      "coreTools": true,
+      "showCursor": true
     },
     "immich": {
       "apiKeyFile": "",

@@ -53,6 +53,38 @@ or keyboard:
   the clipboard (put back afterwards) and notifies. Hidden windows redraw about
   once a second, so a capture is at most that old; the text tools are live.
 
+## Muse's cursor
+
+When an agent acts on your desktop, you see it do it. A second, glowing
+cursor in your theme's accent colours, with a small Muse badge, glides to
+whatever the agent clicks, drags, scrolls or types into **just before** it
+does, with a word of what it does — "clicking “Send”" (the button's name when
+the accessibility tree or the last OCR read gives it), "typing 42
+characters", "pressing Ctrl+L", "scrolling down" — and a ripple on each
+click. When it reads a window (`ui_read`, a screenshot of a window) or a
+region, corner brackets outline it for a moment ("reading Firefox"). It fades
+out a second and a half after the last step.
+
+- **The agent waits for it**: each pointer step waits 300 ms after showing
+  where it goes (keys and typing 150 ms), so the cursor gets there first
+  (`cursorLeadMs` in `desktopMcp.settings`, `0` for no wait). The wait only
+  happens while the shell shows the cursor.
+- **Never in the way**: it takes no clicks and no keys, and it vanishes from
+  the agent's own screenshots (it is one of the [overlays that make
+  way](#working-alongside-you), and the agent is never told about it).
+- **Only where it means something**: on your desktop (not [the agent's
+  own](./agent-desktop)), never while desktop control is paused, the screen
+  is locked or [AI is off](#turning-ai-off). Its labels show real names, as
+  you see them on screen: the privacy mask only covers what goes to the model
+  provider.
+- **Turn it off** in Settings → Desktop agents → Desktop control → **Show
+  Muse's cursor** (`ai.agent.showCursor`).
+
+How it works: `nixbook-desktop-mcp` writes each step to
+`$XDG_RUNTIME_DIR/nixbook-shell/agent-cursor.json` (kind, desktop
+coordinates or a window id, the label), the shell's `AgentCursor` service
+watches it, and one overlay per screen, kept mapped once shown, draws it.
+
 ## Apps and browser through the page
 
 The `pages` tools work **in the page itself**, never through the compositor:

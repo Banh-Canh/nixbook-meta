@@ -1872,6 +1872,17 @@ ContentPage {
                     onClicked: DesktopControl.toggleNotify()
                 }
                 ConfigSwitch {
+                    configKey: "ai.agent.showCursor"
+                    enabled: !nixManaged
+                    buttonIcon: "near_me"
+                    text: Translation.tr("Show Muse's cursor while it works on your desktop")
+                    checked: Config.options.ai.agent.showCursor
+                    onCheckedChanged: Config.options.ai.agent.showCursor = checked
+                    StyledToolTip {
+                        text: Translation.tr("A second, glowing cursor goes to what an agent clicks, scrolls or types into just before it does, with a word of what it does, and outlines what it reads. It never takes your clicks or keys, and never shows in the agent's screenshots")
+                    }
+                }
+                ConfigSwitch {
                     buttonIcon: "picture_in_picture"
                     text: Translation.tr("Agents work on their own desktop")
                     checked: DesktopControl.onAgentDesktop

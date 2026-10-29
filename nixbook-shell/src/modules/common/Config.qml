@@ -415,6 +415,10 @@ Singleton {
                     // The desktop tools' ~25 core ones up front, the others
                     // loaded by group when needed (a smaller prompt, faster).
                     property bool coreTools: true
+                    // Muse's visible cursor (services/AgentCursor.qml): a second,
+                    // glowing cursor showing where an agent clicks, types and
+                    // reads on the user's desktop, just before it does.
+                    property bool showCursor: true
                 }
                 // The Immich photo library the side panel's Muse can use
                 // (immich-photo-manager, in assistant.mcpServers): its server,
