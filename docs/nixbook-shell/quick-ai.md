@@ -221,7 +221,7 @@ mode**) hands the desktop over to the AI: you talk, it does. A little mascot
 shows up and moves around the screen like a host: it shows what it hears, what it
 is doing (it darts off when the agent starts a step), and what it answers, which
 it jumps for joy when a task is done and wobbles when
-something failed. A soft glow around the screens says the AI is in charge.
+something failed. The mascot is the mode's only sign on screen.
 
 - **You keep your keyboard and mouse**: the mode never takes them, so you can
   go on working while it does what you asked. **`Mod+Shift+T` again leaves**

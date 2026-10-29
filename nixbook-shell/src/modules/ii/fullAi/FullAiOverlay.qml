@@ -9,9 +9,9 @@ import Quickshell
 import Quickshell.Wayland
 
 /**
- * Full AI mode's layer (services/FullAi.qml): over every screen, a soft
- * glow at the edges saying the AI is listening, and the mascot
- * (MascotStage) on the screen the mode was started on. It takes no keys and
+ * Full AI mode's layer (services/FullAi.qml): the mascot (MascotStage) on
+ * the screen the mode was started on, the mode's only sign on screen (no
+ * glow, no "how to leave" hint: the user asked for the mascot alone). It takes no keys and
  * no clicks but on the balloon's Yes / No while a question waits: the user
  * keeps working, the agent's own clicks and keys go through too. While the
  * agent takes a screenshot, it vanishes.
@@ -49,30 +49,6 @@ Scope {
                 // Hidden from the agent's own screenshots.
                 opacity: MakeWay.capture ? 0 : 1
 
-                // The AI is in charge: a breathing glow around the screen.
-                Rectangle {
-                    id: glow
-                    anchors.fill: parent
-                    color: "transparent"
-                    border.width: 4
-                    border.color: Qt.alpha(Appearance.colors.colPrimary, 0.55)
-                    radius: Appearance.rounding.screenRounding
-                    SequentialAnimation on opacity {
-                        running: window.visible
-                        loops: Animation.Infinite
-                        NumberAnimation { from: 0.45; to: 1; duration: 1600; easing.type: Easing.InOutSine }
-                        NumberAnimation { from: 1; to: 0.45; duration: 1600; easing.type: Easing.InOutSine }
-                    }
-                }
-                Rectangle {
-                    anchors.fill: parent
-                    color: "transparent"
-                    border.width: 14
-                    border.color: Qt.alpha(Appearance.colors.colPrimary, 0.12)
-                    radius: Appearance.rounding.screenRounding
-                    opacity: glow.opacity
-                }
-
                 Loader {
                     id: stageLoader
                     anchors.fill: parent
@@ -84,7 +60,6 @@ Scope {
                         lineKind: FullAi.lineKind
                         yesNo: FullAi.yesNo
                         onChose: yes => FullAi.answer(yes)
-                        hint: FullAi.hint
                         level: Voice.level
                         talking: FullAi.mood === "speaking"
                     }
