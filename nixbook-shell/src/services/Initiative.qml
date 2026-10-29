@@ -576,6 +576,8 @@ Singleton {
         // Allow / No before risky steps), or the small model for a question
         // about an image. What the user was just doing goes along through
         // the context broker (unless its × took it out: skipContext).
+        // AI off (QuickAi.handle said no for that): nothing goes to Muse.
+        if (!root.online) return
         if (QuickAi.handle(said, attach ?? "")) {
             root._taken(item)
             return

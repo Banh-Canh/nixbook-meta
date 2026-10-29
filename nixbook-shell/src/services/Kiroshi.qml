@@ -308,7 +308,7 @@ Singleton {
         property string requestJson: "{}"
         property string output: ""
         onRunningChanged: if (running) mine = serial
-        command: ["bash", "-c", 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
+        command: ["bash", "-c", QuickAi.modelRun + 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
             + 'shot="$dir/kiroshi-$$.png"; img="$dir/kiroshi-$$.jpg"; f="$dir/kiroshi-$$.json"; '
             + 'trap \'rm -f "$shot" "$f"\' EXIT; '
             + 'find "$dir" -maxdepth 1 -name "kiroshi-*" -mmin +60 -delete 2>/dev/null; '
@@ -317,7 +317,7 @@ Singleton {
             + 'magick "$shot" -resize "1280x>" -quality 85 "$img" || { echo \'{"type":"error","error":"no image (magick)"}\'; exit 1; }; '
             + 'echo "{\\"type\\":\\"image\\",\\"path\\":\\"$img\\"}"; '
             + 'printf "%s" "$1" | jq -c --arg img "$img" \'. + {image: $img}\' > "$f"; '
-            + 'nixbook-model-provider run nixbook-quick-ai ask "$f"', "_", proc.requestJson, proc.output]
+            + 'model nixbook-quick-ai ask "$f"', "_", proc.requestJson, proc.output]
         stdout: SplitParser {
             onRead: (line) => {
                 if (proc.mine !== proc.serial) return;

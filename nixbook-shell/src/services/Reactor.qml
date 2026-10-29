@@ -105,28 +105,38 @@ Singleton {
     // An event as it comes (a notification, what Routines saw, an offer):
     // nobody wants it, noted; else the triage first, then dispatch().
     function react(ev) {
-        if (!root.handlers.some(h => root._wants(h, ev) && root.withinBudget(h.name))) {
-            root._note(ev, "");
+        // AI off, or local only: every handler here asks an online model.
+        if ((Config.options?.policies?.ai ?? 1) !== 1) {
+            root._note(ev, "AI off");
             return "";
         }
-        if (!root.triageOn || root.triggerEvents.includes(ev.event) || (Config.options?.policies?.ai ?? 1) === 0)
+        if (!root.handlers.some(h => root._wants(h, ev) && root.withinBudget(h.name))) {
+            // Titles change every second (a terminal's spinner): not logged,
+            // or the status would show nothing else.
+            if (ev.event !== "window_title") root._note(ev, "");
+            return "";
+        }
+        if (!root.triageOn || root.triggerEvents.includes(ev.event))
             return root.dispatch(ev);
-        DesktopHelper.run(["triage", "score", JSON.stringify(root._triageEvent(ev))], "", (code, out) => root._triaged(ev, code, out));
+        // Full AI mode taking it: the user asked it to react, so the triage
+        // leaves what their habits would drop to the model.
+        const full = root.handlers.some(h => h.name === "fullAi" && root._wants(h, ev) && root.withinBudget(h.name));
+        DesktopHelper.run(["triage", "score", JSON.stringify(root._triageEvent(ev, full))], "", (code, out) => root._triaged(ev, code, out, full));
         return "triage";
     }
     // What the triage reads: the event, and whether the user is busy now
     // (Do Not Disturb, a meeting, a fullscreen window), the hour, the language.
-    function _triageEvent(ev) {
+    function _triageEvent(ev, full) {
         const t = new Date();
         const mon = WM.focusedMonitor?.name ?? "";
-        return Object.assign({}, ev, { dnd: Notifications.silent === true,
+        return Object.assign({}, ev, { fullAi: full === true, dnd: Notifications.silent === true,
             meeting: CalendarEvents.eventsOn(t).some(e => !e.allDay && e.start <= t && e.end > t),
             fullscreen: mon !== "" && WM.fullscreenOnMonitor(mon), hour: t.getHours(), lang: ConfigAssistant.uiLang() });
     }
     // The triage's verdicts lately, newest last (the IPC status, Settings):
     // {time, event, app, verdict, score, why}.
     property var verdicts: []
-    function _triaged(ev, code, out) {
+    function _triaged(ev, code, out, full) {
         let v = null;
         try {
             v = code === 0 ? JSON.parse(out) : null;
@@ -140,8 +150,10 @@ Singleton {
             root._note(ev, "dropped");
             return;
         }
-        // Said at once (within its budget), else the model's path.
-        if (verdict === "direct" && String(v.text ?? "").trim().length > 0 && root.withinBudget("direct")
+        // Said at once (within its budget), else the model's path. In Full
+        // AI mode the mascot takes it (it speaks, asks, acts): the most
+        // important ones mustn't go past it to a quiet bubble.
+        if (!full && verdict === "direct" && String(v.text ?? "").trim().length > 0 && root.withinBudget("direct")
                 && Initiative.direct(ev, String(v.text), v)) {
             root.spend("direct");
             root._note(ev, "direct");
@@ -172,8 +184,10 @@ Singleton {
             // A background task's own notification (nixbook-muse-task: "Muse
             // needs you", done): shown, never reacted to.
             if (n.hints?.["x-nixbook-task"] !== undefined) return;
-            root.react({ event: "notification", app: n.appName ?? "", title: n.summary ?? "", body: n.body ?? "",
-                            text: String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 600),
+            // The body without its markup (the triage's "X wrote: …" and the
+            // models read it).
+            const text = String(n.body ?? "").replace(/<[^>]+>/g, "").slice(0, 600);
+            root.react({ event: "notification", app: n.appName ?? "", title: n.summary ?? "", body: text, text: text,
                             urgency: root._urgency(n), id: n.notificationId, transient: n.isTransient === true });
         }
     }

@@ -1000,6 +1000,11 @@ def complete(req, p, system, image_block, parts, max_tokens):
     "minimal", which the Messages API can't ask for: half the thinking),
     else the Messages API. Returns (text, usage)."""
     content = ([image_block] if image_block else []) + [{"type": "text", "text": t} for t in parts]
+    if len(parts) > 1:
+        # The shared prefix (the image, the context) cached: the scan's
+        # passes, sent at once and in parallel, read it instead of each
+        # paying the 1280-px image again (the chat endpoint ignores it).
+        content[-2] = {**content[-2], "cache_control": {"type": "ephemeral"}}
     msg = nixbook_ai.call(system, [{"role": "user", "content": content}], model=model_alias(req),
                           effort=effort_of(req), max_tokens=max_tokens,
                           fast=str(req.get("scanEffort") or "minimal") == "minimal", timeout=120, provider=p)

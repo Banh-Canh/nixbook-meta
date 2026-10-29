@@ -285,6 +285,11 @@ Singleton {
         speaker.text = rest;
         speaker.wanted = true;
         speaker.reopen = root._holdMic();
+        // The line before still stopping: Quickshell starts this one once it
+        // has exited, and that exit is not this line's end (it took the new
+        // reopen and turned `speaking` off mid-line, so the stream's echo
+        // guard let Muse's own voice through as an order).
+        speaker.queued = speaker.running;
         speaker.running = true;
         return true;
     }
@@ -305,6 +310,10 @@ Singleton {
             return n.length < 16 || !root._said.some(y => y.n === n);
         }).join("").trim();
     }
+    // A spoken yes or no (four languages): the one matcher, for a step's
+    // OK here and for what Full AI learns from the answer (FullAi.userSaid).
+    readonly property var yesWords: /^(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|please|oui|ouais|vas-?y|d'?accord|ja|klar|mach|c[oó]|[dđ][uư][oợ]c|l[aà]m [dđ]i)\b/i
+    readonly property var noWords: /^(no|nope|don'?t|stop|cancel|non|nein|kh[oô]ng|annule|laisse)\b/i
     function _remember(t) {
         const now = Date.now();
         const add = root._sentencesOf(t).map(x => root._norm(x)).filter(n => n.length >= 16).map(n => ({ n: n, t: now }));
@@ -449,6 +458,10 @@ Singleton {
         // what wasn't said yet, and the whole text shown (the positions no
         // longer match).
         if (root.streamFed > 0 && !plain.startsWith(root.streamFedText)) {
+            // What was fed is remembered whole first: it was remembered in
+            // deltas split anywhere, so its sentences weren't known and the
+            // whole revised answer was said again.
+            root._remember(root.streamFedText);
             const rest = root._unsaid(plain);
             root.revealAll = true;
             root.streamFed = plain.length;
@@ -630,6 +643,7 @@ Singleton {
         id: speaker
         property string text: ""
         property bool wanted: true
+        property bool queued: false
         // The microphone was closed for it: opened again after.
         property bool reopen: false
         // The sentence playing (its {"part", "of"} lines): what is said so
@@ -654,6 +668,10 @@ Singleton {
             root.voiceStyle, speaker.text]
         stderr: StdioCollector { id: speakerErr }
         onExited: (code) => {
+            if (speaker.queued) {
+                speaker.queued = false;
+                return;
+            }
             const again = speaker.reopen;
             speaker.reopen = false;
             root._spoken(code, speaker.wanted, again, speakerErr.text, streamSpeaker.running);
@@ -821,11 +839,11 @@ Singleton {
         }
         // A step waiting for an OK: yes or no, said.
         if (QuickAi.pending) {
-            if (/^(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|oui|ouais|vas-?y|d'?accord|ja|klar|mach|c[oó]|[dđ][uư][oợ]c|l[aà]m [dđ]i)\b/i.test(text.trim())) {
+            if (root.yesWords.test(text.trim())) {
                 QuickAi.approve(true);
                 return;
             }
-            if (/^(no|nope|don'?t|non|nein|kh[oô]ng)\b/i.test(text.trim())) {
+            if (root.noWords.test(text.trim())) {
                 QuickAi.approve(false);
                 return;
             }
@@ -958,6 +976,12 @@ Singleton {
         id: stream
         property bool wanted: true
         property bool continuous: false
+        // Runs that ended within 3 s of starting, in a row (no key, the
+        // network down, the server refusing): reopened later each time,
+        // then given up (it used to respawn every 150 ms, for good).
+        property real startedAt: 0
+        property int quickExits: 0
+        onStarted: stream.startedAt = Date.now()
         property bool held: false
         // start() came while it was still closing.
         property bool again: false
@@ -1043,8 +1067,16 @@ Singleton {
             root.partial = "";
             // Asked to listen while it was closing, or Full AI mode's stream
             // ended (the server, the hour): listening again at once.
+            stream.quickExits = Date.now() - stream.startedAt < 3000 ? stream.quickExits + 1 : 0;
             if (stream.again || (stream.wanted && FullAi.active && FullAi.micOn)) {
                 stream.again = false;
+                if (stream.quickExits >= 6) {
+                    stream.quickExits = 0;
+                    if (FullAi.active) FullAi.micOn = false;
+                    if (!root.error) root.error = Translation.tr("The voice stream keeps failing: microphone off");
+                    return;
+                }
+                reopen.interval = Math.min(8000, 150 * Math.pow(2, stream.quickExits));
                 reopen.restart();
             }
         }

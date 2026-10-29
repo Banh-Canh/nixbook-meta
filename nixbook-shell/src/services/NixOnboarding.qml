@@ -141,9 +141,9 @@ Singleton {
         property int mine: 0
         property string requestJson: "{}"
         onRunningChanged: if (running) mine = serial
-        command: ["bash", "-c", 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/nix-onboard"; mkdir -p -m 700 "$dir"; '
-            + 'f="$dir/request-$$.json"; printf "%s" "$1" > "$f"; '
-            + 'nixbook-model-provider run nixbook-nix-onboard turn "$f"; rc=$?; rm -f "$f"; exit $rc', "_", proc.requestJson]
+        command: ["bash", "-c", QuickAi.modelRun + 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/nix-onboard"; mkdir -p -m 700 "$dir"; '
+            + 'f="$dir/request-$$.json"; trap \'rm -f "$f"\' EXIT; printf "%s" "$1" > "$f"; '
+            + 'model nixbook-nix-onboard turn "$f"', "_", proc.requestJson]
         stdout: SplitParser {
             onRead: (line) => {
                 if (proc.mine !== proc.serial) return;

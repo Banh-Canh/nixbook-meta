@@ -42,6 +42,15 @@ Singleton {
     readonly property bool available: Config.ready && (Config.options.ai.quick?.enable ?? true)
         && Config.options.policies.ai === 1
 
+    // The bash function the one-shot wrappers (here, Kiroshi, Full AI's
+    // reactions, the Nix onboarding) run their model command with: stopping
+    // the wrapper (running = false: SIGTERM to bash) stops the call too and
+    // still runs its EXIT trap (the request file removed). A foreground child
+    // would hold the trap until the call ended; `<&0` keeps the answers on
+    // stdin (a background job's stdin is /dev/null otherwise).
+    readonly property string modelRun: 'model() { trap \'kill "$p" 2>/dev/null; exit 143\' TERM INT; '
+        + 'setpriv --pdeathsig TERM nixbook-model-provider run "$@" <&0 & p=$!; wait "$p"; }; '
+
     // The bubble's conversation it answers in, and what it is about: its
     // first turn {mode ("agent" while Muse's agent answers in it), question,
     // text, image, context, notificationId, inline, start (the index of its
@@ -655,9 +664,9 @@ Singleton {
         property int mine: 0
         stdinEnabled: true
         onRunningChanged: if (running) mine = serial
-        command: ["bash", "-c", 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
-            + 'f="$dir/request-$$.json"; printf "%s" "$1" > "$f"; '
-            + 'nixbook-model-provider run nixbook-quick-ai ask "$f"; rc=$?; rm -f "$f"; exit $rc', "_", proc.requestJson]
+        command: ["bash", "-c", root.modelRun + 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
+            + 'f="$dir/request-$$.json"; trap \'rm -f "$f"\' EXIT; printf "%s" "$1" > "$f"; '
+            + 'model nixbook-quick-ai ask "$f"', "_", proc.requestJson]
         stdout: SplitParser {
             onRead: (line) => {
                 if (proc.mine !== proc.serial) return;

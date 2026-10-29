@@ -219,7 +219,7 @@ wait_notify 'Muse needs you: Which day suits you'
 expect_contains "question: the user notified" "$(tail -n1 "$tmp/notify.log")" "Muse needs you: Which day suits you"
 expect_eq "question: list shows it waiting, with its question" "waiting Which day suits you, Monday or Tuesday?" \
   "$(mt list | jq -r --arg id "$id" '.[] | select(.id == $id) | "\(.status) \(.question)"')"
-expect_eq "question: answered" '{"ok":true}' "$(mt answer "$id" "Monday please")"
+expect_eq "question: answered (its runner ended at the question: resumed)" '{"ok":true,"resumed":true}' "$(mt answer "$id" "Monday please")"
 until_status "$id" "done" || fail "question: then done" "$(mt show "$id")"
 expect_eq "question: the answer" "Booked for Monday." "$(field "$id" .answer)"
 expect_contains "question: the user's answer reached Muse" "$(requests taskask | tail -n1 | jq -c '.messages[-1].content')" "Monday please"

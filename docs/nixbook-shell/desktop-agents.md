@@ -432,7 +432,9 @@ Before any model reads a notification or an event, plain code on this computer s
 - **Say it now**: clearly worth saying and sayable as it is: someone who matters to you (from [personal memory](#personal-memory)) wrote, an urgent message ("urgent", "asap", "ce soir", "dringend", "gấp"…), a calendar reminder, a low battery. Said at once in the bubble, in your language, with no 20-second batch and no model (20 an hour at most; past that, the model's path).
 - **Ask the model**: the unclear rest, [as before](#talks-to-you-on-its-own).
 
-A meeting or fullscreen lowers the score. Each verdict is noted with what you then did with the app's notifications (acted on, dismissed), so those numbers, per time of day, weigh in next time.
+A meeting or fullscreen lowers the score. Each verdict is noted with what you then did with the app's notifications (acted on, dismissed), so those numbers, per time of day, weigh in next time. Only your own dismissals count: a notification its app closes (Discord once you read the message, KDE Connect once it is cleared on the phone) or a transient one that times out is not you turning it down. Those numbers are halved every month, and a kind of notification the model found boring is forgotten after 14 days; a phone notification's kind includes its sender, so one boring account doesn't silence the app.
+
+**In Full AI mode** (`Mod+Shift+T`) you asked it to react: what it learned from your habits (boring kinds, an app you always dismiss, a low score) no longer drops anything, the model decides instead, and what would be said at once goes to the mascot. What you muted yourself, private messages, repeats and Do Not Disturb still drop.
 
 ### Offers before you ask
 

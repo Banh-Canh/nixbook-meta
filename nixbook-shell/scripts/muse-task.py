@@ -680,6 +680,10 @@ class Runner:
             self.update(status="waiting", question=text, answer=text, **changes)
             if not self.pending:
                 notify(self.task, f"Muse needs you: {short(text, 120)}", short(self.task.get("text"), 200))
+                # Nothing to hold meanwhile (the agent, its MCP servers, a
+                # slot of maxTasks, for up to an hour, then "failed"): the
+                # answer resumes the session (cmd_answer, pendingAnswer).
+                self.finish()
             return
         if self.pending:
             self.update(answer=text, **changes)
@@ -785,7 +789,8 @@ class Runner:
                     threading.Thread(target=self.stop_agent, daemon=True).start()
             self.stop_agent()
             code = self.proc.wait() if self.proc else 0
-            if self.task.get("status") in LIVE and not self.stopping:
+            asking = self.task.get("status") == "waiting" and self.task.get("question")
+            if self.task.get("status") in LIVE and not self.stopping and not asking:
                 why = last_log_line(self.tid, getattr(self, "log_start", 0))
                 self.update(status="failed", error=f"the agent stopped (exit {code})" + (f": {why}" if why else ""),
                             approval=None)

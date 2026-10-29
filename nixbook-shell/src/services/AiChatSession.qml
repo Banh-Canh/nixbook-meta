@@ -313,7 +313,7 @@ Scope {
     // The panel opened on this tab, on Muse: the agent started ahead, so
     // the first message doesn't wait for it.
     function prewarm() {
-        if (!Ai.agentReady || requester.running || requester.turnActive) return;
+        if (!Ai.agentReady || requester.running || requester.turnActive || (Config.options.policies.ai ?? 1) !== 1) return;
         // Only a new chat or the session of this one, with no file attached.
         requester.pendingLine = "";
         requester.launch("", chat.agentSessionId);
@@ -486,9 +486,12 @@ Scope {
             }
             const attached = attachedFile && attachedFile.length > 0 && attachedFile.startsWith("/") ? attachedFile : "";
 
-            // Muse with no key saved yet: said, nothing sent.
-            if (!ModelProvider.ready) {
-                requester.message.content = Translation.tr("**Not sent**: Muse needs your %1 API key. Save it in Settings > Desktop agents > Model provider.").arg(ModelProvider.label);
+            // AI features off or local only (policies.ai, switched while a
+            // Muse chat was open), or no key saved yet: said, nothing sent.
+            if ((Config.options.policies.ai ?? 1) !== 1 || !ModelProvider.ready) {
+                requester.message.content = (Config.options.policies.ai ?? 1) !== 1
+                    ? Translation.tr("**Not sent**: online AI features are off (Settings > Desktop agents > AI features).")
+                    : Translation.tr("**Not sent**: Muse needs your %1 API key. Save it in Settings > Desktop agents > Model provider.").arg(ModelProvider.label);
                 requester.message.rawContent = requester.message.content;
                 requester.message.done = true;
                 requester.message.thinking = false;
@@ -616,7 +619,10 @@ Scope {
 
         stdout: SplitParser {
             onRead: data => {
-                if (data.length === 0 || !requester.activeMessage || !requester.turnActive) return;
+                // A superseded turn's last lines (the agent flushes them as it
+                // stops): not the new turn's, nor its fresh stream state.
+                if (data.length === 0 || !requester.activeMessage || !requester.turnActive
+                        || requester.restartPending || requester.activeMessage.done) return;
                 if (requester.activeMessage.thinking) requester.activeMessage.thinking = false;
 
                 try {
@@ -638,6 +644,7 @@ Scope {
                         chat.tokenCount.total = result.tokenUsage.total;
                     }
                     if (result.approval) chat.approval = result.approval;
+                    if (result.approvalExpired && chat.approval?.id === result.approvalExpired) chat.approval = null;
                     // The final answer, before its checks (meta-agent's
                     // `answer`): the bubble shows it as the answer and reads
                     // it out now; `verify` and the turn's end come after.

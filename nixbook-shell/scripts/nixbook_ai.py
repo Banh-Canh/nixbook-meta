@@ -78,6 +78,14 @@ class NoProvider(AIError):
     pass
 
 
+class Busy(AIError):
+    """An error event in the stream from a busy or failing server: retried."""
+
+
+# The stream's error types worth another try (the HTTP codes' equivalents).
+BUSY_ERRORS = ("overloaded_error", "api_error", "rate_limit_error")
+
+
 # ── Small helpers ──────────────────────────────────────────────────────────
 
 def child_env(extra=None):
@@ -245,9 +253,18 @@ def ensure_provider(argv, script=None, why=""):
 
 # ── The wire ───────────────────────────────────────────────────────────────
 
-# What the server refused, remembered for the rest of the process: the
-# thinking/effort settings, a max_tokens too big, the fast chat endpoint.
-_STATE = {"tuning": True, "fast": None, "max_tokens": None}
+# What the server refused, remembered for the rest of the process, per
+# provider and model (one model's refusal says nothing of another's): the
+# thinking/effort settings (or only effort "minimal"), a max_tokens too big,
+# the fast chat endpoint.
+_STATE = {}
+_STATE_LOCK = threading.Lock()
+
+
+def _st(p, model_id):
+    key = p.caps_key(model_id) if p is not None else f"|{model_id}"
+    with _STATE_LOCK:
+        return _STATE.setdefault(key, {"tuning": True, "minimal": True, "fast": None, "max_tokens": None})
 # The same, across processes (use_caps_cache): {base|model: {fast, tuning,
 # t}}, a day; Quick AI's one-shots don't pay a failed probe each time.
 CAPS_DAYS = 1
@@ -291,7 +308,7 @@ def known_caps(p, model_id):
 
 def _remember(p, model_id, **caps):
     """Something learned of the server: for this process, and in the cache."""
-    _STATE.update(caps)
+    _st(p, model_id).update(caps)
     if not _CAPS["on"] or p is None:
         return
     with _CAPS_LOCK:
@@ -315,14 +332,20 @@ def _remember(p, model_id, **caps):
 
 
 def _fast_known(p, model_id):
-    if _STATE["fast"] is not None:
-        return _STATE["fast"]
+    v = _st(p, model_id)["fast"]
+    if v is not None:
+        return v
     v = known_caps(p, model_id).get("fast")
     return v if isinstance(v, bool) else None
 
 
-def _tuning_ok(p, model_id):
-    return _STATE["tuning"] and known_caps(p, model_id).get("tuning") is not False
+def _tuning_ok(p, model_id, effort=None):
+    st, known = _st(p, model_id), known_caps(p, model_id)
+    if not st["tuning"] or known.get("tuning") is False:
+        return False
+    # Effort "minimal" refused alone: no thinking fields for it (the
+    # nearest thing), the other efforts still sent.
+    return effort != "minimal" or (st["minimal"] and known.get("minimal") is not False)
 
 
 def http_detail(e):
@@ -573,7 +596,7 @@ def _block_done(on_block, b):
 def read_sse(resp, relay, on_block=None):
     """A streamed Messages API reply: the whole message, each event relayed,
     each tool call to on_block as soon as its block ends (its input whole)."""
-    blocks, partial, cut = {}, {}, set()
+    blocks, partial, cut, stopped = {}, {}, set(), set()
     msg = {"stop_reason": "end_turn", "usage": {}, "model": ""}
     data_lines = []
 
@@ -582,7 +605,11 @@ def read_sse(resp, relay, on_block=None):
         if t == "ping":
             return
         if t == "error":
-            raise AIError(f"API error: {(ev.get('error') or {}).get('message') or ev}")
+            err = ev.get("error") or {}
+            why = f"API error: {err.get('message') or ev}"
+            # A busy server said so in the stream: tried again (by _send, as
+            # long as nothing was relayed).
+            raise (Busy if err.get("type") in BUSY_ERRORS else AIError)(why)
         relay(ev)
         if t == "message_start":
             m = ev.get("message") or {}
@@ -604,6 +631,7 @@ def read_sse(resp, relay, on_block=None):
                 partial[i] = partial.get(i, "") + d.get("partial_json", "")
         elif t == "content_block_stop":
             i = ev.get("index", 0)
+            stopped.add(i)
             b = blocks.get(i) or {}
             if b.get("type") == "tool_use":
                 raw = partial.get(i, "")
@@ -647,15 +675,15 @@ def read_sse(resp, relay, on_block=None):
             ev = None
         if isinstance(ev, dict):
             handle(ev)
+    # A tool call whose block never ended (the stream closed early, a proxy
+    # cutting the body): its input may be partial, so never run (cut). Its
+    # content_block_start carried "input": {}, which isn't its input.
     for i, b in blocks.items():
-        if b.get("type") == "tool_use" and "input" not in b:
-            try:
-                b["input"] = json.loads(partial.get(i) or "{}")
-            except ValueError:
-                b["input"] = {}
-                if not b.get("id"):
-                    b["id"] = f"toolu_{uuid.uuid4().hex[:20]}"
-                cut.add(b["id"])
+        if b.get("type") == "tool_use" and i not in stopped:
+            b["input"] = {}
+            if not b.get("id"):
+                b["id"] = f"toolu_{uuid.uuid4().hex[:20]}"
+            cut.add(b["id"])
     msg["content"] = [blocks[i] for i in sorted(blocks)]
     msg["cut"] = sorted(cut)
     return normalize_message(msg)
@@ -712,13 +740,21 @@ def _send(p, body, stream, on_event, timeout, on_block=None, cancel=None):
             raise
         except Cancelled:
             raise
+        except Busy as e:
+            if attempt < RETRIES and not started[0]:
+                time.sleep(delay)
+                delay *= 3
+                continue
+            raise AIError(str(e))
         except (http.client.HTTPException, OSError, ValueError) as e:
             if cancel is not None and cancel.is_set():
                 raise Cancelled("stopped")
             if isinstance(e, ValueError) and not isinstance(e, UnicodeError):
                 # Not JSON: not a server to try again.
                 raise AIError("API error: not a Messages API reply")
-            if attempt < RETRIES and not started[0]:
+            # A timeout: once more at most (a server that hangs would else
+            # hold the caller for RETRIES × the timeout, each generation paid).
+            if attempt < (min(1, RETRIES) if isinstance(e, TimeoutError) else RETRIES) and not started[0]:
                 time.sleep(delay)
                 delay *= 3
                 continue
@@ -816,14 +852,15 @@ def call(system, messages, *, model="small", effort=None, tools=None, tool_choic
     effort = effort if effort in EFFORTS else None
     forced = bool(tool_choice) and tool_choice.get("type") in ("tool", "any")
     stream = bool(stream or on_event or on_block)
-    limit = min(max_tokens, _STATE["max_tokens"] or max_tokens)
+    st = _st(p, model_id)
+    limit = min(max_tokens, st["max_tokens"] or max_tokens)
     while True:
         body = {"model": model_id, "max_tokens": limit, "system": system, "messages": messages}
         if tools:
             body["tools"] = tools
         if tool_choice:
             body["tool_choice"] = tool_choice
-        tuned = bool(effort) and _tuning_ok(p, model_id) and not forced
+        tuned = bool(effort) and _tuning_ok(p, model_id, effort) and not forced
         if tuned:
             body["thinking"] = {"type": "adaptive"}
             body["output_config"] = {"effort": effort}
@@ -834,12 +871,19 @@ def call(system, messages, *, model="small", effort=None, tools=None, tool_choic
         except urllib.error.HTTPError as e:
             detail = http_detail(e)
             if e.code == 400 and tuned and any(w in detail for w in ("thinking", "effort", "output_config")):
-                _remember(p, model_id, tuning=False)
+                if effort == "minimal":
+                    _remember(p, model_id, minimal=False)
+                else:
+                    _remember(p, model_id, tuning=False)
                 continue
             if e.code == 400 and "max_tokens" in detail and limit > 4096:
                 limit = max(4096, limit // 2)
-                _STATE["max_tokens"] = limit
+                st["max_tokens"] = limit
                 continue
+            if e.code in (401, 403):
+                # A key changed or revoked: asked again next time, not in 10 min.
+                with _ENV_LOCK:
+                    _ENV["result"] = None
             if e.code == 400 and stream and "stream" in detail:
                 stream = False
                 continue
@@ -1118,8 +1162,19 @@ def reads_only(name, args, meta=None):
     return action in READ_ACTIONS
 
 
+# The shell's generic IPC (desktop-mcp's shell_ipc): its `function` is the
+# action (target and function, not `action`, so it used to pass as never
+# risky and promotable as a whole: notifications.reply, history clear…).
+IPC_RISKY_FUNCTION = re.compile(r"^(delete|remove|clear|purge|empty|reply|send|react|invoke|forget|wipe)", re.I)
+
+
 def is_risky(name, args, meta=None):
     tool = _bare(name, meta)
+    if tool == "shell_ipc":
+        args = args if isinstance(args, dict) else {}
+        fn = str(args.get("function") or "")
+        return bool(IPC_RISKY_FUNCTION.match(fn)) or bool(RISKY_TARGET.search(
+            " ".join(str(v) for v in (args.get("args") or []) if isinstance(v, str)) if isinstance(args.get("args"), list) else ""))
     if tool == "terminal_run":
         # A command: risky by what it does (command_risk), and when it can't be read.
         return command_risk((args or {}).get("command") if isinstance(args, dict) else None)[0]
@@ -1531,6 +1586,11 @@ def action_class(name, args, app=None, meta=None):
         # A command's kind: `terminal_run:git-status`; a risky one by its
         # risky part, never promoted (terminal_never).
         return cls + ":" + (_class_part(command_risk(args.get("command"))[2], 60) or "empty")
+    if tool == "shell_ipc":
+        # `shell_ipc:reply@notifications`: the function as the action (so
+        # the never-promoted ones stay asked), the target as where.
+        fn, target = _class_part(args.get("function"), 40), _class_part(args.get("target"), 40)
+        return cls + (":" + fn if fn else "") + ("@" + target if target else "")
     action = _class_part(args.get("action"), 40)
     if action:
         cls += ":" + action
@@ -1566,6 +1626,8 @@ def step_line(s):
     line = str(s["tool"]).replace("_", " ") + (f" ({s['summary']})" if s.get("summary") else "")
     if s["status"] == "denied":
         return line + ": you said no"
+    if s["status"] == "timeout":
+        return line + ": waited for your OK, not done"
     if s["status"] == "error" and s.get("result"):
         return line + ": " + str(s["result"]).strip().splitlines()[0][:160]
     return line
@@ -1609,6 +1671,10 @@ def build_report(answer_text, steps):
            and not any(t["tool"] == s["tool"] and t["status"] == "ok" for t in steps[i + 1:])]
     if bad and not failed:
         failed = [step_line(s) for s in bad][:8]
+    # Steps that waited for an OK nobody gave: still the user's to decide.
+    waited = [step_line(s) for s in steps if s["status"] == "timeout"]
+    if waited and not needs:
+        needs = waited[:8]
     # It went well and nothing needs them: just the answer, as in a chat.
     if not failed and not needs:
         if not text:

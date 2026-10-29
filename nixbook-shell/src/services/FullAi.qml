@@ -169,7 +169,17 @@ Singleton {
         root.reacting = false;
         root.asked = null;
         root.flash = "";
+        // Its reaction being decided: dropped with the mode.
+        reactor.running = false;
         Voice.cancel();
+    }
+    // AI features switched off (policies.ai) or the key gone while on: the
+    // mode ends (the mic stream with it), nothing more goes out.
+    Connections {
+        target: QuickAi
+        function onAvailableChanged() {
+            if (!QuickAi.available) root.exit();
+        }
     }
     function toggle() {
         if (root.active) root.exit();
@@ -198,14 +208,26 @@ Singleton {
     // What it just did on its own: the user saying no undoes the learning.
     property var didAlone: null
     // Its own words and the shell's: not events.
-    readonly property var ownApps: ["quick ai", "muse", "desktop agent", "snoozed", "nixbook", "nixbook-shell", "quickshell"]
+    // (desktop-mcp.py's INITIATIVE_OWN_APPS names the same.)
+    readonly property var ownApps: ["quick ai", "muse", "desktop agent", "desktop agents", "snoozed", "nixbook", "nixbook-shell",
+        "nixbook-desktop-mcp", "quickshell", "shell", "window layouts", "usage habits", "screenshot", "recorder", "reminder", "calendar"]
     readonly property var reactEvents: ["download", "battery_low", "monitor_connected", "monitor_disconnected",
         "audio_output", "wifi_disconnected", "back", "day_start"]
     function event(ev) {
         if (!root.active || !root.reactOn) return;
         if (ev.event === "back" && (ev.away ?? 0) < 10) return;
-        // A burst from one app: only its latest.
-        root.queue = root.queue.filter(q => !(q.event === ev.event && q.app && q.app === ev.app)).concat([ev]).slice(-6);
+        // A burst from one app: one event, its messages together (two
+        // people writing in a second mustn't lose the first).
+        const same = root.queue.find(q => q.event === ev.event && q.app && q.app === ev.app);
+        if (same && ev.event === "notification") {
+            const merged = Object.assign({}, ev, {
+                title: same.title === ev.title ? ev.title : `${same.title} / ${ev.title}`.slice(0, 200),
+                text: `${same.text ?? ""}\n${ev.title && same.title !== ev.title ? ev.title + ": " : ""}${ev.text ?? ""}`.trim().slice(-900),
+                urgency: same.urgency === "critical" ? "critical" : ev.urgency });
+            root.queue = root.queue.map(q => q === same ? merged : q);
+        } else {
+            root.queue = root.queue.filter(q => !(q.event === ev.event && q.app && q.app === ev.app)).concat([ev]).slice(-6);
+        }
         pump.restart();
     }
     // Registered with the Reactor before the initiative (priority 0).
@@ -214,7 +236,7 @@ Singleton {
         take: ev => root._take(ev),
     })
     function _wants(ev) {
-        if (!root.active || !root.reactOn) return false;
+        if (!root.active || !root.reactOn || !QuickAi.available) return false;
         if (ev.event === "notification")
             return !ev.transient && !root.ownApps.includes(String(ev.app ?? "").toLowerCase());
         if (ev.event === "back") return (ev.away ?? 0) >= 10;
@@ -290,8 +312,8 @@ Singleton {
     }
     // What the user said next (Voice.deliver): the answer to its question,
     // or a no to what it just did alone; it learns from both.
-    readonly property var yes: /^(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|please|oui|ouais|vas-?y|d'?accord|ja|klar|mach|c[oó]|[dđ][uư][oợ]c)\b/i
-    readonly property var no: /^(no|nope|don'?t|stop|cancel|non|nein|kh[oô]ng|annule|laisse)\b/i
+    readonly property var yes: Voice.yesWords
+    readonly property var no: Voice.noWords
     function userSaid(text) {
         const t = String(text ?? "").trim();
         if (root.asked && Date.now() - root.asked.at < 120000) {
@@ -308,9 +330,9 @@ Singleton {
         property var ev: ({})
         property string out: ""
         property string requestJson: "{}"
-        command: ["bash", "-c", 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
-            + 'f="$dir/react-$$.json"; printf "%s" "$1" > "$f"; '
-            + 'nixbook-model-provider run nixbook-quick-ai ask "$f"; rc=$?; rm -f "$f"; exit $rc', "_", reactor.requestJson]
+        command: ["bash", "-c", QuickAi.modelRun + 'dir="${XDG_RUNTIME_DIR:-/tmp}/nixbook-shell/quick-ai"; mkdir -p -m 700 "$dir"; '
+            + 'f="$dir/react-$$.json"; trap \'rm -f "$f"\' EXIT; printf "%s" "$1" > "$f"; '
+            + 'model nixbook-quick-ai ask "$f"', "_", reactor.requestJson]
         stdout: SplitParser {
             onRead: (line) => {
                 let ev;

@@ -135,7 +135,9 @@ Singleton {
     // {key, time} of the windows focused, the last 30 minutes.
     property var _focuses: []
     property string _topKey: ""
-    function _focused() {
+    // `switched`: another window came to the front (a title changing in the
+    // same window, a terminal's spinner, isn't going back to it).
+    function _focused(switched) {
         const top = ToplevelManager.activeToplevel
         if (!top) return
         const app = top.appId ?? ""
@@ -144,17 +146,19 @@ Singleton {
         if (key === root._topKey) return
         root._topKey = key
         dialogTimer.restart()
-        if (!root.returningWindow || !app || title.length === 0) return
+        if (!switched || !root.returningWindow || !app || title.length === 0) return
         const t = Date.now()
-        root._focuses = [...root._focuses.filter(f => t - f.time < 30 * 60000), { key: key, time: t }].slice(-200)
-        const times = root._focuses.filter(f => f.key === key).length
+        // Counted by the title's words (a leading spinner or counter aside).
+        const words = `${app}\u0001${title.replace(/^[^\p{L}]+/u, "")}`
+        root._focuses = [...root._focuses.filter(f => t - f.time < 30 * 60000), { key: words, time: t }].slice(-200)
+        const times = root._focuses.filter(f => f.key === words).length
         if (times >= 4) root.emit("returning_window", `${app}:${title}`, { app: app, title: title.slice(0, 200), times: times })
     }
     Connections {
         target: ToplevelManager
         enabled: root.returningWindow || root.errorDialog
         function onActiveToplevelChanged() {
-            root._focused()
+            root._focused(true)
         }
     }
     Connections {
@@ -162,7 +166,7 @@ Singleton {
         enabled: root.returningWindow || root.errorDialog
         ignoreUnknownSignals: true
         function onTitleChanged() {
-            root._focused()
+            root._focused(false)
         }
     }
     readonly property var errorTitle: /\b(error|failed|failure|erreur|échec|fehler|fehlgeschlagen)\b|lỗi/i

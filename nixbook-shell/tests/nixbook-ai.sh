@@ -97,7 +97,7 @@ def since(n, word):
 
 def fresh():
     """A new process's memory of what the server refused."""
-    ai._STATE.update({"tuning": True, "fast": None, "max_tokens": None})
+    ai._STATE.clear()
 
 
 say = lambda t: [{"role": "user", "content": t}]  # noqa: E731
@@ -123,6 +123,39 @@ check("effort: asked with, then without", [{"effort": "low"}, None], [r["body"].
 n = mark()
 ai.call("sys", say("again x"), effort="low")
 check("effort: not asked again in this process", [None], [r["body"].get("output_config") for r in since(n, "again x")])
+n = mark()
+ai.call("sys", say("other model x"), model="main", effort="low")
+check("effort: another model still asked with them", [{"effort": "low"}], [r["body"].get("output_config") for r in since(n, "other model x")])
+fresh()
+n = mark()
+ai.call("sys", say("NOEFFORT minimal"), effort="minimal")
+check("effort minimal refused: asked again without", [{"effort": "minimal"}, None], [r["body"].get("output_config") for r in since(n, "NOEFFORT minimal")])
+n = mark()
+ai.call("sys", say("low after minimal"), effort="low")
+check("effort minimal refused: the other efforts still sent", [{"effort": "low"}], [r["body"].get("output_config") for r in since(n, "low after minimal")])
+
+
+def sse(*events):
+    return [line for e in events for line in (f"data: {json.dumps(e)}\n".encode(), b"\n")]
+
+
+start = {"type": "message_start", "message": {"model": "m", "usage": {}}}
+tool = {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "delete_file", "input": {}}}
+part = {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": '{"path": "/ho'}}
+ran = []
+msg = ai.read_sse(sse(start, tool, part), lambda ev: None, ran.append)
+check("stream closed early: the unfinished tool call cut, never run", (["t1"], []), (msg.get("cut"), ran))
+try:
+    ai.read_sse(sse({"type": "error", "error": {"type": "overloaded_error", "message": "busy"}}), lambda ev: None)
+    check("stream error: overloaded is a retryable Busy", True, False)
+except ai.Busy:
+    check("stream error: overloaded is a retryable Busy", True, True)
+try:
+    ai.read_sse(sse({"type": "error", "error": {"type": "invalid_request_error", "message": "bad"}}), lambda ev: None)
+except ai.Busy:
+    check("stream error: a bad request is not retried", True, False)
+except ai.AIError:
+    check("stream error: a bad request is not retried", True, True)
 fresh()
 n = mark()
 ai.call("sys", say("forced x"), effort="low", tools=[{"name": "t", "input_schema": {"type": "object"}}],

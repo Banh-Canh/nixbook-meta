@@ -3196,7 +3196,21 @@ INITIATIVE_SAID_KEEP = 200
 INITIATIVE_BORING_MAX = 300
 INITIATIVE_NOTICE_BATCH = 6
 # Never reacted to: the shell's and the agent's own.
-INITIATIVE_OWN_APPS = {"muse", "reminder", "calendar", "nixbook-shell", "nixbook-desktop-mcp", "desktop agents"}
+# The apps the shell and its agents notify as (never reacted to: the user
+# sees them; the model was paid to find "Desktop control paused" boring).
+# FullAi.qml's ownApps names the same.
+INITIATIVE_OWN_APPS = {"muse", "reminder", "calendar", "nixbook-shell", "nixbook-desktop-mcp", "desktop agents",
+                       "desktop agent", "shell", "quick ai", "snoozed", "nixbook", "quickshell", "window layouts",
+                       "usage habits", "screenshot", "recorder"}
+# Apps relaying another device's notifications (the phone's): their summary
+# is the phone app's name, so a kind of theirs is told apart by its sender.
+NOTICE_RELAY_APPS = {"kde connect", "gsconnect"}
+# How long a kind the model found boring stays dropped: tastes change, and
+# a word it judged on a bad day shouldn't silence that kind for good.
+NOTICE_BORING_DAYS = 14
+# Every month the counts of what the user did with an app's notifications
+# are halved, so old habits fade.
+NOTICE_DECAY_DAYS = 30
 
 INITIATIVE_SCHEMA = {
     "type": "object",
@@ -3275,17 +3289,11 @@ def ai_lib():
     """The nixbook_ai module, or None."""
     if os.environ.get("NIXBOOK_DESKTOP_MCP_INPROCESS") == "0":
         return None
-    if not _AI_LIB:
-        here = os.path.dirname(os.path.realpath(__file__))
-        if here not in sys.path:
-            sys.path.insert(0, here)
-        try:
-            import nixbook_ai
-            _AI_LIB.append(nixbook_ai)
-        except Exception as e:  # missing, or broken: the agent as before
-            log(f"nixbook_ai: {e!r}; the passes start nixbook-meta-agent")
-            _AI_LIB.append(None)
-    return _AI_LIB[0]
+    lib = pure_lib()
+    if lib is None and not _AI_LIB:
+        log("nixbook_ai: can't be imported; the passes start nixbook-meta-agent")
+        _AI_LIB.append(None)
+    return lib
 
 
 def pass_ready(cfg, web=False):
@@ -3300,6 +3308,12 @@ def routing(cfg=None):
     """The model and effort for what decides on the user's behalf (the
     notifications' triage, pairing, a routine's judgment): the shell's
     ai.routing.decisions (default big) and decisionsEffort (low)."""
+    fn = getattr(pure_lib(), "routing", None)
+    if callable(fn):
+        # The one reading of ai.routing (nixbook_ai.routing), the agent's too.
+        with contextlib.suppress(Exception):
+            r = fn()
+            return (str(r["decisions"]).strip() or "big"), r["decisionsEffort"]
     model = shell_setting("ai.routing.decisions", None)
     effort = shell_setting("ai.routing.decisionsEffort", "low")
     model = model if isinstance(model, str) and model.strip() else "big"
@@ -3320,7 +3334,7 @@ def initiative_path():
 
 
 def empty_initiative():
-    return {"version": 1, "pending": [], "said": [], "stats": {}, "muted": [], "boring": [], "calls": {}}
+    return {"version": 2, "pending": [], "said": [], "stats": {}, "muted": [], "boring": [], "calls": {}}
 
 
 class Initiative(Memory):
@@ -3328,7 +3342,34 @@ class Initiative(Memory):
     empty = staticmethod(empty_initiative)
 
     def migrate(self):
-        pass
+        now = int(time.time())
+        if self.data.get("version", 1) < 2:
+            # Before 2026-10-29 an app closing its own notification (Vesktop
+            # once read in Discord, KDE Connect once cleared on the phone) and
+            # a transient one timing out were counted as the user dismissing
+            # it: whole apps looked unwanted. Their counts start again.
+            self.data["apps"] = {}
+            self.data["triageStats"] = {}
+            self.data["version"] = 2
+            self.changed = True
+        # The notice kinds found boring ("app|summary"; the chat keys stay):
+        # dated, forgotten after NOTICE_BORING_DAYS.
+        at = self.data.setdefault("boringAt", {})
+        keep = []
+        for b in self.data.get("boring") or []:
+            if "|" in str(b):
+                if b not in at:
+                    at[b] = now
+                    self.changed = True
+                elif now - int(at[b] or 0) > NOTICE_BORING_DAYS * 86400:
+                    at.pop(b, None)
+                    self.changed = True
+                    continue
+            keep.append(b)
+        for b in [b for b in at if b not in keep]:
+            at.pop(b, None)
+            self.changed = True
+        self.data["boring"] = keep
 
 
 def read_initiative():
@@ -3351,10 +3392,45 @@ def initiative_value(data, kind, app=None):
     return v
 
 
-def notice_pattern(app, summary):
+def notice_pattern(app, summary, body=""):
     """A notification's kind: its app and summary, numbers and names of
-    files aside (\"Battery at 12%\" is \"Battery at #%\")."""
-    return fold(f"{app}|{re.sub(r'[0-9]+([.,][0-9]+)?', '#', summary or '')}")[:120]
+    files aside (\"Battery at 12%\" is \"Battery at #%\"). A relayed one
+    (KDE Connect: the summary is the phone app) adds its sender, the body's
+    words before a colon, so one boring Instagram account isn't all of them."""
+    kind = re.sub(r'[0-9]+([.,][0-9]+)?', '#', summary or '')
+    if fold(app) in NOTICE_RELAY_APPS and ":" in (body or "")[:60]:
+        kind += " " + body.split(":", 1)[0].strip()[:40]
+    return fold(f"{app}|{kind}")[:120]
+
+
+def notice_gate(cfg, data, app, summary, body, urgency, hints=None, transient=False, full=False):
+    """Why a notification is never worth a reaction, else None: the one set
+    of rules for the instant triage and the Initiative's batch. `full`
+    (Full AI mode, which the user asked to react): what was learned from
+    their habits (boring kinds, an app always dismissed) doesn't apply."""
+    if fold(app) in INITIATIVE_OWN_APPS or "x-nixbook-task" in json.dumps(hints if hints is not None else ""):
+        return "the shell's own"
+    if transient:
+        return "transient"
+    if NOTICE_SECRET_APPS.search(app) or _any_match(cfg.get("habitsIgnoreApps"), app) or \
+            NOTICE_SECRET.search(f"{summary} {body}"):
+        return "private (codes, banks, passwords)"
+    if not summary and not body:
+        return "nothing in it"
+    if urgency == "low":
+        return "low urgency"
+    pattern = notice_pattern(app, summary, body)
+    muted = data.get("muted") or []
+    if "notice" in muted or f"notice:{app.lower()}" in muted or f"notice:{pattern}" in muted:
+        return "the user asked for none of these"
+    if full:
+        return None
+    if pattern in (data.get("boring") or []):
+        return "a kind found boring"
+    seen = (data.get("apps") or {}).get(app.lower()) or {}
+    if seen.get("dismissed", 0) >= 10 and seen.get("acted", 0) <= 0.1 * seen["dismissed"]:
+        return "the user always dismisses this app's"
+    return None
 
 
 def quiet_hours(cfg, now):
@@ -3705,23 +3781,15 @@ def notice_triage(cfg, data, items, focused):
         if not isinstance(i, dict):
             continue
         app, summary = str(i.get("app") or "")[:60], str(i.get("summary") or "")[:200]
-        if not summary or fold(app) in INITIATIVE_OWN_APPS or i.get("urgency") == "low":
+        body = str(i.get("body") or "")[:300]
+        if not summary or (focused and fold(app) and fold(app) in fold(focused)):
             continue
-        if NOTICE_SECRET_APPS.search(app) or _any_match(cfg.get("habitsIgnoreApps"), app) \
-                or NOTICE_SECRET.search(f"{summary} {i.get('body') or ''}"):
+        if notice_gate(cfg, data, app, summary, body, str(i.get("urgency") or "normal"), i.get("hints"),
+                       i.get("transient") is True):
             continue
-        if focused and fold(app) and fold(app) in fold(focused):
-            continue
-        pattern = notice_pattern(app, summary)
-        if pattern in data["boring"] or f"notice:{app.lower()}" in data["muted"] or f"notice:{pattern}" in data["muted"]:
-            continue
-        # An app whose notifications the user dismisses unread, always.
-        seen = (data.get("apps") or {}).get(app.lower()) or {}
-        if seen.get("dismissed", 0) >= 10 and seen.get("acted", 0) <= 0.1 * seen["dismissed"]:
-            continue
-        out.append({"app": app, "summary": summary, "body": str(i.get("body") or "")[:300],
-                    "urgency": str(i.get("urgency") or "normal")})
-    return out[:INITIATIVE_NOTICE_BATCH]
+        out.append({"app": app, "summary": summary, "body": body, "urgency": str(i.get("urgency") or "normal")})
+    # The newest of a burst (they come oldest first).
+    return out[-INITIATIVE_NOTICE_BATCH:]
 
 
 def notice_prompt(cfg, event, items, now, data_apps=None):
@@ -3766,7 +3834,9 @@ def notice_apply(data, items, answer, now):
     """The model's answer: the kinds it found boring kept, and what it says."""
     for k in answer.get("boring") or []:
         if isinstance(k, int) and 1 <= k <= len(items):
-            data["boring"].append(notice_pattern(items[k - 1]["app"], items[k - 1]["summary"]))
+            b = notice_pattern(items[k - 1]["app"], items[k - 1]["summary"], items[k - 1].get("body") or "")
+            data["boring"].append(b)
+            data.setdefault("boringAt", {})[b] = int(now)
     data["boring"] = list(dict.fromkeys(data["boring"]))[-INITIATIVE_BORING_MAX:]
     about = answer.get("about")
     about = items[about - 1] if isinstance(about, int) and 1 <= about <= len(items) else items[0]
@@ -5247,6 +5317,10 @@ def initiative_command(cfg, argv):
                     continue
                 name = str(app).lower()[:60]
                 a = apps.setdefault(name, {"acted": 0, "dismissed": 0})
+                if now - float(a.get("decayed") or now) > NOTICE_DECAY_DAYS * 86400:
+                    a["acted"], a["dismissed"] = a.get("acted", 0) // 2, a.get("dismissed", 0) // 2
+                    a["decayed"] = int(now)
+                a.setdefault("decayed", int(now))
                 good = {k: c[k] for k in ("acted", "dismissed") if isinstance(c.get(k), int) and 0 <= c[k] <= 1000}
                 for k, n in good.items():
                     a[k] += n
@@ -6085,13 +6159,20 @@ def routine_run(cfg, rid, event, now=None):
             return {"ran": False, "why": "it ran a moment ago"}
         if r["when"]["event"] == "day_start" and day_of(r.get("last", 0)) == day_of(now):
             return {"ran": False, "why": "it ran today already"}
+        def refused(why):
+            # A scheduled one: not asked again on every minute's tick
+            # (routine_due waits SCHEDULE_RETRY).
+            if r["when"]["event"] == "schedule":
+                r["lastTry"] = now
+                m.save()
+            return {"ran": False, "why": why}
         if r["do"].get("agent") and screen_locked():
-            return {"ran": False, "why": "the screen is locked (a routine's Muse run waits for the user)"}
+            return refused("the screen is locked (a routine's Muse run waits for the user)")
         if r["do"].get("agent"):
             today = time.strftime("%Y-%m-%d", time.localtime(now))
             runs = sum(x.get("agentToday", 0) for x in m.data["routines"] if x.get("lastAgentDay") == today)
             if runs >= int(cfg.get("routineAgentPerDay", 20)):
-                return {"ran": False, "why": "the day's routine runs are spent"}
+                return refused("the day's routine runs are spent")
             r["agentToday"] = r.get("agentToday", 0) + 1 if r.get("lastAgentDay") == today else 1
             r["lastAgentDay"] = today
         r["last"] = now
@@ -7054,10 +7135,39 @@ def habits_now(data, now):
     return lines
 
 
+# The habits digests, kept while their files and the hour stay the same
+# (the helper builds a context for every agent turn: re-folding the whole
+# history each time was ~70% of a build).
+_DIGEST_MEMO = {}
+
+
+def _digest_memo(kind, cfg, now, compute):
+    def stamp(path):
+        try:
+            st = os.stat(path)
+            return st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+    lt = time.localtime(now or time.time())
+    key = (kind, stamp(habits_path()), stamp(habits_log_path()), lt.tm_yday, lt.tm_hour,
+           json.dumps({k: cfg.get(k) for k in sorted(cfg) if str(k).startswith(("habits", "music"))}, default=str))
+    if key not in _DIGEST_MEMO:
+        if len(_DIGEST_MEMO) > 32:
+            _DIGEST_MEMO.clear()
+        _DIGEST_MEMO[key] = compute()
+    return _DIGEST_MEMO[key]
+
+
 def habits_digest(cfg, now=None):
     """The line of the memory digest about the user's habits."""
     if not habits_on(cfg) or cfg.get("habitsAgents", "digest") == "off":
         return ""
+    if now is None:
+        return _digest_memo("habits", cfg, None, lambda: _habits_digest(cfg, None))
+    return _habits_digest(cfg, now)
+
+
+def _habits_digest(cfg, now=None):
     lines = habits_now(read_habits(), now or time.time())
     if not lines:
         return ""
@@ -7424,6 +7534,12 @@ def music_digest(cfg, now=None, tool=True):
     reader has the `habits` tool for more)."""
     if not music_on(cfg) or cfg.get("habitsAgents", "digest") == "off":
         return ""
+    if now is None:
+        return _digest_memo(f"music:{tool}", cfg, None, lambda: _music_digest(cfg, None, tool))
+    return _music_digest(cfg, now, tool)
+
+
+def _music_digest(cfg, now=None, tool=True):
     lines = music_taste(read_habits(), now or time.time())
     if not lines:
         return ""
@@ -8751,7 +8867,17 @@ def prefs_command(cfg, argv):
         print(json.dumps(out, ensure_ascii=False))
         return 0
     if sub == "keys":
-        print(json.dumps(keys_pass(cfg, set(argv[1:]) or None), ensure_ascii=False))
+        # One pass at a time: two preferences saved together started two
+        # model calls on the same entries (the one running takes them all).
+        path = os.path.join(xdg("XDG_STATE_HOME", "~/.local/state"), "nixbook-shell", "keys-pass.lock")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as lockf:
+            try:
+                fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                print(json.dumps({"keyed": [], "skipped": ["another keys pass is running"]}))
+                return 0
+            print(json.dumps(keys_pass(cfg, set(argv[1:]) or None), ensure_ascii=False))
         return 0
     print(USAGE, end="", file=sys.stderr)
     return 2
@@ -9970,23 +10096,32 @@ class PrivacyMap(LockedJson):
         return tok
 
 
-def mask_text(value, vocab=None, typed=False):
+def mask_text(value, vocab=None, typed=False, learn=True, pmap=None):
+    """`learn` False: masked without counting the strangers it names (text
+    already counted when it was masked to be sent, e.g. the sent log's copy:
+    counted twice, a name became private after two sightings, not three)."""
     if not value:
         return value
     if vocab is None:
         if not privacy_on():
             return value
         vocab = privacy_vocab()
-    if vocab["learn"] and privacy_learn(value, vocab):
+    if learn and vocab["learn"] and privacy_learn(value, vocab):
         vocab = privacy_vocab()
     spans = privacy_spans(value, vocab, typed)
     if not spans:
         return value
+    if pmap is None:
+        with PrivacyMap() as m:
+            return _with_tokens(value, spans, m)
+    return _with_tokens(value, spans, pmap)
+
+
+def _with_tokens(value, spans, m):
     out, at = [], 0
-    with PrivacyMap() as m:
-        for start, end, spec in spans:
-            out += [value[at:start], m.token(spec)]
-            at = end
+    for start, end, spec in spans:
+        out += [value[at:start], m.token(spec)]
+        at = end
     return "".join(out) + value[at:]
 
 
@@ -10002,20 +10137,24 @@ def unmask_text(value, tokens=None):
     return PRIVACY_TOKEN.sub(lambda m: tokens.get(m.group(), m.group()), value)
 
 
-def mask_obj(obj, vocab=None):
-    """Every string in a JSON value masked (an image's data left as it is)."""
+def mask_obj(obj, vocab=None, pmap=None):
+    """Every string in a JSON value masked (an image's data left as it is):
+    the placeholder table opened once for the whole value, not per string."""
     if vocab is None:
         if not privacy_on():
             return obj
         vocab = privacy_vocab()
     if isinstance(obj, str):
-        return mask_text(obj, vocab)
+        return mask_text(obj, vocab, pmap=pmap)
+    if pmap is None and isinstance(obj, (list, dict)):
+        with PrivacyMap() as m:
+            return mask_obj(obj, vocab, m)
     if isinstance(obj, list):
-        return [mask_obj(v, vocab) for v in obj]
+        return [mask_obj(v, vocab, pmap) for v in obj]
     if isinstance(obj, dict):
         if obj.get("type") == "image":
             return obj
-        return {k: mask_obj(v, vocab) for k, v in obj.items()}
+        return {k: mask_obj(v, vocab, pmap) for k, v in obj.items()}
     return obj
 
 
@@ -10180,7 +10319,7 @@ def sent_read():
 def sent_note(purpose, model, prompt, web=False):
     """Kept for the user to see; never fails the call it records."""
     entry = {"time": int(time.time()), "purpose": purpose, "model": model, "web": web,
-             "local": str(model).startswith("local:"), "text": mask_text(str(prompt))[:SENT_TEXT_MAX]}
+             "local": str(model).startswith("local:"), "text": mask_text(str(prompt), learn=False)[:SENT_TEXT_MAX]}
     path = sent_path()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -18162,8 +18301,8 @@ def agent_environment():
 # nixbook_ai's plain functions (no model): the kind of step a call is
 # (action_class), and whether it is risky or only reads, the same as the
 # agent loop decides it. Imported whatever NIXBOOK_DESKTOP_MCP_INPROCESS
-# says (it only gates the model calls); an identical copy below when it
-# can't be (an older install).
+# says (it only gates the model calls). It ships beside this script; were it
+# missing, every step is asked (fail closed), not judged by an old copy.
 _PURE_LIB = []
 
 
@@ -18180,37 +18319,6 @@ def pure_lib():
     return _PURE_LIB[0]
 
 
-# The copy (nixbook_ai.py's, kept the same).
-LOCAL_READ_ACTIONS = {"list", "lists", "upcoming", "get", "search", "find", "show", "status", "layout", "day", "events",
-                      "read", "next", "agenda", "info", "count", "check", "history"}
-LOCAL_RISKY_TOOL = re.compile(r"(^|_)(delete|remove|empty_trash|purge|wipe|clear|merge|resolve_duplicates|credentials|"
-                              r"send|sms|reply|connect_with|partner|uninstall|format|buy|pay|purchase|order)", re.I)
-LOCAL_RISKY_ACTION = re.compile(r"^(delete|remove|clear|purge|empty|reply|send|react)", re.I)
-# Chat apps through their page: Enter (or a submit) in a message box sends it.
-LOCAL_CHAT_TARGETS = re.compile(r"^(discord|slack)(:|$)", re.I)
-
-
-def page_act_risky(args, risky_target):
-    """A page click/submit/key on a "Send", "Pay"… element, or Enter in a chat app."""
-    args = args if isinstance(args, dict) else {}
-    action = str(args.get("action") or "")
-    if action not in ("click", "submit", "press"):
-        return False
-    if risky_target.search(str(args.get("name") or "")):
-        return True
-    key = str(args.get("value") or "Enter")
-    return bool(LOCAL_CHAT_TARGETS.match(str(args.get("target") or ""))) and (
-        action == "submit" or (action == "press" and re.search(r"(^|\+)\s*(enter|return)$", key, re.I) is not None
-                               and not re.search(r"shift", key, re.I)))
-LOCAL_RISKY_TARGET = re.compile(r"\b(delete|remove|send|reply|pay|buy|purchase|order|checkout|unsubscribe|empty trash|"
-                                r"erase|format|uninstall|supprimer|envoyer|payer|acheter|l(ö|oe)schen|senden|x(ó|o)a|g(ử|u)i)\b",
-                                re.I)
-LOCAL_HARMLESS_TOOL = re.compile(r"(queue|playlist|playback|volume|seek|repeat|shuffle)", re.I)
-LOCAL_APP_TOOLS = {"launch_app", "close_window", "focus_window", "window_action", "move_window_to_workspace", "set_aside",
-                   "ui_act"}
-LOCAL_INPUT_TOOLS = {"type_text", "press_keys", "click", "drag", "scroll", "run_steps", "run_recipe", "move_pointer"}
-
-
 def local_bare(name):
     m = re.match(r"^mcp__[^_]+(?:_[^_]+)*?__(.+)$", str(name))
     return m.group(1) if m else str(name)
@@ -18218,42 +18326,6 @@ def local_bare(name):
 
 def local_class_part(value, limit):
     return re.sub(r"[^a-z0-9._-]+", "-", str(value or "").strip().lower()).strip("-")[:limit]
-
-
-def local_action_class(name, args, app=None):
-    tool = local_bare(name)
-    cls = tool
-    args = args if isinstance(args, dict) else {}
-    if tool == "terminal_run":
-        return cls + ":unparsed"  # without nixbook_ai a command can't be read: always asked
-    action = local_class_part(args.get("action"), 40)
-    if action:
-        cls += ":" + action
-    if tool in LOCAL_APP_TOOLS or tool in LOCAL_INPUT_TOOLS:
-        who = app or (args.get("app") if isinstance(args.get("app"), str) else "")
-        who = local_class_part(re.sub(r"\.desktop$", "", str(who or "").strip(), flags=re.I), 80)
-        if who:
-            cls += "@" + who
-    return cls
-
-
-def local_is_risky(name, args):
-    tool = local_bare(name)
-    if tool == "terminal_run":
-        return True
-    if LOCAL_HARMLESS_TOOL.search(tool):
-        return False
-    if LOCAL_RISKY_TOOL.search(tool):
-        return True
-    action = str((args or {}).get("action") or "")
-    if LOCAL_RISKY_ACTION.match(action):
-        return True
-    if tool in ("browser_act", "page_act"):
-        return page_act_risky(args, LOCAL_RISKY_TARGET)
-    if tool in ("ui_act", "click", "notification_action"):
-        said = " ".join(str(v) for v in (args or {}).values() if isinstance(v, str))
-        return bool(LOCAL_RISKY_TARGET.search(said))
-    return False
 
 
 def tool_meta(name):
@@ -18269,7 +18341,7 @@ def action_class(name, args, app=None):
             return str(fn(name, args, app))
         except Exception:
             pass
-    return local_action_class(name, args, app)
+    return local_bare(name) + ":unjudged"
 
 
 def call_is_risky(name, args):
@@ -18279,7 +18351,7 @@ def call_is_risky(name, args):
             return bool(fn(name, args))
         except Exception:
             pass
-    return local_is_risky(name, args)
+    return True
 
 
 def call_reads_only(name, args):
@@ -18290,9 +18362,7 @@ def call_reads_only(name, args):
             return bool(fn(name, args, meta))
         except Exception:
             pass
-    if meta.get(name, {}).get("read_only"):
-        return True
-    return str((args or {}).get("action") or "").lower() in LOCAL_READ_ACTIONS
+    return bool(meta.get(name, {}).get("read_only"))
 
 
 def args_gist(args, limit=80):
@@ -18570,6 +18640,13 @@ def clean_undo(undo):
         return None
     if len(json.dumps(undo["args"])) > 2000:
         return None
+    # The shell's IPC only as undo_hint makes it (the player played or
+    # paused): `journal add` is open to agents' scripts, and any other
+    # target/function would make the user's Undo click run what they planted.
+    if undo["tool"] == "shell_ipc" and not (undo["args"].get("target") == "mpris"
+                                            and undo["args"].get("function") in UNDO_MPRIS.values()
+                                            and set(undo["args"]) <= {"target", "function"}):
+        return None
     return {"tool": undo["tool"], "args": undo["args"]}
 
 
@@ -18663,31 +18740,47 @@ def journal_undo(cfg, eid):
     """The user's Undo: {ok, summary} or {error}."""
     if not re.fullmatch(r"[0-9a-f]{4,16}", str(eid)):
         return {"error": "no such entry"}
-    entry = next((e for e in journal_list() if e.get("id") == eid), None)
-    if not entry:
-        return {"error": "no such entry (gone after 30 days)"}
-    if entry.get("undone"):
-        return {"error": "already undone"}
-    undo = clean_undo(entry.get("undo"))
-    if not undo:
-        return {"error": "can't be undone"}
+    # Claimed under the lock first: two clicks (the helper runs undos on
+    # threads of their own) would else both run it, a toggle twice.
+    with Journal() as j:
+        entry = next((e for e in j.data["entries"] if isinstance(e, dict) and e.get("id") == eid), None)
+        if not entry:
+            return {"error": "no such entry (gone after 30 days)"}
+        if entry.get("undone"):
+            return {"error": "already undone"}
+        if time.time() - float(entry.get("undoing") or 0) < 120:
+            return {"error": "already being undone"}
+        undo = clean_undo(entry.get("undo"))
+        if not undo:
+            return {"error": "can't be undone"}
+        entry["undoing"] = int(time.time())
+        entry = dict(entry)
+        j.save()
+
+    def finish(done):
+        with Journal() as j:
+            for e in j.data["entries"]:
+                if isinstance(e, dict) and e.get("id") == eid:
+                    e.pop("undoing", None)
+                    if done:
+                        e["undone"] = int(time.time())
+            j.save()
     try:
         args = undo_resolve(undo["tool"], unmask_obj(undo["args"]))
     except (ToolError, ValueError) as e:
+        finish(False)
         return {"error": f"can't be undone: {e}"}
     ctx = Context(cfg, "journal", "you (Undo)", notify=False)
     try:
         content, failed = call_tool(ctx, undo["tool"], args)
     except KeyError:
+        finish(False)
         return {"error": "can't be undone: its tool is turned off"}
     if failed:
+        finish(False)
         first = next((c.get("text", "") for c in content if c.get("type") == "text"), "")
         return {"error": short(first.splitlines()[0] if first else "the undo failed", 200)}
-    with Journal() as j:
-        for e in j.data["entries"]:
-            if isinstance(e, dict) and e.get("id") == eid:
-                e["undone"] = int(time.time())
-        j.save()
+    finish(True)
     with contextlib.suppress(ToolError, OSError):
         trust_record(entry["class"], "undone")
     if entry.get("routine"):
@@ -19068,12 +19161,20 @@ def schedule_due(r, now):
     return slot <= now < slot + SCHEDULE_GRACE and last < slot
 
 
+# A due routine whose run was refused (desktop control paused, the day's
+# runs spent…) never gets its `last`: tried again this long after, not on
+# every minute's tick (a new process each time, for good while paused).
+SCHEDULE_RETRY = 600
+
+
 def routine_due(now=None):
     """The schedule routines due now: [{id, text}]."""
     now = now or time.time()
+    if is_paused():
+        return []
     return [{"id": r["id"], "text": r.get("text", "")} for r in read_memory().get("routines") or []
             if isinstance(r, dict) and r.get("on") and (r.get("when") or {}).get("event") == "schedule"
-            and schedule_due(r, now)]
+            and schedule_due(r, now) and not 0 <= now - float(r.get("lastTry") or 0) < SCHEDULE_RETRY]
 
 
 def digest_matches(collect, event):
@@ -19310,8 +19411,13 @@ def triage_score(cfg, event, now=None):
     body = clean_text(str(event.get("body") or event.get("text") or ""), 400)
     urgency = str(event.get("urgency") or "normal").lower()
     critical = urgency == "critical" or event.get("critical") is True
+    # Full AI mode takes it (the user asked it to react): what was learned
+    # from their habits (boring kinds, an app whose notifications they
+    # dismiss, a low score) leaves it to the model instead of dropping it;
+    # what they silenced, secrets, repeats and Do Not Disturb still drop.
+    full = event.get("fullAi") is True
     data = read_initiative()
-    sig = notice_pattern(app, summary) if kind == "notification" else f"{kind}|{fold(str(event.get('title') or event.get('name') or ''))[:60]}"
+    sig = notice_pattern(app, summary, body) if kind == "notification" else f"{kind}|{fold(str(event.get('title') or event.get('name') or ''))[:60]}"
     # The very same words: a repeat (sig, numbers aside, is the kind).
     dup = hashlib.sha256(fold(f"{kind}|{app}|{summary}|{body}").encode()).hexdigest()[:16]
 
@@ -19333,21 +19439,10 @@ def triage_score(cfg, event, now=None):
         return verdict("model", 0.5, "a cue for the model to weigh")
     # Never: the shell's and the agent's own (a background task's word,
     # hint x-nixbook-task: shown, not reacted to), secrets, what the user silenced.
-    hints = event.get("hints")
-    if fold(app) in INITIATIVE_OWN_APPS or "x-nixbook-task" in json.dumps(hints if hints is not None else ""):
-        return verdict("drop", 0.0, "the shell's own")
-    if NOTICE_SECRET_APPS.search(app) or _any_match(cfg.get("habitsIgnoreApps"), app) or \
-            NOTICE_SECRET.search(f"{summary} {body}"):
-        return verdict("drop", 0.0, "private (codes, banks, passwords)")
-    if not summary and not body:
-        return verdict("drop", 0.0, "nothing in it")
-    if urgency == "low":
-        return verdict("drop", 0.05, "low urgency")
-    muted = data.get("muted") or []
-    if "notice" in muted or f"notice:{app.lower()}" in muted or (kind == "notification" and f"notice:{sig}" in muted):
-        return verdict("drop", 0.0, "the user asked for none of these")
-    if sig in (data.get("boring") or []):
-        return verdict("drop", 0.05, "a kind found boring")
+    gate = notice_gate(cfg, data, app, summary, body, urgency, event.get("hints"), event.get("transient") is True, full)
+    if gate:
+        return verdict("drop", 0.05 if gate in ("low urgency", "a kind found boring") else
+                       0.1 if gate == "the user always dismisses this app's" else 0.0, gate)
     said_all = fold(f"{app} {summary} {body}")
     entries = read_personal()
     for e in entries:
@@ -19355,8 +19450,6 @@ def triage_score(cfg, event, now=None):
         if e.get("kind") == "preference" and s.startswith("mute:") and fold(s[5:]) and fold(s[5:]) in said_all:
             return verdict("drop", 0.0, f"the user doesn't want these ({short(e.get('text', ''), 60)})")
     seen = (data.get("apps") or {}).get(app.lower()) or {}
-    if seen.get("dismissed", 0) >= 10 and seen.get("acted", 0) <= 0.1 * seen["dismissed"]:
-        return verdict("drop", 0.1, "the user always dismisses this app's")
     if any(t.get("dup") == dup and now - t.get("time", 0) < TRIAGE_REPEAT_S for t in data.get("triage") or []):
         return verdict("drop", 0.1, "the same one a moment ago")
     if event.get("dnd") and not critical:
@@ -19404,7 +19497,7 @@ def triage_score(cfg, event, now=None):
         score -= 0.2
         why.append("in a meeting" if event.get("meeting") else "fullscreen")
     why_text = ", ".join(why) or "nothing stands out"
-    if score < TRIAGE_DROP:
+    if score < TRIAGE_DROP and not full:
         return verdict("drop", score, why_text)
     if score >= TRIAGE_DIRECT:
         msg = short(body or summary, 160) if person else short(f"{summary} — {body}" if body else summary, 160)
@@ -19685,6 +19778,21 @@ HELPER_COMMANDS = {
 # standing order or a routine turned on, an Undo, a trust level.
 HELPER_STDIN_ONLY = {("order", "accept"), ("order", "decline"), ("journal", "undo"), ("trust", "set"),
                      ("routine", "on")}
+# What the socket serves at all (agents' scripts and their tools reach it:
+# nixbook_ai.dm's callers — meta-agent, quick-ai, the tasks): an allowlist.
+# The rest of HELPER_COMMANDS is the shell's (its helper's stdin): resume,
+# notify off, privacy unlearn/clear, sent clear, unmuting, routines off…
+HELPER_SOCKET_COMMANDS = {
+    "privacy": ("mask", "unmask", "show"), "context": None, "sent": ("note", "show"), "status": None,
+    "personal": ("context",), "memory": ("show",), "prefs": ("add", "list"), "feedback": ("add", "list"),
+    "episode": None, "trust": ("check", "record", "list"), "journal": ("add", "list"), "triage": ("score",),
+    "initiative": ("consider",), "order": ("list",), "routine": ("list", "due"),
+}
+# The CLI's commands only the user gives (refused in an agent's process,
+# agent_environment): desktop control back on, its notice off, what is
+# hidden or was sent forgotten.
+USER_ONLY_COMMANDS = {("resume",), ("notify", "off"), ("notify", "toggle"), ("privacy", "unlearn"),
+                      ("privacy", "clear"), ("sent", "clear")}
 # Commands that may take seconds (a model's answer, a tool to undo): on a
 # thread of their own on stdin too, so the shell's quick ones aren't held.
 HELPER_THREADED = {("order", "add"), ("journal", "undo")}
@@ -19695,6 +19803,10 @@ def helper_allowed(argv, stdin=True):
         return False
     if not stdin and tuple(argv[:2]) in HELPER_STDIN_ONLY:
         return False
+    if not stdin:
+        subs = HELPER_SOCKET_COMMANDS.get(argv[0], ())
+        if subs is not None and not (len(argv) > 1 and argv[1] in subs):
+            return False
     subs = HELPER_COMMANDS[argv[0]]
     return subs is None or (len(argv) > 1 and argv[1] in subs)
 
@@ -20152,6 +20264,10 @@ def main(argv):
         return 1 if is_error else 0
     if cmd == "toggle":
         cmd = "resume" if is_paused() else "pause"
+    if (tuple(argv[:1]) in USER_ONLY_COMMANDS or tuple(argv[:2]) in USER_ONLY_COMMANDS or cmd == "resume") \
+            and agent_environment():
+        print(f"refused: only the user can do this ({' '.join(argv[:2])})", file=sys.stderr)
+        return 126
     if cmd == "pause":
         try:
             os.unlink(allowed_flag())

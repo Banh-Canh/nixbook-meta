@@ -199,6 +199,9 @@ READ_BUILTINS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
 # desktop's own (nixbook-desktop-mcp), the agent's hands and eyes.
 DESKTOP_SERVER = "desktop"
 DENIED = "The user said no."
+# No answer before APPROVAL_TIMEOUT: not done, and not the user's no (the
+# model mustn't tell them they refused).
+UNANSWERED = "No answer in time: not done (the user didn't say no; ask again if it still matters)."
 NO_ONE_TO_ASK = ("Not done: this step needs the user's OK and there is no one to ask here. Don't retry it another "
                  "way; say it needs them.")
 CHECK_ONLY = "Not now: this round only checks, with tools that read. Don't change anything."
@@ -657,20 +660,64 @@ def has_context(m):
     return any(b.get("type") == "text" and "<context>" in str(b.get("text") or "") for b in c or [])
 
 
-def api_messages(messages, cache=True):
+# Old turns are lightened in steps of this many turns: what is cut moves
+# only every STEP turns, so the prompt cache of the turns before stays
+# valid in between (cutting the previous turn's context each turn re-sent
+# that whole turn, its tool results and screenshots, uncached every time).
+LIGHTEN_STEP = 4
+NO_IMAGE = {"type": "text", "text": "[an image from earlier, no longer shown]"}
+# A server saying the prompt is over the model's window.
+TOO_LONG = re.compile(r"prompt is too long|too many (input )?tokens|context (length|window)|maximum context|"
+                      r"context_length_exceeded|input is too long|exceeds? the (model'?s? )?(maximum|limit)", re.I)
+
+
+def is_prompt(m):
+    """A message that starts a turn: the user's, not tool results."""
+    c = m.get("content")
+    return m.get("role") == "user" and (isinstance(c, str) or not any(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in c or []))
+
+
+def without_images(blocks):
+    out = []
+    for b in blocks:
+        if isinstance(b, dict) and b.get("type") == "image":
+            out.append(NO_IMAGE)
+        elif isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list):
+            out.append({**b, "content": without_images(b["content"])})
+        else:
+            out.append(b)
+    return out
+
+
+def api_messages(messages, cache=True, keep_turns=None):
     """The history as it is sent: no thinking blocks (kept in the
     transcript; Meta's API continues a tool call without them, as Quick AI
-    has always done), no empty text block (refused), the <context> block of
-    the latest turn only (the older ones were for their own turn), and two
-    prompt cache breakpoints: the end of the previous turns (stable from
-    now on) and the last user message (rolling: the next call of this turn
-    reads all of it from the cache)."""
+    has always done), no empty text block (refused), the <context> blocks
+    of the latest turns only and their images (older ones replaced, in
+    LIGHTEN_STEP steps), only the last KEEP_TURNS turns when the history
+    outgrew the model's window, and two prompt cache breakpoints: the end
+    of the previous turns (stable from now on) and the last user message
+    (rolling: the next call of this turn reads all of it from the cache)."""
+    turn_of, t = [], -1
+    for m in messages:
+        if is_prompt(m):
+            t += 1
+        turn_of.append(max(t, 0))
+    turns = t + 1
+    if keep_turns and turns > keep_turns:
+        first = next(i for i, n in enumerate(turn_of) if n >= turns - keep_turns)
+        messages, turn_of = messages[first:], turn_of[first:]
+    ctx_from = ((turns - 1) // LIGHTEN_STEP) * LIGHTEN_STEP
+    img_from = max(0, ctx_from - LIGHTEN_STEP)
     last_ctx = max((i for i, m in enumerate(messages) if has_context(m)), default=-1)
     out = []
     for i, m in enumerate(messages):
         c = m.get("content")
-        strip = i != last_ctx and m.get("role") == "user"
+        strip = i != last_ctx and m.get("role") == "user" and turn_of[i] < ctx_from
         if isinstance(c, list):
+            if turn_of[i] < img_from:
+                c = without_images(c)
             kept = []
             for b in c:
                 if b.get("type") in ("thinking", "redacted_thinking"):
@@ -1886,6 +1933,9 @@ class Gate:
     def __init__(self, running=False):
         self.event = threading.Event()
         self.verdict = None
+        # Waited out (no verdict in time): the tools ran, so a late verdict
+        # stops nothing and asks nothing (it would drop steps already done).
+        self.passed = False
         if not running:
             self.event.set()
 
@@ -1895,8 +1945,10 @@ class Gate:
 
     def wait(self, timeout=RESOLVE_WAIT):
         """True when the tools may run (the verdict isn't "ambiguous")."""
-        self.event.wait(timeout)
-        return not is_ambiguous(self.verdict)
+        if not self.event.wait(timeout):
+            self.passed = True
+            return True
+        return self.passed or not is_ambiguous(self.verdict)
 
 
 def is_ambiguous(reading):
@@ -1965,6 +2017,10 @@ class Agent:
             self.messages = []
             if opts.session_id and opts.persist and os.path.exists(session_path(opts.session_id)):
                 raise AgentError(f"Session ID {opts.session_id} is already in use")
+        # The turns sent when the history outgrew the model's window (kept
+        # with the session, so a resumed one doesn't fail first again).
+        k = self.state.get("keepTurns")
+        self.keep_turns = k if isinstance(k, int) and k >= 2 else None
         self.mcp = Mcp(opts.mcp_configs, opts.allowed, opts.disallowed, opts.lazy_mcp, opts.core_tools)
         # The lazy servers and desktop groups this conversation already
         # opened, open again.
@@ -2052,17 +2108,29 @@ class Agent:
         partial = self.opts.partial and self.opts.output_format == "stream-json"
         on_event = (lambda ev: self.emit({"type": "stream_event", "event": ev, "parent_tool_use_id": None})) \
             if partial else None
-        try:
-            msg = nixbook_ai.call(self.system, api_messages(repair(self.messages + list(extra or []))),
-                                  model=self.model, effort=self.effort,
-                                  tools=self.sent_tools(self.tools if tools is None else tools), tool_choice=tool_choice,
-                                  max_tokens=max_tokens or self.opts.max_tokens, on_event=on_event, timeout=300,
-                                  provider=self.provider, on_block=early.on_block if early else None,
-                                  cancel=self.cancel)
-        except nixbook_ai.Cancelled:
-            raise
-        except nixbook_ai.AIError as e:
-            raise AgentError(str(e))
+        history = repair(self.messages + list(extra or []))
+        while True:
+            try:
+                msg = nixbook_ai.call(self.system, api_messages(history, keep_turns=self.keep_turns),
+                                      model=self.model, effort=self.effort,
+                                      tools=self.sent_tools(self.tools if tools is None else tools), tool_choice=tool_choice,
+                                      max_tokens=max_tokens or self.opts.max_tokens, on_event=on_event, timeout=300,
+                                      provider=self.provider, on_block=early.on_block if early else None,
+                                      cancel=self.cancel)
+                break
+            except nixbook_ai.Cancelled:
+                raise
+            except nixbook_ai.AIError as e:
+                # The session outgrew the model's window: its oldest turns
+                # left out from now on (the transcript keeps them), instead
+                # of every next turn failing the same way.
+                turns = sum(1 for m in history if is_prompt(m))
+                if TOO_LONG.search(str(e)) and turns > 2 and (self.keep_turns or turns) > 2:
+                    self.keep_turns = max(2, (self.keep_turns or turns) // 2)
+                    self.state["keepTurns"] = self.keep_turns
+                    warn(f"the conversation is too long for the model: only its last {self.keep_turns} turns are sent")
+                    continue
+                raise AgentError(str(e))
         self.count_usage(msg)
         # A tool call the output limit cut off is neither shown nor kept: it
         # never runs (loop() asks for it again).
@@ -2234,6 +2302,10 @@ class Agent:
             self.trust_record(cls, "allowed" if allowed else "denied", summary)
         if allowed:
             return None, ""
+        if allowed is None:
+            # The shell takes its Allow / No away (a late click did nothing).
+            self.emit({"type": "approval_expired", "id": call["id"]})
+            return UNANSWERED, "timeout"
         return DENIED, "denied"
 
     def made_up_name(self, name, args):
@@ -2587,7 +2659,7 @@ class Agent:
             finally:
                 gate.set(verdict)
             cancel = self.cancel
-            if is_ambiguous(verdict) and self.gate_ is gate and cancel is not None:
+            if is_ambiguous(verdict) and self.gate_ is gate and cancel is not None and not gate.passed:
                 cancel.set()
         threading.Thread(target=run, daemon=True).start()
         return gate
@@ -2854,7 +2926,7 @@ class Agent:
             try:
                 result, subtype, error, structured, turns = self.loop(self.opts.max_turns)
             except nixbook_ai.Cancelled:
-                if gate is None or not is_ambiguous(gate.verdict):
+                if gate is None or gate.passed or not is_ambiguous(gate.verdict):
                     raise AgentError("the call was stopped")
                 # The resolver found the request ambiguous: what the call
                 # began is dropped, its question is the answer.
@@ -2899,7 +2971,7 @@ class Agent:
         if self.opts.report and not error and not self.schema:
             plain, _ = nixbook_ai.strip_report(result)
             _, report = nixbook_ai.build_report(result, [s for s in self.steps
-                                                         if s["status"] in ("ok", "error", "denied")])
+                                                         if s["status"] in ("ok", "error", "denied", "timeout")])
             result = plain or (report or {}).get("summary") or result
         if self.opts.learn:
             self.learn(text, hints)

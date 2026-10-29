@@ -401,15 +401,35 @@ Singleton {
         id: getDesktopTools
         running: true
         command: [root.desktopMcpCommand, "tools"]
+        property bool got: false
+        onRunningChanged: if (running) got = false
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
                     const tools = JSON.parse(text);
-                    if (Array.isArray(tools)) root.desktopTools = tools;
+                    if (Array.isArray(tools) && tools.length > 0) {
+                        root.desktopTools = tools;
+                        getDesktopTools.got = true;
+                    }
                 } catch (e) {
                     console.log("[Ai] Desktop tools unavailable:", e);
                 }
             }
+        }
+        // Failed at login (the helper still starting, a slow store): asked
+        // again later instead of Muse going without its desktop until the
+        // shell restarts.
+        onExited: if (!got && desktopToolsRetry.tries < 6) desktopToolsRetry.restart()
+    }
+    Timer {
+        id: desktopToolsRetry
+        property int tries: 0
+        interval: 5000 * Math.pow(2, tries)
+        onTriggered: {
+            // (The exit can come before the output is read: got by then.)
+            if (getDesktopTools.got) return;
+            tries += 1;
+            getDesktopTools.running = true;
         }
     }
 
@@ -881,7 +901,7 @@ Singleton {
     // The panel opened on Muse: the current tab's agent started ahead, so
     // the first message doesn't wait for it.
     readonly property bool agentWanted: GlobalStates.sidebarLeftOpen && root.agentReady
-        && (root.models[root.currentModelId]?.api_format ?? "") === "meta-agent" && Config.options.policies.ai !== 2
+        && (root.models[root.currentModelId]?.api_format ?? "") === "meta-agent" && Config.options.policies.ai === 1
     onAgentWantedChanged: if (agentWanted) prewarm.restart()
     onCurrentChanged: if (agentWanted) prewarm.restart()
     Timer {

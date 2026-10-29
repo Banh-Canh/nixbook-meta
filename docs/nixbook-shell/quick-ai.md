@@ -225,7 +225,15 @@ something failed. A soft glow around the screens says the AI is in charge.
 
 - **You keep your keyboard and mouse**: the mode never takes them, so you can
   go on working while it does what you asked. **`Mod+Shift+T` again leaves**
-  (so does `Esc` in the bubble, or locking the screen).
+  (so does `Esc` in the bubble, or locking the screen). Turning the AI
+  features off (Settings > Desktop agents > AI features) ends the mode and
+  closes the microphone at once; a voice stream that keeps failing (no key,
+  no network) is retried a few times, more slowly each time, then the
+  microphone turns off with the error said.
+- **It reacts to your notifications**: it reads them as they come (a burst
+  from one app as one), even from apps whose notifications you usually
+  dismiss, and says, asks or does what fits (see
+  [Instant triage](desktop-agents.md#instant-triage)).
 - **The microphone stays open**, also while the agent works: give the next order
   whenever you like, it takes over. **`Mod+T` turns the microphone off or on.**
 - **It talks**: what it says in its balloon (what it does, its questions, the

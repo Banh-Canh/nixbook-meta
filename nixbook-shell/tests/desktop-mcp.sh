@@ -2208,7 +2208,7 @@ expect_contains "discord send: the message not in the audit log" \
   "$(grep '"discord"' "$XDG_STATE_HOME/nixbook-shell/desktop-mcp.log" | tail -n1)" '"content": "<15 chars>"'
 expect_contains "discord send: needs a channel" "$(call discord '{"action":"send","content":"hi"}')" "channel"
 expect_contains "discord react" "$(call discord '{"action":"react","channel":"222222222222222222","message":"555","emoji":"👍"}')" "reacted 👍 to message 555"
-expect_eq "discord: a send is risky" True "$(python3 -c "import importlib.util as u; s=u.spec_from_file_location('m','$mcp'); m=u.module_from_spec(s); s.loader.exec_module(m); print(m.local_is_risky('discord', {'action': 'send'}), end='')")"
+expect_eq "discord: a send is risky" True "$(python3 -c "import importlib.util as u; s=u.spec_from_file_location('m','$mcp'); m=u.module_from_spec(s); s.loader.exec_module(m); print(m.call_is_risky('discord', {'action': 'send'}), end='')")"
 expect_contains "discord: a send never past ask" "$(python3 "$mcp" trust set 'discord:send' tell 2>&1 || true)" "always asked"
 expect_contains "discord: a reaction never past ask" "$(python3 "$mcp" trust set 'discord:react' silent 2>&1 || true)" "always asked"
 kill "$electron_pid" 2>/dev/null
@@ -4761,6 +4761,13 @@ expect_eq "triage: per time of day" 3 "$(jq '[.apps.forum.hours[]][0].dismissed'
 out=$(tri '{"event":"notification","app":"Forum","summary":"Post delta","body":"new reply delta"}')
 expect_contains "triage: an app whose notifications are dismissed scores lower" "$(jq -r .why <<<"$out")" "acts on"
 expect_eq "triage: lower than a fresh app's" yes "$(python3 -c "print('yes' if $(jq .score <<<"$out") < 0.4 else 'no')")"
+python3 "$mcp" initiative notices '{"forum": {"acted": 0, "dismissed": 20}}'
+expect_eq "triage: an app always dismissed, dropped" drop "$(tri '{"event":"notification","app":"Forum","summary":"Post eps","body":"new reply eps"}' | jq -r .verdict)"
+expect_eq "triage: in Full AI mode, the model's instead" model "$(tri '{"event":"notification","app":"Forum","summary":"Post zeta","body":"new reply zeta","fullAi":true,"fullscreen":true}' | jq -r .verdict)"
+jq '.boring += ["forum|post eta"]' "$XDG_STATE_HOME/nixbook-shell/initiative.json" >"$tmp/i.json" && mv "$tmp/i.json" "$XDG_STATE_HOME/nixbook-shell/initiative.json"
+expect_eq "triage: Full AI mode, a kind found boring still weighed" model "$(tri '{"event":"notification","app":"Forum","summary":"Post eta","body":"x","fullAi":true}' | jq -r .verdict)"
+expect_eq "triage: Full AI mode, an app the user silenced still dropped" drop "$(tri '{"event":"notification","app":"SpamApp","summary":"Hey","body":"y","fullAi":true}' | jq -r .verdict)"
+expect_eq "triage: Full AI mode, Do Not Disturb still dropped" drop "$(tri '{"event":"notification","app":"Chat","summary":"Hi","body":"again","dnd":true,"fullAi":true}' | jq -r .verdict)"
 echo '{"ai": {"reactivity": {"triage": false}}}' >"$shellcfg"
 expect_eq "triage off: the model's, as before" model "$(tri '{"event":"notification","app":"Signal","summary":"Thomas","body":"hi"}' | jq -r .verdict)"
 echo '{"policies": {"ai": 0}}' >"$shellcfg"

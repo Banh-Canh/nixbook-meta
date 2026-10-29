@@ -325,6 +325,10 @@ QtObject {
             out.approval = { id: String(ev.id ?? ""), tool: toolName(ev.tool), input: ev.input ?? {},
                              summary: brief(ev.summary || ev.input || "", 120) };
             setStep(String(ev.id ?? ""), { tool: toolName(ev.tool), summary: brief(ev.summary || ev.input || "", 80), status: "run" });
+        } else if (ev.type === "approval_expired") {
+            // Unanswered in time: not done, its Allow / No taken away.
+            out.approvalExpired = String(ev.id ?? "");
+            setStep(String(ev.id ?? ""), { status: "error" });
         } else if (ev.type === "told") {
             // Done without asking (trusted: tell), journaled: "Did: … Undo".
             _push(message, "told", { class: String(ev.class ?? ""), summary: unmask(brief(ev.summary || ev.class || "", 160)),

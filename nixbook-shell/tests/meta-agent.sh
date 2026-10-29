@@ -490,7 +490,7 @@ expect_eq "confirm: the model told" '"The user said no."' "$(requests approve | 
 : >"$tmp/requests.log"
 out=$(turn "AGENTTEST:approve delete the task" | NIXBOOK_AGENT_APPROVAL_TIMEOUT=1 \
   agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --confirm destructive)
-expect_eq "confirm: no answer (the input ended) is a no" '"The user said no."' "$(requests approve | tail -n1 | jq -c '.messages[-1].content[0].content')"
+expect_eq "confirm: no answer (the input ended) is not done, and not a no" '"No answer in time: not done (the user didn'"'"'t say no; ask again if it still matters)."' "$(requests approve | tail -n1 | jq -c '.messages[-1].content[0].content')"
 : >"$tmp/requests.log"
 echo "AGENTTEST:approve delete the task" | agent -p --mcp-config "$desk_config" --confirm destructive >/dev/null
 expect_contains "confirm: with -p text input, no one to ask: refused" "$(requests approve | tail -n1 | jq -c '.messages[-1].content[0]')" "no one to ask"
@@ -806,8 +806,27 @@ second=$(requests twoturns | tail -n1)
 expect_eq "cache: breakpoints on the tools' end, the system's, the previous turn, the last message (4 at most)" \
   "4 true true true true" \
   "$(jq -c '[.. | objects | select(has("cache_control"))] | length' <<<"$second") $(jq -c '.tools[-1] | has("cache_control")' <<<"$second") $(jq -c '.system[-1] | has("cache_control")' <<<"$second") $(jq -c '.messages[1].content[-1] | has("cache_control")' <<<"$second") $(jq -c '.messages[-1].content[-1] | has("cache_control")' <<<"$second")"
-expect_eq "cache: the older turn's context block left out, the latest one kept" "false true" \
+expect_eq "cache: the recent turns' context blocks kept (cut in steps, so the cache holds)" "true true" \
   "$(jq -c '.messages[0] | tostring | contains("<context>")' <<<"$second") $(jq -c '.messages[-1] | tostring | contains("<context>")' <<<"$second")"
+lighten=$(
+  PYTHONDONTWRITEBYTECODE=1 python3 - "$script" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ma", sys.argv[1]); ma = importlib.util.module_from_spec(spec); spec.loader.exec_module(ma)
+img = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}
+msgs = []
+for t in range(9):
+    msgs.append({"role": "user", "content": [{"type": "text", "text": f"<context>c{t}</context>\nask {t}"}]})
+    msgs.append({"role": "assistant", "content": [{"type": "tool_use", "id": f"u{t}", "name": "shot", "input": {}}]})
+    msgs.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"u{t}", "content": [img]}]})
+out = ma.api_messages(msgs)
+ctx = [i // 3 for i, m in enumerate(out) if "<context>" in json.dumps(m)]
+imgs = [i // 3 for i, m in enumerate(out) if '"image"' in json.dumps(m)]
+cut = ma.api_messages(msgs, keep_turns=3)
+print(json.dumps([ctx, imgs, len(cut), "ask 6" in json.dumps(cut[0])], separators=(",", ":")))
+PY
+)
+expect_eq "lighten: contexts from turn 8, images from turn 4, the last 3 turns when too long" \
+  '[[8],[4,5,6,7,8],9,true]' "$lighten"
 sid=$(jq -r 'select(.type == "result") | .session_id' <<<"$out" | head -n1)
 expect_eq "cache: the transcript keeps every context block" "2" \
   "$(jq '[.messages[] | select(.role == "user") | select(tostring | contains("<context>"))] | length' "$tmp/state/nixbook-shell/agent-sessions/$sid.json")"
