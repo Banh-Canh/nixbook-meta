@@ -71,6 +71,7 @@ Singleton {
         if (Object.values(root.cutIns).some(v => v)) out.push("cutIn")
         if (Kiroshi.open) out.push("kiroshi")
         if (FullAi.active) out.push("fullAi")
+        if (MascotState.shown) out.push("mascot")
         return out
     }
     onOverlaysChanged: overlaysWrite.restart()

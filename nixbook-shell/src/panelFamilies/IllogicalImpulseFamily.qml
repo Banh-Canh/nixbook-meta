@@ -73,6 +73,7 @@ Scope {
     PanelLoader { component: ScreenFrame {} }
     PanelLoader { component: LayoutRestoreOverlay {} }
     PanelLoader { component: KiroshiScan {} }
+    PanelLoader { component: DesktopMascot {} }
     PanelLoader { component: FullAiOverlay {} }
     // Loading screen while the Preloader builds every popup (last, so it is
     // stacked above the other overlay surfaces mapped during boot).

@@ -13,11 +13,18 @@ import QtQuick.Shapes
  * the theme's accent, big eyes that look where it goes and blink, cheeks,
  * a mouth that talks, an antenna whose glow says its mood, two little arms.
  *   mood: idle | listening | thinking | acting | speaking | happy | sad | muted
+ *         | sleepy (dozing: eyes shut, z's) | worried (brows up, a sweat drop)
  *   level: the microphone's level (0..1), while listening
  *   talking: its mouth moves (the voice reading an answer)
+ *   lip: the mouth's opening (0..1) set from outside (lip-sync), -1 for
+ *        its own talking loop
  *   lookX / lookY: where it looks (-1..1)
  *   stretchX / stretchY: squash & stretch, set by the stage while it moves
- * hop(), celebrate() (a jump, a spin, stars), shake().
+ *   ambient: the idle loops (bob, breath, glow, head tilts); the desktop
+ *            mascot turns them off at rest, so a still corner costs no frame
+ *   suspended: nothing animates (the screens off)
+ * hop(), celebrate() (a jump, a spin, stars), shake(), stretch() (waking
+ * up: arms up, tall), perk() (a little hop, eyes wide, antenna bright).
  * Nothing animates while it is hidden (`running`).
  */
 Item {
@@ -34,7 +41,20 @@ Item {
     property real lookY: 0
     property real stretchX: 1
     property real stretchY: 1
-    readonly property bool running: root.visible && root.opacity > 0
+    property real lip: -1
+    property bool ambient: true
+    property bool suspended: false
+    readonly property bool running: root.visible && root.opacity > 0 && !root.suspended
+    // The idle loops: always in Full AI mode; on the desktop only while it
+    // has something going on (ambient). One-shots play either way.
+    readonly property bool lively: root.running && root.ambient
+    // At rest it settles where the loops leave it neutral.
+    onLivelyChanged: if (!root.lively) {
+        root.bob = 0;
+        root.breath = 1;
+    }
+    readonly property bool sleepy: root.mood === "sleepy"
+    readonly property bool worried: root.mood === "worried"
 
     // ── Colours: the theme's accent (Chiikawa: its pale body and line) ──
     readonly property bool cute: Chiikawa.enabled
@@ -49,7 +69,8 @@ Item {
     readonly property color ink: "#2a2230"
     readonly property color tipColor: ({
         idle: Qt.lighter(root.accent, 1.3), listening: "#ff5c7a", thinking: "#ffd25c", acting: "#5cd6ff",
-        speaking: "#7cf29a", happy: "#ffd25c", sad: "#8aa0c8", muted: "#9a9a9a"
+        speaking: "#7cf29a", happy: "#ffd25c", sad: "#8aa0c8", muted: "#9a9a9a",
+        sleepy: "#b8a8ff", worried: "#ff9f5c"
     })[root.mood] ?? root.accent
 
     // ── One-shots ──
@@ -66,6 +87,18 @@ Item {
         if (!root.running) return;
         shakeAnim.restart();
     }
+    function stretch() {
+        if (!root.running) return;
+        stretchAnim.restart();
+    }
+    function perk() {
+        if (!root.running) return;
+        perkAnim.restart();
+        hopAnim.restart();
+    }
+    // Waking up / perking up: arms raised, eyes wide (0..1).
+    property real armsUp: 0
+    property real wide: 0
 
     // ── Alive: bob, breath, tilt, blink ──
     property real bob: 0
@@ -77,22 +110,23 @@ Item {
     property real eyeOpen: 1
     property real mouthOpen: 0
 
-    readonly property real bobSpeed: root.mood === "acting" ? 0.55 : root.mood === "listening" ? 1.6 : 1
+    readonly property real bobSpeed: root.mood === "acting" ? 0.55 : root.mood === "listening" ? 1.6 : root.sleepy ? 2.4 : 1
     SequentialAnimation on bob {
-        running: root.running
+        running: root.lively
         loops: Animation.Infinite
         NumberAnimation { to: -5; duration: 700 * root.bobSpeed; easing.type: Easing.InOutSine }
         NumberAnimation { to: 2; duration: 700 * root.bobSpeed; easing.type: Easing.InOutSine }
     }
     SequentialAnimation on breath {
-        running: root.running
+        running: root.lively
         loops: Animation.Infinite
-        NumberAnimation { to: 1.035; duration: 1500; easing.type: Easing.InOutSine }
-        NumberAnimation { to: 0.985; duration: 1500; easing.type: Easing.InOutSine }
+        // Dozing: slow, deep breaths.
+        NumberAnimation { to: root.sleepy ? 1.05 : 1.035; duration: root.sleepy ? 2200 : 1500; easing.type: Easing.InOutSine }
+        NumberAnimation { to: 0.985; duration: root.sleepy ? 2200 : 1500; easing.type: Easing.InOutSine }
     }
     // An occasional head tilt (and the listening one, held).
     Timer {
-        running: root.running && root.mood !== "listening"
+        running: root.lively && root.mood !== "listening" && !root.sleepy
         interval: 3200 + Math.random() * 2500
         repeat: true
         onTriggered: {
@@ -111,13 +145,13 @@ Item {
     Binding {
         target: root
         property: "tilt"
-        value: 7
-        when: root.mood === "listening"
+        value: root.sleepy ? -10 : 7
+        when: root.mood === "listening" || root.sleepy
         restoreMode: Binding.RestoreBindingOrValue
     }
     // Blink every 2.5–5 s (twice, now and then); half-closed when muted.
     Timer {
-        running: root.running && root.mood !== "happy"
+        running: root.running && root.mood !== "happy" && !root.sleepy
         interval: 2500 + Math.random() * 2500
         repeat: true
         onTriggered: {
@@ -133,7 +167,7 @@ Item {
     }
     // Talking: the mouth opens and closes, a little irregular.
     SequentialAnimation on mouthOpen {
-        running: root.running && root.talking
+        running: root.running && root.talking && root.lip < 0
         loops: Animation.Infinite
         NumberAnimation { to: 1; duration: 110 }
         NumberAnimation { to: 0.3; duration: 90 }
@@ -141,6 +175,31 @@ Item {
         NumberAnimation { to: 0.1; duration: 120 }
     }
     onTalkingChanged: if (!talking) mouthOpen = 0
+    readonly property real mouth: root.lip >= 0 ? root.lip : root.mouthOpen
+
+    // Waking up: a stretch, arms up and tall, then a shake-off.
+    SequentialAnimation {
+        id: stretchAnim
+        ParallelAnimation {
+            NumberAnimation { target: root; property: "armsUp"; to: 1; duration: 420; easing.type: Easing.OutCubic }
+            NumberAnimation { target: root; property: "stretchY"; to: 1.12; duration: 420; easing.type: Easing.OutCubic }
+            NumberAnimation { target: root; property: "stretchX"; to: 0.92; duration: 420; easing.type: Easing.OutCubic }
+        }
+        PauseAnimation { duration: 380 }
+        ParallelAnimation {
+            NumberAnimation { target: root; property: "armsUp"; to: 0; duration: 360; easing.type: Easing.InOutSine }
+            NumberAnimation { target: root; property: "stretchY"; to: 1; duration: 360; easing.type: Easing.OutBack }
+            NumberAnimation { target: root; property: "stretchX"; to: 1; duration: 360; easing.type: Easing.OutBack }
+        }
+        ScriptAction { script: root.shake() }
+    }
+    // Perking up: eyes wide a moment.
+    SequentialAnimation {
+        id: perkAnim
+        NumberAnimation { target: root; property: "wide"; to: 1; duration: 140; easing.type: Easing.OutBack }
+        PauseAnimation { duration: 1100 }
+        NumberAnimation { target: root; property: "wide"; to: 0; duration: 300; easing.type: Easing.InOutSine }
+    }
 
     SequentialAnimation {
         id: hopAnim
@@ -249,7 +308,7 @@ Item {
                     property real v: 1
                 }
                 SequentialAnimation {
-                    running: root.running
+                    running: root.lively
                     loops: Animation.Infinite
                     NumberAnimation { target: glowBeat; property: "v"; to: root.mood === "acting" ? 1.25 : 1.12; duration: root.mood === "acting" ? 260 : 700; easing.type: Easing.InOutSine }
                     NumberAnimation { target: glowBeat; property: "v"; to: 0.85; duration: root.mood === "acting" ? 260 : 700; easing.type: Easing.InOutSine }
@@ -288,8 +347,10 @@ Item {
             border.width: 2
             border.color: root.outline
             transformOrigin: Item.Top
-            rotation: root.mood === "speaking" ? armWave.left : root.mood === "happy" ? 150 : root.mood === "sad" ? 8 : 25
-            Behavior on rotation { enabled: root.mood !== "speaking"; NumberAnimation { duration: 260; easing.type: Easing.OutBack } }
+            rotation: root.armsUp > 0 ? 25 + root.armsUp * 140
+                : root.mood === "speaking" ? armWave.left : root.mood === "happy" ? 150 : root.mood === "sad" ? 8
+                : root.worried ? 55 : root.sleepy ? 6 : 25
+            Behavior on rotation { enabled: root.mood !== "speaking" && root.armsUp <= 0; NumberAnimation { duration: 260; easing.type: Easing.OutBack } }
         }
         Rectangle {
             id: rightArm
@@ -302,9 +363,10 @@ Item {
             border.width: 2
             border.color: root.outline
             transformOrigin: Item.Top
-            rotation: root.mood === "acting" ? -100 : root.mood === "speaking" ? armWave.right : root.mood === "happy" ? -150
-                : root.mood === "sad" ? -8 : root.mood === "listening" ? -35 : -25
-            Behavior on rotation { enabled: root.mood !== "speaking"; NumberAnimation { duration: 260; easing.type: Easing.OutBack } }
+            rotation: root.armsUp > 0 ? -25 - root.armsUp * 140
+                : root.mood === "acting" ? -100 : root.mood === "speaking" ? armWave.right : root.mood === "happy" ? -150
+                : root.mood === "sad" ? -8 : root.mood === "listening" ? -35 : root.worried ? -55 : root.sleepy ? -6 : -25
+            Behavior on rotation { enabled: root.mood !== "speaking" && root.armsUp <= 0; NumberAnimation { duration: 260; easing.type: Easing.OutBack } }
         }
         QtObject {
             id: armWave
@@ -379,7 +441,9 @@ Item {
                             Rectangle {
                                 anchors.centerIn: parent
                                 width: 20
-                                height: 24 * Math.max(0.08, root.eyeOpen * (root.mood === "muted" ? 0.45 : root.mood === "listening" ? 1.08 : 1))
+                                height: 24 * Math.max(0.08, root.eyeOpen * (root.sleepy ? 0.1 : root.mood === "muted" ? 0.45
+                                    : root.mood === "listening" ? 1.08 : 1 + 0.12 * root.wide))
+                                scale: 1 + 0.08 * root.wide
                                 radius: 10
                                 color: root.ink
                                 clip: true
@@ -406,16 +470,17 @@ Item {
                                     y: (root.mood === "thinking" ? -3 : 0) + root.lookY * 2
                                 }
                             }
-                            // Brows: determined (acting), droopy (sad).
+                            // Brows: determined (acting), droopy (sad), raised in the middle (worried).
                             Rectangle {
-                                visible: root.mood === "acting" || root.mood === "sad"
+                                visible: root.mood === "acting" || root.mood === "sad" || root.worried
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                y: -5
+                                y: root.worried ? -7 : -5
                                 width: 16
                                 height: 3
                                 radius: 1.5
                                 color: root.ink
-                                rotation: root.mood === "acting" ? (eye.isLeft ? 18 : -18) : (eye.isLeft ? -18 : 18)
+                                rotation: root.mood === "acting" ? (eye.isLeft ? 18 : -18)
+                                    : root.worried ? (eye.isLeft ? -24 : 24) : (eye.isLeft ? -18 : 18)
                             }
                         }
                         // Happy: ^ ^
@@ -449,18 +514,18 @@ Item {
 
                 // Mouth: open while talking, a smile, a frown when sad.
                 Rectangle {
-                    visible: root.talking || root.mood === "listening"
+                    visible: root.talking || root.mood === "listening" || (root.worried && !root.talking)
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: 38
-                    width: root.talking ? 12 : 8
-                    height: root.talking ? 3 + 9 * root.mouthOpen : 6
+                    width: root.talking ? 12 : root.worried ? 7 : 8
+                    height: root.talking ? 3 + 9 * root.mouth : root.worried ? 5 : 6
                     radius: width / 2
                     color: "#a8324e"
                     border.width: 1.5
                     border.color: root.ink
                 }
                 Shape {
-                    visible: !root.talking && root.mood !== "listening"
+                    visible: !root.talking && root.mood !== "listening" && !root.worried
                     x: 30
                     y: 36
                     width: 16
@@ -479,6 +544,47 @@ Item {
                     }
                 }
             }
+        }
+
+        // Dozing: z's drifting up from its head.
+        Repeater {
+            model: 3
+            delegate: Text {
+                id: zee
+                required property int index
+                visible: root.sleepy
+                text: "z"
+                font.pixelSize: 13 + zee.index * 4
+                font.bold: true
+                color: "white"
+                style: Text.Outline
+                styleColor: root.outline
+                x: 92 + zee.index * 7
+                y: 26 - zee.index * 13
+                opacity: 0
+                SequentialAnimation on opacity {
+                    running: root.running && root.sleepy
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: zee.index * 600 }
+                    NumberAnimation { to: 1; duration: 500 }
+                    PauseAnimation { duration: 700 }
+                    NumberAnimation { to: 0; duration: 600 }
+                    PauseAnimation { duration: (2 - zee.index) * 600 }
+                }
+            }
+        }
+        // Worried: a sweat drop on the side of its head.
+        Rectangle {
+            visible: root.worried
+            x: 92
+            y: 36
+            width: 9
+            height: 13
+            radius: 4.5
+            color: "#8fd3ff"
+            border.width: 1.5
+            border.color: root.outline
+            rotation: -15
         }
 
         // Thinking: three dots popping above its head.

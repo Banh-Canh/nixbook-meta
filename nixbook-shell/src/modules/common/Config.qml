@@ -302,6 +302,20 @@ Singleton {
                     // initiative's rules, or nowhere.
                     property int reactPerHour: 30
                 }
+                // Muse living on the desktop (services/MascotState.qml,
+                // modules/ii/fullAi/DesktopMascot.qml): the Full AI mascot
+                // small in a corner of the focused screen (bottomRight,
+                // bottomLeft, topRight, topLeft), reacting in plain code;
+                // `quips`, now and then a one-liner from the small model
+                // (at most quipsPerDay a day, 20–40 minutes apart).
+                property JsonObject mascot: JsonObject {
+                    property bool enable: true
+                    property string corner: "bottomRight"
+                    property bool quips: true
+                    property int quipsPerDay: 6
+                    // Dozes after this many idle minutes.
+                    property int dozeMinutes: 3
+                }
                 // Which of the provider's models does what (small, main or big):
                 // `decisions`, every pass that decides on the user's behalf
                 // (the initiative's notifications and words, pairing, a

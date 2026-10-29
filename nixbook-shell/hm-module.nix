@@ -45,18 +45,27 @@ let
   # src/services/RecentContext.qml): the last one, written to the shell's
   # runtime dir only while the shell made terminal-on there; the command
   # and its exit code, never its output; not Ctrl+C, nor a command starting
-  # with a space.
+  # with a space. The same command working after it failed goes to
+  # terminal-fixed (the desktop mascot's little jump).
   failedCommandZsh = ''
     if [[ -o interactive ]]; then
       zmodload zsh/datetime 2>/dev/null
       __nixbook_cmd=""
+      __nixbook_failed=""
       __nixbook_preexec() { __nixbook_cmd="$1"; }
       __nixbook_precmd() {
         local code=$? cmd=$__nixbook_cmd dir="''${XDG_RUNTIME_DIR:-/run/user/$UID}/nixbook-shell"
         __nixbook_cmd=""
         [[ -n $cmd && $cmd != " "* && -e $dir/terminal-on ]] || return 0
-        (( code != 0 && code != 130 && code != 148 )) || return 0
         cmd=''${cmd//$'\n'/ }
+        if (( code == 0 )); then
+          [[ $cmd == "$__nixbook_failed" ]] || return 0
+          __nixbook_failed=""
+          printf '%s\t%s\t%s\t%s\n' "$EPOCHSECONDS" 0 "$PWD" "''${cmd//$'\t'/ }" >| "$dir/terminal-fixed"
+          return 0
+        fi
+        (( code != 130 && code != 148 )) || return 0
+        __nixbook_failed=$cmd
         printf '%s\t%s\t%s\t%s\n' "$EPOCHSECONDS" "$code" "$PWD" "''${cmd//$'\t'/ }" >| "$dir/terminal-failed"
       }
       autoload -Uz add-zsh-hook
@@ -67,6 +76,7 @@ let
   failedCommandBash = ''
     if [[ $- == *i* ]]; then
       __nixbook_last=""
+      __nixbook_failed=""
       __nixbook_precmd() {
         local code=$? dir="''${XDG_RUNTIME_DIR:-/run/user/$UID}/nixbook-shell" n cmd
         [[ -e $dir/terminal-on ]] || return 0
@@ -75,7 +85,14 @@ let
         [[ $n != "$__nixbook_last" ]] || return 0
         __nixbook_last=$n
         [[ -n $cmd ]] || return 0
-        (( code != 0 && code != 130 && code != 148 )) || return 0
+        if (( code == 0 )); then
+          [[ $cmd == "$__nixbook_failed" ]] || return 0
+          __nixbook_failed=""
+          printf '%s\t%s\t%s\t%s\n' "$(date +%s)" 0 "$PWD" "''${cmd//$'\t'/ }" >| "$dir/terminal-fixed"
+          return 0
+        fi
+        (( code != 130 && code != 148 )) || return 0
+        __nixbook_failed=$cmd
         printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$code" "$PWD" "''${cmd//$'\t'/ }" >| "$dir/terminal-failed"
       }
       PROMPT_COMMAND="__nixbook_precmd''${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
@@ -428,6 +445,12 @@ let
       fr = "Ce que Muse peut faire dans le terminal et l'éditeur (kitty et Neovim), pour aider pendant que vous codez : lire vos fenêtres kitty (la sortie de la dernière commande, l'écran, l'historique, votre sélection, le dossier courant, la branche git), mettre une commande sur votre invite pour que vous la lanciez (il n'appuie jamais sur Entrée), lancer lui-même une commande dans son propre onglet kitty nommé Muse (demandé d'abord, avec la commande et son dossier : Autoriser ou Non ; la réponse affiche A lancé … (code N) avec Afficher la sortie et un lien vers l'onglet de Muse), et dans le Neovim au premier plan lire le fichier, le curseur, votre sélection et les diagnostics LSP, ou ouvrir un fichier à une ligne. Quand kitty ou Neovim est au premier plan, ce qu'il affiche part avec votre question (Demander à propos de ce terminal…). Les invites de mot de passe et les outils de secrets (sudo, ssh, gpg, pass, rbw…) ne sont jamais lus, les secrets sont masqués, sudo n'est jamais lancé (il vous demande de le faire), et taper à l'aveugle dans un terminal reste refusé. Les commandes risquées (rm -rf, git push, reboot…) demandent toujours ; les autres peuvent devenir de confiance après trois oui (Paramètres > Agents du bureau > Autonomie). Pour le désactiver : Paramètres > Agents du bureau > Terminal et code (lire, suggérer, lancer, lancer dans l'onglet de Muse, éditeur, envoyer le terminal avec les questions).";
       de = "Was Muse im Terminal und im Editor (kitty und Neovim) tun kann, um beim Programmieren zu helfen: deine kitty-Fenster lesen (die Ausgabe des letzten Befehls, den Bildschirm, den Verlauf, deine Auswahl, das Arbeitsverzeichnis, den Git-Zweig), einen Befehl auf deine Eingabezeile legen, den du selbst ausführst (es drückt nie Enter), selbst einen Befehl in seinem eigenen kitty-Tab namens Muse ausführen (vorher gefragt, mit Befehl und Ordner: Erlauben oder Nein; die Antwort zeigt Ausgeführt … (Code N) mit Ausgabe zeigen und einem Link zu Muses Tab), und im Neovim im Vordergrund die Datei, den Cursor, deine Auswahl und die LSP-Diagnosen lesen oder eine Datei an einer Zeile öffnen. Ist kitty oder Neovim im Vordergrund, geht das Angezeigte mit deiner Frage mit (Frag zu diesem Terminal…). Passwortabfragen und Geheimnis-Werkzeuge (sudo, ssh, gpg, pass, rbw…) werden nie gelesen, Geheimnisse geschwärzt, sudo wird nie ausgeführt (es bittet dich darum), und blindes Tippen in ein Terminal bleibt verweigert. Riskante Befehle (rm -rf, git push, reboot…) fragen immer; andere können nach drei Ja vertraut werden (Einstellungen > Desktop-Agenten > Autonomie). Zum Ausschalten: Einstellungen > Desktop-Agenten > Terminal & Programmieren (lesen, vorschlagen, ausführen, in Muses Tab ausführen, Editor, das Terminal mit Fragen senden).";
       vi = "Muse làm được gì trong terminal và trình soạn thảo (kitty và Neovim) để giúp bạn khi viết code: đọc các cửa sổ kitty (kết quả lệnh vừa chạy, màn hình, lịch sử cuộn, phần bạn chọn, thư mục hiện tại, nhánh git), đặt một lệnh lên dấu nhắc để bạn tự chạy (nó không bao giờ nhấn Enter), tự chạy một lệnh trong thẻ kitty riêng tên Muse (hỏi trước, hiện lệnh và thư mục: Cho phép hoặc Không; câu trả lời ghi Đã chạy … (mã N) kèm Xem kết quả và liên kết tới thẻ của Muse), và trong Neovim đang mở phía trước thì đọc tệp, con trỏ, phần chọn và chẩn đoán LSP, hoặc mở một tệp ở một dòng. Khi kitty hoặc Neovim ở phía trước, nội dung nó hiển thị được gửi kèm câu hỏi (Hỏi về terminal này…). Dấu nhắc mật khẩu và công cụ bí mật (sudo, ssh, gpg, pass, rbw…) không bao giờ bị đọc, bí mật được che đi, sudo không bao giờ được chạy (nó nhờ bạn chạy), và gõ mù vào terminal vẫn bị từ chối. Lệnh rủi ro (rm -rf, git push, reboot…) luôn hỏi; các lệnh khác có thể được tin cậy sau ba lần đồng ý (Cài đặt > Tác nhân màn hình > Tự chủ). Để tắt: Cài đặt > Tác nhân màn hình > Terminal và lập trình (đọc, gợi ý, chạy, chạy trong thẻ của Muse, trình soạn thảo, gửi terminal kèm câu hỏi).";
+    };
+    desktopMascot = {
+      en = "Muse lives on your desktop as a little robot (the Full AI mascot) in a corner of the screen you're on. It looks at the window you switch to, perks up at a notification and looks worried at an error, thinks while Muse works, moves its mouth while Muse talks, jumps when something is done (a task, a background task, a command that works after failing), dozes when you're away and stretches when you come back. Click it to call Muse's bubble. Now and then it says a little word about what's in front, the time or the weather (the small model, 20 to 40 minutes apart at most, never in quiet hours, Do Not Disturb, a meeting, a fullscreen app or while desktop control is paused; not with AI set to local only). It hides while the screen is locked, in front of fullscreen apps and in Full AI mode. Settings > Desktop agents > Muse on the desktop: show it or not, the corner, the little words and how many a day, when it dozes.";
+      fr = "Muse vit sur votre bureau en petit robot (la mascotte du mode IA complète), dans un coin de l'écran où vous êtes. Elle regarde la fenêtre vers laquelle vous passez, se redresse à une notification et s'inquiète d'une erreur, réfléchit pendant que Muse travaille, bouge la bouche quand Muse parle, saute quand quelque chose est fait (une tâche, une tâche de fond, une commande qui marche après avoir échoué), s'assoupit quand vous êtes absent et s'étire à votre retour. Cliquez dessus pour appeler la bulle de Muse. De temps en temps elle dit un petit mot sur ce qui est devant vous, l'heure ou la météo (le petit modèle, 20 à 40 minutes d'écart au plus, jamais en heures calmes, en Ne pas déranger, en réunion, devant une app plein écran ou quand le contrôle du bureau est en pause ; pas avec l'IA en local seulement). Elle se cache quand l'écran est verrouillé, devant une app plein écran et en mode IA complète. Paramètres > Agents du bureau > Muse sur le bureau : l'afficher ou non, le coin, les petits mots et combien par jour, quand elle s'assoupit.";
+      de = "Muse wohnt als kleiner Roboter (das Maskottchen des vollen KI-Modus) in einer Ecke des Bildschirms, an dem du bist. Er schaut zum Fenster, zu dem du wechselst, horcht bei einer Benachrichtigung auf und schaut bei einem Fehler besorgt, denkt nach, während Muse arbeitet, bewegt den Mund, während Muse spricht, springt, wenn etwas erledigt ist (eine Aufgabe, eine Hintergrundaufgabe, ein Befehl, der nach einem Fehler klappt), döst, wenn du weg bist, und streckt sich, wenn du zurückkommst. Klick ihn an, um Muses Blase zu rufen. Ab und zu sagt er ein kleines Wort über das, was vorne ist, die Uhrzeit oder das Wetter (das kleine Modell, höchstens alle 20 bis 40 Minuten, nie in Ruhezeiten, bei Nicht stören, in einem Termin, vor einer Vollbild-App oder wenn die Desktop-Steuerung pausiert ist; nicht mit KI nur lokal). Er versteckt sich bei gesperrtem Bildschirm, vor Vollbild-Apps und im vollen KI-Modus. Einstellungen > Desktop-Agenten > Muse auf dem Desktop: anzeigen oder nicht, die Ecke, die kleinen Worte und wie viele am Tag, wann er döst.";
+      vi = "Muse sống trên màn hình của bạn như một chú robot nhỏ (linh vật của chế độ AI toàn phần) ở một góc của màn hình bạn đang dùng. Nó nhìn về cửa sổ bạn chuyển sang, ngóc lên khi có thông báo và lo lắng khi có lỗi, suy nghĩ khi Muse làm việc, mấp máy miệng khi Muse nói, nhảy lên khi việc gì đó xong (một tác vụ, một tác vụ nền, một lệnh chạy được sau khi lỗi), ngủ gật khi bạn vắng mặt và vươn vai khi bạn quay lại. Bấm vào nó để gọi bong bóng của Muse. Thỉnh thoảng nó nói một câu nhỏ về thứ đang ở phía trước, giờ giấc hay thời tiết (mô hình nhỏ, cách nhau ít nhất 20 đến 40 phút, không bao giờ trong giờ yên tĩnh, Không làm phiền, cuộc họp, ứng dụng toàn màn hình hay khi điều khiển màn hình bị tạm dừng; không khi AI chỉ chạy cục bộ). Nó ẩn đi khi màn hình bị khóa, trước ứng dụng toàn màn hình và trong chế độ AI toàn phần. Cài đặt > Tác nhân màn hình > Muse trên màn hình: hiện hay không, góc, các câu nhỏ và bao nhiêu mỗi ngày, khi nào nó ngủ gật.";
     };
     modelRouting = {
       en = "To choose which model does what: Settings > Desktop agents > Accuracy and models. Model for Muse in the bubble (small by default: fastest); Model for decisions made for you (big by default), used whenever the AI decides on your behalf: reading your notifications, the initiative's words, pairing, a routine's judgment, Full AI mode's reactions and what an ambiguous request means, with its own thinking level; Full AI reactions an hour at most (30 by default, 0 for no limit). The side panel keeps its own model (Muse in the side panel), the memory passes theirs.";

@@ -299,6 +299,90 @@ ContentPage {
             }
         }
 
+        // Muse on the desktop (services/MascotState.qml): the mascot in a
+        // corner, its plain-code reactions and its rare quips.
+        ContentSection {
+            icon: "smart_toy"
+            title: Translation.tr("Muse on the desktop")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Full AI's mascot, small in a corner of the screen you're on. It looks at the window you switch to, peeks at notifications, worries at errors, thinks while Muse works, moves its mouth while Muse talks, jumps when something is done, dozes when you're away and stretches when you're back. Click it to call Muse's bubble. Hidden while locked, in front of fullscreen apps and in Full AI mode (the big mascot takes over).")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.mascot.enable"
+                    enabled: !nixManaged
+                    buttonIcon: "smart_toy"
+                    text: Translation.tr("Show Muse on the desktop")
+                    checked: Config.options.ai.mascot?.enable ?? true
+                    onCheckedChanged: if (Config.options.ai.mascot) Config.options.ai.mascot.enable = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.mascot.quips"
+                    enabled: !nixManaged && (Config.options.ai.mascot?.enable ?? true)
+                    buttonIcon: "chat_bubble"
+                    text: Translation.tr("A little word now and then (the small model, about what's in front, the time, the weather)")
+                    checked: Config.options.ai.mascot?.quips ?? true
+                    onCheckedChanged: if (Config.options.ai.mascot) Config.options.ai.mascot.quips = checked
+                }
+            }
+            ConfigSelectionArray {
+                configKey: "ai.mascot.corner"
+                text: Translation.tr("Corner")
+                icon: "picture_in_picture"
+                currentValue: Config.options.ai.mascot?.corner ?? "bottomRight"
+                onSelected: newValue => { if (Config.options.ai.mascot) Config.options.ai.mascot.corner = newValue }
+                options: [
+                    { displayName: Translation.tr("Bottom right"), icon: "south_east", value: "bottomRight" },
+                    { displayName: Translation.tr("Bottom left"), icon: "south_west", value: "bottomLeft" },
+                    { displayName: Translation.tr("Top right"), icon: "north_east", value: "topRight" },
+                    { displayName: Translation.tr("Top left"), icon: "north_west", value: "topLeft" }
+                ]
+            }
+            ConfigSpinBox {
+                configKey: "ai.mascot.quipsPerDay"
+                icon: "chat_bubble"
+                text: Translation.tr("Little words a day at most (0: none)")
+                value: Config.options.ai.mascot?.quipsPerDay ?? 6
+                from: 0; to: 30; stepSize: 1
+                onValueChanged: if (Config.options.ai.mascot) Config.options.ai.mascot.quipsPerDay = value
+            }
+            ConfigSpinBox {
+                configKey: "ai.mascot.dozeMinutes"
+                icon: "bedtime"
+                text: Translation.tr("Dozes after this many idle minutes")
+                value: Config.options.ai.mascot?.dozeMinutes ?? 3
+                from: 1; to: 60; stepSize: 1
+                onValueChanged: if (Config.options.ai.mascot) Config.options.ai.mascot.dozeMinutes = value
+            }
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                font.pixelSize: Appearance.font.pixelSize.small
+                text: Translation.tr("Its little words come 20 to 40 minutes apart at most, never in quiet hours, Do Not Disturb, a meeting or a fullscreen app, nor while desktop control is paused, and not with AI set to local only (it still reacts then). Private apps and windows are never mentioned; names are hidden from the model and shown as they are.")
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                SmallButton {
+                    materialIcon: "chat_bubble"
+                    mainText: Translation.tr("Say something now")
+                    enabled: MascotState.quipsOn && MascotState.shown && !MascotState.asking
+                    onClicked: MascotState.quipNow(true)
+                }
+                SmallButton {
+                    materialIcon: "celebration"
+                    mainText: Translation.tr("Make it jump")
+                    enabled: MascotState.shown
+                    onClicked: MascotState.reaction("celebrate")
+                }
+            }
+        }
+
         // Accuracy (meta-agent --resolve / --verify, the 👍 / 👎 of
         // services/AnswerFeedback.qml) and which model does what (ai.routing).
         ContentSection {

@@ -36,6 +36,13 @@
       "react": true,
       "reactPerHour": 30
     },
+    "mascot": {
+      "enable": true,
+      "corner": "bottomRight",
+      "quips": true,
+      "quipsPerDay": 6,
+      "dozeMinutes": 3
+    },
     "routing": {
       "decisions": "big",
       "decisionsEffort": "low",

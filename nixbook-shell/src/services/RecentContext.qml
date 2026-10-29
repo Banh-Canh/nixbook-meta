@@ -25,7 +25,10 @@ import QtQuick
  *     10 minutes offers "Explain it". The shell hook (hm-module.nix) writes
  *     the last failed command to terminal-failed only while terminal-on
  *     exists, made here while a switch needs it;
- *   - clipboardErrors: an error or a stack trace copied, the same.
+ *   - clipboardErrors: an error or a stack trace copied, the same;
+ *   - commandFixed: a command that failed, then worked (the hook's
+ *     terminal-fixed), for the desktop mascot's little jump
+ *     (services/MascotState.qml), which turns the hook on too.
  * With the context triggers on (ai.reactivity.triggers.commandFailedAgain /
  * errorCopied, services/ContextTriggers.qml), those two moments are offers
  * of the reactor instead (one order on Yes): the hook and the clipboard
@@ -131,11 +134,32 @@ Singleton {
     }
 
     // The terminal hook writes only while a switch needs it.
-    readonly property bool hookOn: root.enabled || root.terminal || ContextTriggers.commandFailedAgain
+    readonly property bool hookOn: root.enabled || root.terminal || ContextTriggers.commandFailedAgain || MascotState.enabled
     onHookOnChanged: root._flag()
     function _flag() {
         Quickshell.execDetached(root.hookOn ? ["bash", "-c", 'mkdir -p "$1" && touch "$1/terminal-on"', "flag", root.dir]
-            : ["rm", "-f", `${root.dir}/terminal-on`, `${root.dir}/terminal-failed`, root.copiedPath])
+            : ["rm", "-f", `${root.dir}/terminal-on`, `${root.dir}/terminal-failed`, `${root.dir}/terminal-fixed`, root.copiedPath])
+    }
+    // A command that failed, then worked: "time\texit\tcwd\tcommand" (the
+    // hook writes it when the same command succeeds after failing).
+    signal commandFixed(string command)
+    property string _lastFixed: ""
+    FileView {
+        id: fixed
+        path: root.hookOn ? `${root.dir}/terminal-fixed` : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            const line = fixed.text().trim()
+            if (!line || line === root._lastFixed) return
+            const first = root._lastFixed === ""
+            root._lastFixed = line
+            const [time, , , ...rest] = line.split("\t")
+            // One left from before the shell started: not news.
+            if (first && Date.now() - Number(time) * 1000 > 60000) return
+            root.commandFixed(rest.join(" ").trim())
+        }
     }
     // "time\texit\tcwd\tcommand", the last failed command (overwritten).
     property string _lastLine: ""

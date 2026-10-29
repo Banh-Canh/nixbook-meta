@@ -285,6 +285,49 @@ Desktop agents > About you lists and deletes them). Settings > Desktop agents >
 Talk to your desktop > **Forget what Full AI learned** clears its learned
 reactions (`~/.local/state/nixbook-shell/full-ai-learned.json`).
 
+### Muse on the desktop
+
+Outside Full AI mode the same mascot lives small in a corner of the screen you
+are on (`ai.mascot`, on by default; Settings > Desktop agents > **Muse on the
+desktop**). It is there so Muse feels present, and everything it does is plain
+code, with no model:
+
+| What happens                                                                                                              | What it does                                      |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| You switch to another window                                                                                              | looks and leans toward it (or toward its screen)  |
+| A notification arrives                                                                                                    | perks up and peeks at the popups                  |
+| An error notification (critical, or _error_, _failed_, _échec_, _Fehler_, _lỗi_…), a background task failing, low battery | looks worried, a sweat drop                       |
+| Muse's agent works (the bubble, the side panel, a background task)                                                        | thinks (dots), determined while a step runs       |
+| Muse speaks                                                                                                               | lip-syncs: its mouth follows the sentence playing |
+| Something done: a turn that acted, a background task done, a command that works after failing, a download                 | a little jump (and stars)                         |
+| No input for `ai.mascot.dozeMinutes` (3)                                                                                  | dozes (z's); stretches awake when you're back     |
+
+**Click it** to call Muse's bubble (`Mod+C` does the same). Everywhere else it
+lets clicks through, takes no keys, and moves aside for an agent working on your
+desktop (hidden from its screenshots). It hides while the screen is locked, in
+front of a fullscreen app, and in Full AI mode, where the big mascot takes over.
+At rest it stands still (it only blinks), so it costs nothing; nothing animates
+while the screens are off.
+
+**Now and then a little word** (`ai.mascot.quips`, on): a one-liner in its
+balloon about the app in front, the time of day or the weather, from the small
+model with minimal thinking. At most `ai.mascot.quipsPerDay` (6) a day, 20 to
+40 minutes apart at random, never in quiet hours (`initiativeQuietHours`), Do
+Not Disturb, a meeting or a fullscreen app, never within 10 minutes of a word
+from [Muse speaking first](./desktop-agents.md#talks-to-you-on-its-own) (it
+doesn't spend that budget), never while desktop control is paused, and not
+with the AI features set to local only (it still reacts then; set to off, it
+is gone). Private apps and windows (chats, mail, password managers, private
+browsing) are never mentioned; names are hidden from the model by the privacy
+mask and shown on screen as they are. **Say something now** in Settings tries
+one at once.
+
+`nixbook-shell ipc call mascot show|hide|toggle|react MOOD|quip|say TEXT|status`
+drives it (for demos and tests; agents can't: `mascot` is in desktop-mcp's
+`shellIpcDenyTargets`). `react` takes a mood (`happy`, `worried`, `sleepy`,
+`thinking`…, a few seconds) or a move (`hop`, `celebrate`, `shake`, `stretch`,
+`perk`).
+
 ## Set up the desktop by talking
 
 Settings > Desktop agents > Talk to your desktop > **Set up my desktop by
@@ -444,9 +487,12 @@ reactions, the models of the two checks (`ai.routing.resolve`,
 reactions and one-shots (`ai.routing.effortMinimal`), only the core desktop
 tools up front (`ai.agent.coreTools`), and how long the agent stays running
 after the last message (`ai.agent.keepWarmMinutes`, 60; 15 while locked).
+**Muse on the desktop**: the mascot in a corner (`ai.mascot.enable`, `corner`:
+bottomRight, bottomLeft, topRight or topLeft), its little words (`quips`,
+`quipsPerDay`) and when it dozes (`dozeMinutes`).
 `policies.ai` (AI features off) turns all of it off.
 
-The options are under `ai.quick`, `ai.voice`, `ai.agent` and `ai.routing` in the shell's settings, so Nix
+The options are under `ai.quick`, `ai.voice`, `ai.agent`, `ai.routing` and `ai.mascot` in the shell's settings, so Nix
 can set them like any other (`programs.nixbook-shell.settings.ai.quick.confirm = "actions";`).
 
 From a script: `nixbook-shell ipc call quickAi selection|screen|toggle|close`,
