@@ -880,7 +880,14 @@ monitors and ~/Downloads (FolderListModel), and runs `routine run ID EVENT`:
 desktop tool (`call_tool`), the MCP server (`mcp_call`, a one-shot stdio
 client) or `nixbook-meta-agent` (`routine_agent`: --mcp-config with the
 desktop and the named servers, --tools "" and --allowedTools mcp__…, a few
-turns, `routineModel`, `small` by default). What it did goes to the bar (`routine_say`). The shell reports a
+turns, `routineModel`, `small` by default). What it did goes to the bar (`routine_say`). A run that
+found nothing to do for what happened answers "Not this time: …"
+(`ROUTINE_PASS`, asked by `ROUTINE_SYSTEM`, which also has it judge a kind of
+music broadly: soundtracks, covers, remixes, artists): no cooldown, no word
+in the bar nor the journal, and the same track or window title isn't judged
+again for 7 days (the routine's `passed`, `routine_pass_key`). "Whenever I
+play <some kind of> music" is `track_changed` (each new track), not
+`music_started` (only after silence). The shell reports a
 routine's action undone within 3 min (`routine undone`): twice, it is off.
 Learned routines (`ai.routines.learn` off/suggest/auto; `routine learn MODE`,
 hourly from Routines.qml, once a day in effect): `learn_patterns` mines the
