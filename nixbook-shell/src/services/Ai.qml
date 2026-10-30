@@ -113,7 +113,9 @@ Singleton {
         const lines = [
             "## nixbook-shell live settings (from its Settings window)",
             `- Settings file: ${Directories.shellConfig}/config.json`,
-            `- Theme: ${Themes.current}${Themes.variant ? ` (variant ${Themes.variant})` : ""}`,
+            // Not the theme: it changes with the music (routines), and a
+            // prompt that changes loses the model's prompt cache (list_themes
+            // tells the current one).
             `- Bar: ${o.bar?.vertical ? "vertical" : (o.bar?.bottom ? "bottom" : "top")}; left [${(o.bar?.layouts?.leftLayout ?? []).join(", ")}], middle [${(o.bar?.layouts?.middleLayout ?? []).join(", ")}], right [${(o.bar?.layouts?.rightLayout ?? []).join(", ")}]`,
             `- Dock: ${o.dock?.enable ? `on, pinned apps [${(o.dock?.pinnedApps ?? []).join(", ")}]` : "off"}`,
             `- Desktop widgets enabled: ${widgets.length > 0 ? widgets.join(", ") : "none"} (on ${(o.background?.screenList ?? []).length > 0 ? o.background.screenList.join(", ") : "every screen"})`,

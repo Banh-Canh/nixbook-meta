@@ -3177,6 +3177,22 @@ chars=$(python3 "$mcp" personal prompt | python3 -c 'import sys; print(len(sys.s
 if [ "$chars" -le 150 ]; then pass "personal digest: capped ($chars chars)"; else fail "personal digest: capped" "$chars chars"; fi
 rm "$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
 
+# The machine's reference: found on demand, sent with a help question only.
+mkdir -p "$XDG_CONFIG_HOME/nixbook-shell"
+cat >"$XDG_CONFIG_HOME/nixbook-shell/system-context.md" <<'MD'
+# About this machine (reference)
+## How things are done on this machine
+- To take a screenshot, open the screenshot selector (the Print key): drag a rectangle, then left click copies it.
+## Packages installed for this user (Home Manager)
+Packages: kitty, zen-browser, vesktop, mpv, imv, zathura, dolphin, btop, ripgrep, fd, bat
+MD
+expect_contains "machine_help: a package that isn't installed" "$(python3 "$mcp" call machine_help '{"query":"is firefox installed"}')" "firefox: not among the installed packages"
+expect_contains "context build: a help question gets the reference's lines" "$(python3 "$mcp" context build --for chat --query "How do I take a screenshot?" | jq -r '.sections[] | select(.name == "machine") | .text')" "To take a screenshot, open the screenshot selector"
+expect_eq "context build: an order doesn't" "" "$(python3 "$mcp" context build --for chat --query "take a screenshot of slack" | jq -r '.sections[] | select(.name == "machine") | .text')"
+expect_eq "tools: one agent's tool alone" "equalizer" "$(NIXBOOK_DESKTOP_MCP_TOOLS=equalizer python3 "$mcp" tools | jq -r '[.[].name] | join(",")')"
+expect_eq "tools: the core ones loaded up front by Claude Code" "true" "$(python3 "$mcp" tools | jq '[.[] | select(.name == "list_windows")][0]._meta["anthropic/alwaysLoad"]')"
+rm "$XDG_CONFIG_HOME/nixbook-shell/system-context.md"
+
 out=$(python3 "$mcp" personal context "I booked the flight to Kyoto")
 expect_eq "personal context: the entries a message is about" "[\"$japan\"]" "$(jq -c .ids <<<"$out")"
 expect_contains "personal context: their text" "$(jq -r .text <<<"$out")" "japan (topic): Trip 2027-04"

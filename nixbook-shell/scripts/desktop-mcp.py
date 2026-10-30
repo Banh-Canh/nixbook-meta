@@ -258,6 +258,11 @@ def load_config():
     only = os.environ.get("NIXBOOK_DESKTOP_MCP_GROUPS")
     if only is not None:
         cfg["tools"] = [g for g in cfg["tools"] if g in only.split(",")]
+    # Only these tools (a single-purpose agent: the equalizer's): an agent
+    # is sent every tool the server offers, allowed or not.
+    names = os.environ.get("NIXBOOK_DESKTOP_MCP_TOOLS")
+    if names is not None:
+        cfg["onlyTools"] = [n for n in names.split(",") if n]
     return cfg
 
 
@@ -1215,6 +1220,9 @@ def tool(name, group, description, schema=None, *, read_only=False, destructive=
         meta = {"nixbook/group": group, "nixbook/bundle": TOOL_BUNDLES.get(name, group)}
         if name in CORE_TOOLS:
             meta["nixbook/core"] = True
+            # The same for Claude Code clients: loaded up front, the rest
+            # deferred behind ToolSearch.
+            meta["anthropic/alwaysLoad"] = True
         TOOLS[name] = {
             "fn": fn,
             "group": group,
@@ -1545,6 +1553,12 @@ def machine_help(query, limit=MACHINE_HELP_MAX):
         if score > 0:
             scored.append((score, i))
     if not scored:
+        packages = [h for h in wanted if "package" in h.lower()]
+        item_words = q - {w for _, alias in MACHINE_HELP_ALIASES for w in alias}
+        if packages and item_words:
+            # "Is X installed?" with nothing about X anywhere: it isn't.
+            return (f"## Packages\n{', '.join(sorted(item_words))}: not among the installed packages "
+                    f"({'; '.join(packages)})")
         return (f"Nothing about {short(query, 80)!r} in the machine's reference; its sections: "
                 + "; ".join(h for h in sections if h))
     best = max(sc for sc, _ in scored)
@@ -1576,6 +1590,32 @@ def machine_help(query, limit=MACHINE_HELP_MAX):
         return (f"Nothing about {short(query, 80)!r} in the machine's reference (not among its packages, modules, "
                 "key bindings or how-tos)")
     return "\n".join(f"## {h}\n" + "\n".join(b) for h, b in by_section.items())
+
+
+# A question about how this machine works (how do I…, which key…, is X
+# installed…), in the shell's four languages: the broker sends the
+# reference's matching parts with it (machine_context), so the answer needs
+# no machine_help round trip. Orders ("play some music", "close Slack") and
+# other questions get nothing: lines that matched them by a word would only
+# cost tokens and mislead. (From nixbook, where it measured 3 steps → 1.)
+MACHINE_ASK = re.compile(
+    r"\b(how (do|can|could|would|to|does|should|is)|how's|which (key|shortcut|button|setting)|what (key|shortcut|"
+    r"keybind|does (mod|super|ctrl|alt|shift)\b)|shortcut|keybind|hotkey|key binding|keymap|where (is|are|do|can|"
+    r"does)|is \S+ installed|do i have|is there a way|can i\b|settings?\b.*\?|comment (je|on|faire|puis|activer|"
+    r"changer|mettre)|raccourci|touche|où (est|sont|se)|est[- ]ce que (je|on) peut|est[- ]il install|wie (kann|mache|"
+    r"geht|stelle|ändere|aktiviere)|tastenk(ü|ue|u)rzel|wo (ist|sind|finde)|ist \S+ installiert|làm sao|làm thế nào|"
+    r"cách (nào|để)|phím tắt|ở đâu|có cài)", re.I)
+MACHINE_CONTEXT_MAX = 1500
+
+
+def machine_context(query):
+    """The reference's parts about a help question, for the broker to send
+    with it; "" for what isn't such a question."""
+    if not MACHINE_ASK.search(query or ""):
+        return ""
+    found = machine_help(query, limit=MACHINE_CONTEXT_MAX)
+    return ("From this machine's reference, about this request (machine_help has the rest):\n" + found
+            if found.startswith("## ") else "")
 
 
 def machine_excerpt(body, items_asked, q):
@@ -9188,6 +9228,15 @@ def context_build(cfg, surface, query="", app="", title="", budget=None, activit
         carry = allowed - (len(text_) + sep if text_ else 0)
         if text_:
             sections.append({"name": name, "text": text_})
+    # A help question: the machine reference's lines about it, last.
+    if surface in ("chat", "bubble") and query:
+        try:
+            machine = machine_context(query)
+        except Exception as e:  # never in the way of the rest
+            log(f"context build: machine: {e!r}")
+            machine = ""
+        if machine:
+            sections.append({"name": "machine", "text": machine})
     # After the facts: the terminal in front, then the windows.
     if win_text:
         sections.insert(1 if sections and sections[0]["name"] == "facts" else 0, {"name": "windows", "text": win_text})
@@ -16558,7 +16607,8 @@ class Context:
 
 def enabled_tools(cfg):
     terminal = terminal_settings() if "terminal" in cfg["tools"] else {}
-    return {n: t for n, t in TOOLS.items() if t["group"] in cfg["tools"]
+    only = cfg.get("onlyTools")
+    return {n: t for n, t in TOOLS.items() if t["group"] in cfg["tools"] and (only is None or n in only)
             and (n not in ("report_problem", "request_feature", "list_requests", "list_improvements",
                            "start_improvement") or cfg.get("improve"))
             # A terminal switch the user turned off: its tools aren't offered.
