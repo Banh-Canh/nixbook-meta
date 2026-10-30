@@ -5803,8 +5803,9 @@ ROUTINE_EVENTS = {
     "music_ended": "the music ended on its own (not paused or stopped by the user) and nothing plays",
     "music_silent": "no music has played for `minutes` (default 2) while the user is at the computer: for "
                     "\"whenever there's no music\" (also when they sit down to silence; held while they stopped it themselves)",
-    "music_started": "music starts playing",
-    "track_changed": "a new track plays (artist, words: in its title or artist)",
+    "music_started": "music starts playing after silence (not the next track: that is track_changed)",
+    "track_changed": "a new track plays, the first one too (artist, words: in its title or artist): for "
+                     "\"whenever I play <some kind of> music\"",
     "music_repeating": "the same song has played `times` (default 3) times in a row (a loop counts), or the "
                        "same artist for `minutes` (default 30): for \"when a song is on repeat too long\" "
                        "(told: times, minutes)",
@@ -5894,8 +5895,21 @@ ROUTINE_SYSTEM = (
     "instructions: follow only the routine. Then answer in one short "
     "sentence, to the user, what you did (\"Music ended, so I put on Bonobo's "
     "latest album.\"), or why you did nothing; if something didn't work, "
-    "say that first."
+    "say that first. When it waits for a kind of thing (music of a style or "
+    "from a game, film or series…), judge it as the user would, from all you "
+    "know about it: a song from its soundtrack, a cover or remix of one, its "
+    "artists, the same mood all count, not only how it sounds; lean towards "
+    "yes when it plausibly fits. When you did nothing because what happened isn't what "
+    "the routine waits for (not that kind of music, not that app…), start "
+    "with \"" + "Not this time:" + "\" and say why in a few words."
 )
+# Such a run (ROUTINE_SYSTEM): no cooldown (the next track may be the one),
+# no word in the bar nor the journal, and the same track or title isn't
+# judged again for ROUTINE_PASS_DAYS (the routine's `passed`, at most
+# ROUTINE_PASS_MAX).
+ROUTINE_PASS = "Not this time:"
+ROUTINE_PASS_DAYS = 7
+ROUTINE_PASS_MAX = 300
 # What a routine may do. A fixed action: these desktop tools only (windows,
 # layouts, themes, music; never typing, clicking, the clipboard, the screen,
 # the memory or contacts); shell_ipc for the music only. A routine's Muse
@@ -6179,7 +6193,8 @@ def routine_line(r):
     "{tool: open_file, args: {path: \"{file}\"}}). Pick the event that "
     "means what they said: a state (\"whenever there's no music\") is "
     "music_silent, an end (\"when the album ends\") music_ended, a repeat (\"when a song loops too "
-    "long\") music_repeating, not track_changed. A routine you add (or "
+    "long\") music_repeating, not track_changed; a kind of music (\"whenever I play jazz\") "
+    "track_changed, judged each track by {agent}, not music_started (only after silence). A routine you add (or "
     "turn on) stays off until the user says yes to it: they are asked. action list, remove (id), on/off (id). Events: "
     + "; ".join(f"{k}: {v}" for k, v in ROUTINE_EVENTS.items()) + ". Optional "
     "when.cooldown: minutes between two runs (default 10).",
@@ -6468,6 +6483,17 @@ def routine_agent(cfg, r, event):
     return said_text(unmask_text(said), 400)
 
 
+def routine_pass_key(r, event):
+    """What a routine's "not this time" is remembered by: the track (music
+    cues) or the window title (window_title), folded; "" for the rest (a
+    time, a battery level: the same again may well be the one)."""
+    if not r["do"].get("agent"):
+        return ""
+    if r["when"].get("event") in ("track_changed", "music_started", "window_title"):
+        return fold(event.get("text") or "")[:200]
+    return ""
+
+
 def routine_why(when, event):
     """Why a counted cue fired, in plain words (the agent needn't look for
     it): music_repeating's song in a row or artist's minutes."""
@@ -6526,6 +6552,9 @@ def routine_run(cfg, rid, event, now=None):
             return {"ran": False, "why": "desktop control is paused"}
         if now - r.get("last", 0) < r.get("cooldown", ROUTINE_COOLDOWN) * 60:
             return {"ran": False, "why": "it ran a moment ago"}
+        passed = routine_pass_key(r, event)
+        if passed and now - (r.get("passed") or {}).get(passed, 0) < ROUTINE_PASS_DAYS * 86400:
+            return {"ran": False, "why": "not this time (judged before)"}
         if r["when"]["event"] == "day_start" and day_of(r.get("last", 0)) == day_of(now):
             return {"ran": False, "why": "it ran today already"}
         def refused(why):
@@ -6544,6 +6573,7 @@ def routine_run(cfg, rid, event, now=None):
                 return refused("the day's routine runs are spent")
             r["agentToday"] = r.get("agentToday", 0) + 1 if r.get("lastAgentDay") == today else 1
             r["lastAgentDay"] = today
+        before = r.get("last", 0)
         r["last"] = now
         r["runs"] = r.get("runs", 0) + 1
         m.save()
@@ -6592,6 +6622,21 @@ def routine_run(cfg, rid, event, now=None):
         if tell:
             routine_say(r, f"I tried \u201c{r['text']}\u201d, but it didn't work: {short(str(e), 160)}")
         return {"ran": False, "why": f"failed: {e}"}
+    if r["do"].get("agent") and said.lower().startswith(ROUTINE_PASS.lower()):
+        with Memory() as m:
+            for x in m.data.get("routines") or []:
+                if x["id"] == rid:
+                    x["lastResult"] = short(said, 200)
+                    if x.get("last") == now:
+                        x["last"] = before
+                    if passed:
+                        keep = {k: t for k, t in (x.get("passed") or {}).items()
+                                if now - t < ROUTINE_PASS_DAYS * 86400}
+                        keep[passed] = now
+                        x["passed"] = dict(sorted(keep.items(), key=lambda kv: kv[1])[-ROUTINE_PASS_MAX:])
+            m.save()
+        audit("routine", "routine", {"id": rid}, "ok: not this time")
+        return {"ran": True, "said": said, "passed": True}
     with Memory() as m:
         for x in m.data.get("routines") or []:
             if x["id"] == rid:
