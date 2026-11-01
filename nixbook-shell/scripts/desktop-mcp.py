@@ -8799,12 +8799,31 @@ def personal_digest_ids(query=""):
     return ids
 
 
+PERSONAL_CONTEXT_MIN = 2
+
+
 def personal_context(cfg, query, exclude=()):
     """The entries a message is about and the people it names (their
     contacts), not given yet: for the shell's AI chat to send with the
     message. (text, ids: the entries', and "contact:<id>" the contacts')"""
     exclude = set(exclude)
     found = personal_matches(read_personal(), query, exclude) if "personal" in cfg["tools"] else []
+    # With every message: only entries about it (a word of their topic or
+    # keywords, or two of their text). One shared word brought unrelated
+    # ones (a birthday gift with a screenshot question): tokens for
+    # nothing, and a distraction. recall_about_user still finds them all.
+    qw = words(query)
+    if found:
+        entries = read_personal()
+        texts = {e["id"]: set(words(e.get("text", ""))) for e in entries}
+
+        def telling(e):
+            # One word of its text, said exactly and rare among the entries
+            # ("Kyoto"): about it; one prefix-close or common ("shortcut"
+            # for "short", "take"): not.
+            exact = [w for w in qw if len(w) >= 4 and w in texts.get(e["id"], ())]
+            return any(sum(1 for t in texts.values() if w in t) <= 2 for w in exact)
+        found = [e for e in found if note_score(e, qw) >= PERSONAL_CONTEXT_MIN or telling(e)]
     people, people_ids = people_context(cfg, query, {i[8:] for i in exclude if i.startswith("contact:")})
     parts = []
     if found:
