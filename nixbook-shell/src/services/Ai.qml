@@ -51,7 +51,25 @@ Singleton {
         const parts = [];
         if (prompt.includes("{DATETIME}")) parts.push(`Current date & time: ${root.promptSubstitutions["{DATETIME}"]}`);
         if (prompt.includes("{WINDOWCLASS}")) parts.push(`Focused app: ${root.promptSubstitutions["{WINDOWCLASS}"]}`);
-        return parts.length > 0 ? `[${parts.join("; ")}]\n\n` : "";
+        const head = parts.length > 0 ? `[${parts.join("; ")}]\n\n` : "";
+        // The open windows (the shell's own list, no niri call), with the
+        // desktop tools: "close Firefox" acts at once, no list_windows step
+        // first. Masked with the message.
+        const windows = root.currentTool !== "none" && root.desktopTools.length > 0 ? root.openWindowsLines() : [];
+        return head + (windows.length > 0 ? `[Open windows (ids for the window tools):\n${windows.join("\n")}]\n\n` : "");
+    }
+    function openWindowsLines() {
+        const spaces = {};
+        for (const w of WM.workspaces ?? []) spaces[w.id] = w;
+        return [...(WM.windowList ?? [])]
+            .sort((a, b) => (b.focused ? 1 : 0) - (a.focused ? 1 : 0) || (a.workspaceId ?? 0) - (b.workspaceId ?? 0))
+            .slice(0, 20)
+            .map(w => {
+                const sp = spaces[w.workspaceId] ?? {};
+                const title = String(w.title ?? "").replace(/\s+/g, " ");
+                return `- id ${w.id}: ${w.appId || "?"} — ${title.length > 60 ? title.slice(0, 59) + "…" : title}`
+                    + ` (workspace ${sp.idx ?? "?"}${sp.output ? " on " + sp.output : ""}${w.focused ? ", focused" : ""}${w.floating ? ", floating" : ""})`;
+            });
     }
     // The configured prompt without its presentation sections ("## Presentation",
     // "## Formatting"…, up to the next "## " heading).
