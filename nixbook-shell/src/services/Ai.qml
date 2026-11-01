@@ -745,7 +745,11 @@ Singleton {
                 : "\n\nYou are Muse, answering in the desktop shell's side panel: keep answers short, and don't narrate each step while you work; never write notes or plans to yourself in the chat. A tool's reply already says whether it worked: don't call another tool to check, and call independent steps together in one message.")
             + (privacy ? " " + root.privacyPrompt : "")
             + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
-            + (desktop ? " You can see and drive the user's desktop with the desktop tools." : "")
+            + (desktop ? " You can see and drive the user's desktop with the desktop tools."
+                // The user's rule: headless first, input last.
+                + " Do what you're asked the most direct way that needs no mouse or keyboard: a tool made for it (an MCP server's, the desktop tools that act without input: page_*, discord, ui_act, the window and shell tools"
+                + (shellTools.length > 0 ? ", or a command" : "")
+                + "); type, press keys or click only when none can, and the keyboard before the mouse." : "")
             // Autonomy (ai.autonomy): standing orders and background tasks are
             // tools of the desktop server; turning an order on is the user's click.
             + (desktop && (Config.options.ai.autonomy?.orders ?? true)
