@@ -16990,10 +16990,10 @@ def t_page_read(ctx, args):
               "action": {"type": "string", "enum": PAGE_ACTIONS},
               "value": {"type": "string"}, "append": {"type": "boolean"}}, ["name", "action"])}}),
     destructive=True,
-    brief=("Act on an element in the page (no pointer or keys): click, type (`value`; `append` adds), "
-           "select, check, submit, press (a key), focus, scroll. Give `ref` and `name` as read, or the name "
-           "alone; the reply says what changed; `steps` for several. No password fields."),
-    props={"target": None, "name": None},
+    brief=("Act in the page (no pointer or keys): click, type (`value`, `append`), select, check, submit, "
+           "press, focus, scroll. `name` as read (`ref` too, or not); says what changed; `steps`: several. "
+           "No password fields."),
+    props={"target": None, "name": None, "steps": {"type": "array", "items": {"type": "object"}}},
 )
 def t_page_act(ctx, args):
     steps = args.get("steps")
