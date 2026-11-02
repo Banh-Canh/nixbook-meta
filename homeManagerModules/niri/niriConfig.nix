@@ -977,6 +977,13 @@ in
                   "smartClipboard"
                   "run"
                 ];
+                # Read this to me: the window in front read out loud (its
+                # page, its accessibility tree, else its picture read by the
+                # vision model); again: stops.
+                "Mod+Alt+R" = [
+                  "voice"
+                  "readFocused"
+                ];
                 # "Next up": do the step the chip beside the mascot offers
                 # (nothing when none is offered).
                 "Mod+Shift+Return" = [

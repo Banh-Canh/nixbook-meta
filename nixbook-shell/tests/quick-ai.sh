@@ -143,6 +143,15 @@ expect_eq "broker: a rewrite without the activity" "text|teh text||yes" "$(cat "
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x40\x00\x00\x00\x20\x08\x02\x00\x00\x00' >"$tmp/region.png"
 ask extract "{\"mode\": \"extract\", \"image\": \"$tmp/region.png\", \"lang\": \"en\"}"
 expect_eq "broker: not for a text copied out of an image" "" "$(cat "$tmp/broker.log")"
+# Accessibility: an image described as alt text, a window read out (the
+# shell says both answers); no broker, the image sent.
+ask describe "{\"mode\": \"describe\", \"image\": \"$tmp/region.png\", \"lang\": \"en\"}"
+expect_contains_ "describe: an alt text asked for" "$(tail -n1 "$tmp/requests.log")" "as alt text"
+expect_contains_ "describe: with the image" "$(tail -n1 "$tmp/requests.log")" '"type": "image"'
+ask readwin "{\"mode\": \"read\", \"image\": \"$tmp/region.png\", \"lang\": \"en\"}"
+expect_contains_ "read: the window's text, controls left out" "$(tail -n1 "$tmp/requests.log")" "leave out menus, toolbars, buttons"
+expect_eq "describe, read: no broker" "" "$(cat "$tmp/broker.log")"
+expect_eq "modes: describe and read listed" "true true" "$(python3 -I "$script" modes | jq -r '[index("describe") != null, index("read") != null] | join(" ")')"
 touch "$tmp/broker-off"
 ask nobroker '{"mode": "ask", "question": "NOBROKER what time is it?", "facts": "Time: 10:42", "lang": "en"}'
 expect_contains_ "broker: without it, the request's own facts" "$(grep NOBROKER "$tmp/requests.log" | tail -n1)" "Time: 10:42"
@@ -345,6 +354,7 @@ for a; do case "\$a" in --vits-model=*) m="\${a#*=}" ;; --output-filename=*) o="
 case "\$1" in --*) ;; *) echo "not an option first: \$1" >&2; exit 255 ;; esac
 case "\${@: -1}" in -*) echo "unknown option \${@: -1}" >&2; exit 255 ;; *FAIL*) echo "it broke" >&2; exit 3 ;; esac
 echo "tts \$(basename "\$(dirname "\$m")") \${@: -1}" >>"$tmp/speak.log"; echo raw >"\$o"
+echo "\$*" >>"$tmp/speak-args.log"
 EOF
 cat >"$tmp/sbin/ffmpeg" <<EOF
 #!/usr/bin/env bash
@@ -377,6 +387,18 @@ expect_eq "speak: natural = no cute chain" "" "$(grep -E '^rubberband|asetrate' 
 : >"$tmp/speak.log"
 sp -- "No style asked for."
 expect_contains_ "speak: natural is the default" "$(grep '^ffmpeg' "$tmp/speak.log" | head -n1)" "aexciter"
+expect_contains_ "speak: the natural voice a touch quicker by default" "$(tail -n1 "$tmp/speak-args.log")" "--vits-length-scale=0.970"
+# The reading speed (ai.accessibility.readSpeed): VITS' durations, the voice kept.
+sp --rate 1.5 -- "A little faster."
+expect_contains_ "speak --rate: faster, shorter durations" "$(tail -n1 "$tmp/speak-args.log")" "--vits-length-scale=0.647"
+NIXBOOK_VOICE_RATE=0.1 sp --style cute -- "Much slower."
+expect_contains_ "speak: the rate from the environment, kept within 0.5" "$(tail -n1 "$tmp/speak-args.log")" "--vits-length-scale=2.000"
+sp --rate fast -- "Unreadable rate."
+expect_contains_ "speak: an unreadable rate is 1" "$(tail -n1 "$tmp/speak-args.log")" "--vits-length-scale=0.970"
+# Read this to me: a window's text, longer than an answer (--max-chars).
+long=$(python3 -c 'print(" ".join(["This sentence is part of a long page."] * 60))')
+expect_eq "speak: an answer cut at 900 characters" True "$(vs "len(m.speakable(\"$long\", \"en\")) <= 900")"
+expect_eq "speak: --max-chars, a whole page" "${#long}" "$(vs "len(m.speakable(\"$long\", \"en\", 20000))")"
 : >"$tmp/speak.log"
 sp -- "-5 degrees outside."
 expect_eq "speak: a sentence never starts with a dash (an option to sherpa-onnx)" "tts en five degrees outside." "$(grep '^tts' "$tmp/speak.log")"

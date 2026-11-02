@@ -91,6 +91,11 @@
       "style": "natural",
       "addressee": "all"
     },
+    "accessibility": {
+      "voiceOnly": false,
+      "readSpeed": 1.0,
+      "largeText": false
+    },
     "agent": {
       "allowedTools": ["WebSearch", "WebFetch"],
       "asComputer": true,

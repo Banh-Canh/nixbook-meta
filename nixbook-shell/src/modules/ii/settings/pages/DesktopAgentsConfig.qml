@@ -111,7 +111,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("One place to talk to the AI: Muse's speech bubble (Mod+C, or Mod+T to talk). Plain commands (music, volume, an app, a layout…) are done at once; anything else by Muse's agent, kept running for the bubble on the quick model below, with the desktop tools, each step in the bubble, with Allow / No before anything risky. Expand the bubble to go on in the side panel: the same conversation, the same agent session. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
+                text: Translation.tr("One place to talk to the AI: Muse's speech bubble (Mod+C, or Mod+T to talk). Plain commands (music, volume, an app, a layout…) are done at once; anything else by Muse's agent, kept running for the bubble on the quick model below, with the desktop tools, each step in the bubble, with Allow / No before anything risky. Expand the bubble to go on in the side panel: the same conversation, the same agent session. The screenshot app (Print) has Ask AI (its toolbar, or A): the region then gets What's this, Describe, Explain, Summarize, Translate or Copy text in the bubble. Mod+K: Kiroshi scan, a brief of what is going on and what it can handle for you. Also \"!\" in the launcher and the AI buttons on notifications.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -219,6 +219,60 @@ ContentPage {
                 color: Appearance.colors.colSubtext
                 font.pixelSize: Appearance.font.pixelSize.small
                 text: Translation.tr("Meta's MMS voices, on this computer, in English or French (from the answer's language). Mod+T or Escape stops it. The microphone doesn't hear it.")
+            }
+            // Accessibility (services/Accessibility.qml): Read this to me,
+            // Describe, the voice-only preset, the reading speed, larger text.
+            ContentSubsection {
+                title: Translation.tr("Accessibility")
+
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    text: Translation.tr("Read this to me: Mod+Alt+R (or \"read this\" in the bubble) reads the window in front out loud: a page in Zen or a bridged app through the page, other apps through their accessibility tree, else a picture of it read by the vision model. Again, Mod+T or Escape stops it. Describe: \"describe this\" in the bubble, or the Describe chip of the screenshot app's Ask AI, says an alt-text description of a window or a region. Terminals and password managers are never read.")
+                }
+                GroupedList {
+                    ConfigSwitch {
+                        configKey: "ai.accessibility.voiceOnly"
+                        enabled: !nixManaged && Config.options.ai.quick.enable
+                        buttonIcon: "hearing"
+                        text: Translation.tr("Voice-only control (Full AI mode at login, every answer and question said, the conversation kept open, larger text)")
+                        checked: Config.options.ai.accessibility?.voiceOnly ?? false
+                        onCheckedChanged: Accessibility.setVoiceOnly(checked)
+                    }
+                    ConfigSwitch {
+                        configKey: "ai.accessibility.largeText"
+                        enabled: !nixManaged && !Accessibility.voiceOnly
+                        buttonIcon: "format_size"
+                        text: Translation.tr("Larger text in Muse's bubble")
+                        checked: Accessibility.largeText
+                        onCheckedChanged: if (Config.options.ai.accessibility && !Accessibility.voiceOnly) Config.options.ai.accessibility.largeText = checked
+                    }
+                }
+                ConfigSelectionArray {
+                    configKey: "ai.accessibility.readSpeed"
+                    text: Translation.tr("Reading speed (every answer, and Read this to me)")
+                    icon: "speed"
+                    currentValue: Number(Config.options.ai.accessibility?.readSpeed ?? 1)
+                    onSelected: newValue => { if (Config.options.ai.accessibility) Config.options.ai.accessibility.readSpeed = newValue }
+                    options: [
+                        { displayName: "0.6×", icon: "slow_motion_video", value: 0.6 },
+                        { displayName: "0.8×", icon: "speed", value: 0.8 },
+                        { displayName: Translation.tr("Normal"), icon: "record_voice_over", value: 1 },
+                        { displayName: "1.25×", icon: "speed", value: 1.25 },
+                        { displayName: "1.5×", icon: "fast_forward", value: 1.5 },
+                        { displayName: "1.8×", icon: "fast_forward", value: 1.8 }
+                    ]
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    SmallButton {
+                        materialIcon: "volume_up"
+                        mainText: Voice.reading ? Translation.tr("Stop") : Translation.tr("Hear the speed")
+                        onClicked: Voice.reading ? Voice.stopSpeaking() : Voice.readAloud(Translation.tr("This is how fast Muse reads to you."))
+                    }
+                }
             }
             ConfigSelectionArray {
                 configKey: "ai.voice.addressee"

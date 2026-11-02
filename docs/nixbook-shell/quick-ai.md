@@ -25,7 +25,7 @@ is replayed).
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Mod+C`                       | **The bubble**: type a question or an order.                                                                                                                                                                                        |
 | `Mod+T` (or the bubble's mic) | **Talk.** Say what you want and stop talking: it is done. With Meta, your voice is streamed to Muse Voice Transcribe and your words show in the bubble's field as you speak; otherwise whisper.cpp transcribes it on this computer. |
-| The screenshot app (`Print`)  | **Ask AI** (its toolbar button, or `A`): draw a region, pick a window or a screen; the bubble offers What's this, Explain, Summarize, Translate, **Copy text** (the text in the image), or type any question about it.              |
+| The screenshot app (`Print`)  | **Ask AI** (its toolbar button, or `A`): draw a region, pick a window or a screen; the bubble offers What's this, Describe, Explain, Summarize, Translate, **Copy text** (the text in the image), or type any question about it.    |
 | `Mod+K`                       | **Kiroshi scan**: a brief of what you are in the middle of and what needs you, and the tasks it can handle for you (see below).                                                                                                     |
 | `!` in the launcher           | A question or an order. A query that reads like a question also gets an **Ask AI** row.                                                                                                                                             |
 | Notification buttons          | **Summarize**, and **Suggest replies** on messages: the replies are buttons in the bubble, sent in one click when the app takes inline replies, otherwise copied and the conversation opened.                                       |
@@ -564,6 +564,59 @@ Settings > Desktop agents > Talk to your desktop > _Voice transcribed by_:
   CPU (about a second for a short sentence on a Radeon 680M).
 - **Auto** (the default): Meta when it is the model provider, otherwise this
   computer.
+
+## Accessibility
+
+Settings > Desktop agents > Talk to your desktop > _Accessibility_
+(`ai.accessibility`).
+
+**Read this to me** — `Mod+Alt+R`, or say or type "read this", "read this to
+me", "lis-moi ça", "lies das vor", "đọc cái này" in Muse's bubble: the window
+in front is read out loud, from the top, at your reading speed. Where the text
+comes from, first that works:
+
+1. a page in Zen or in an app nixbook bridges (Discord, Slack, YouTube Music,
+   Actual Budget): through the page itself, the text you selected if any, else
+   the page's text;
+2. any other app: its accessibility tree, what screen readers see — the
+   document of a web view or an editor first, else the window's labels,
+   paragraphs and list items in reading order, with the links in their
+   sentences and images by their description; its buttons, menus, fields and
+   other tabs' pages left out;
+3. an app that gives neither (a game, a video, a canvas): a picture of the
+   window, read by the vision model (its main content, in reading order),
+   shown in the bubble and said as it ends. Only with AI features on.
+
+`Mod+Alt+R` again, `Mod+T`, or `Esc` in the bubble stops it. It reads even
+when Muse's voice is muted (you asked for it), up to 20 000 characters, in
+English or French (MMS's voices). In a conversation, "read it to me" reads
+Muse's last answer instead. Terminals, password managers and password prompts
+are never read (nor captured). What is read from the page or the tree goes
+only to the speakers: no model sees it. From a script:
+`nixbook-shell ipc call voice readFocused`, and `nixbook-desktop-mcp read-aloud`
+prints it (the user's own command: refused to agents).
+
+**Describe this** — "describe this", "describe the screen", "décris ça",
+"beschreib das", "mô tả màn hình" in the bubble (or
+`nixbook-shell ipc call voice describeFocused`): the window in front is
+described like an image's alt text (what it is and shows first, then the
+details that matter and the text in it), shown in the bubble and said out
+loud. For part of the screen: `Print`, drag over it, _Ask AI_, then the
+**Describe** chip.
+
+**Voice-only control** — a preset for using the desktop without looking at
+it: Full AI mode starts at login (Muse listens all the time;
+`Mod+Shift+T` leaves it), every answer is said (_Read the answers out_:
+_Always_), the conversation stays open (_Talk back and forth_), every
+question Muse asks before a step ("May I …?") is said and answered by voice,
+and the bubble's text is larger. Turning it on changes those settings (not the
+ones set in Nix) and remembers them; turning it off puts them back.
+
+**Reading speed** (`ai.accessibility.readSpeed`, 0.6× to 1.8×): how fast Muse
+speaks, every answer and Read this to me (MMS's durations, the voice itself
+unchanged; `nixbook-voice-speak --rate`). _Hear the speed_ tries it.
+**Larger text in Muse's bubble** (`ai.accessibility.largeText`): its words and
+field 30 % larger, the bubble wider.
 
 ## Meeting companion
 

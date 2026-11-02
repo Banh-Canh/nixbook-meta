@@ -53,6 +53,8 @@ ShellRoot {
         // call them before any of their panels was opened.
         QuickAi.load()
         Voice.load()
+        // Read this to me, and the voice-only preset's Full AI mode at login.
+        Accessibility.load()
         Kiroshi.load()
         NixOnboarding.load()
         FullAi.load()

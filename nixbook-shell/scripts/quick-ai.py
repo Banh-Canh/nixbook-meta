@@ -71,9 +71,18 @@ MODES = {
     "do": "The user tells you what to do on their desktop, or asks something. Do it with the tools.",
     "extract": "Write out all the text below exactly as it is, keeping its lines and order. Output only that "
                "text, nothing before or after it.",
+    # Accessibility (the shell says both answers out loud): an image
+    # described for someone who can't see it, and a window read to them.
+    "describe": "Describe the image for someone who can't see it, as alt text: first, in one sentence, what it "
+                "is and shows; then the details that matter, in two to four short sentences (people and what "
+                "they do, the text written in it, numbers, colours or layout only when they matter). Plain "
+                "sentences to be read aloud: no list, no Markdown, no preamble.",
+    "read": "The image is a window of the user's screen. Write out the text a person would read aloud from it, "
+            "in reading order: its main content first; leave out menus, toolbars, buttons and other controls. "
+            "Plain text, nothing before or after it.",
 }
 # The modes whose answer replaces the selection: the text alone.
-TEXT_ONLY = {"translate", "rewrite", "fix", "extract"}
+TEXT_ONLY = {"translate", "rewrite", "fix", "extract", "read"}
 
 SYSTEM = (
     "You are the instant assistant built into the user's desktop (nixbook, a NixOS desktop). The user "
@@ -156,7 +165,7 @@ def build(req):
     # What the desktop knows (the broker: facts, corrections, preferences,
     # memory): not for a text copied out of an image; the text's own
     # rewrites without what the user just did.
-    known = "" if mode == "extract" else broker(
+    known = "" if mode in ("extract", "read", "describe") else broker(
         "text", question or text[:300], ctx.get("app") or "", ctx.get("title") or "", no_activity=mode in TEXT_ONLY)
     if not known and mode == "ask":
         known = str(req.get("facts") or "").strip()[:2000]

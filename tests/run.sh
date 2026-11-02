@@ -133,6 +133,8 @@ cmd_shell() {
   bash nixbook-shell/tests/page.sh || failed=1
   section "nixbook-shell Actual Budget adapter (the budget tool, read only)"
   bash nixbook-shell/tests/actual.sh || failed=1
+  section 'nixbook-shell "Read this to me" (nixbook-desktop-mcp read-aloud)'
+  bash nixbook-shell/tests/read-aloud.sh || failed=1
   section "jellyfin-mcp (customPkgs) against a fake Jellyfin"
   bash customPkgs/jellyfin-mcp/tests/test.sh || failed=1
   section "nixbook-shell accounts backend (nixbook-accounts)"

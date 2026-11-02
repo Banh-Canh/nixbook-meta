@@ -12713,6 +12713,19 @@ def niri_silent_capture():
 
 def screenshot_window(ctx, wid):
     w = window_by_id(wid)
+    path, size = capture_window_file(ctx, wid)
+    info = (
+        f"Window {wid} ({w.get('app_id')}: {w.get('title')!r}), captured whole"
+        + (f", {size[0]}x{size[1]} pixels" if size else "")
+        + ". For pointer coordinates, take a monitor screenshot."
+    )
+    return screenshot_reply(ctx, path, info)
+
+
+def capture_window_file(ctx, wid, max_edge=None):
+    """A window, whole, wherever it is, as a file in the runtime directory
+    (0600; JPEG unless screenshotFormat is png, at most max_edge pixels, by
+    default screenshotMaxEdge): (path, its size before scaling)."""
     silent = niri_silent_capture()
     # Without --silent niri also puts the capture in the clipboard (no way
     # around that): keep what was there to put it back.
@@ -12741,7 +12754,7 @@ def screenshot_window(ctx, wid):
         if saved:
             wl_copy(saved[1], saved[0])
     size = png_size(data)
-    max_edge = int(ctx.cfg.get("screenshotMaxEdge", 1280))
+    max_edge = int(max_edge or ctx.cfg.get("screenshotMaxEdge", 1280))
     if shutil.which("magick"):
         # Scaled down to the size limit, and to JPEG unless PNG is asked for.
         out = path
@@ -12759,12 +12772,7 @@ def screenshot_window(ctx, wid):
             os.unlink(path)
             os.chmod(out, 0o600)
             path = out
-    info = (
-        f"Window {wid} ({w.get('app_id')}: {w.get('title')!r}), captured whole"
-        + (f", {size[0]}x{size[1]} pixels" if size else "")
-        + ". For pointer coordinates, take a monitor screenshot."
-    )
-    return screenshot_reply(ctx, path, info)
+    return path, size
 
 
 def screenshot_reply(ctx, path, info):
@@ -16333,6 +16341,229 @@ def t_ui_read(ctx, args):
         return [text(head + "\n" + ("nothing matches" if find else "no element showing"))]
     more = "\n… (more: raise max_elements or use find)" if truncated else ""
     return [text(head + "\n" + ui_listing(w, found, frame_path) + more)]
+
+
+# --------------------------------------------------------------------------
+# Read this to me (the user's own: Mod+Alt+R, the shell's `voice
+# readFocused`, "read this" in Muse's bubble): the window in front as text,
+# for nixbook-voice-speak to say. A page in Zen or a bridged app through the
+# page itself; other apps through their accessibility tree, the content in
+# reading order (a document's text, labels, paragraphs, list items; their
+# buttons, menus, fields and tab strips left out); with --capture, when
+# neither has text, a capture of the window for the shell to hand to the
+# vision model. What is read here goes to the user's ears only (no model, no
+# privacy mask: they read it on their own screen); the CLI command is the
+# user's (USER_ONLY_COMMANDS), never an agent's.
+# --------------------------------------------------------------------------
+
+READ_ALOUD_MAX = 20000
+ZEN_APP_IDS = re.compile(r"^(zen|zen[-_.]?(browser|twilight|beta|alpha|bin)|app\.zen_browser\.zen)$", re.I)
+# The bridged apps' windows, by their niri app id.
+BRIDGED_APP_IDS = (("discord", re.compile(r"vesktop|discord", re.I)), ("slack", re.compile(r"slack", re.I)),
+                   ("youtube-music", re.compile(r"youtube.?music|pear", re.I)),
+                   ("actual", re.compile(r"actual", re.I)))
+# A window's controls and chrome, not its content: never read out.
+READ_SKIP_ROLES = {"menu bar", "menu", "menu item", "check menu item", "radio menu item", "tool bar", "status bar",
+                   "push button", "toggle button", "check box", "radio button", "combo box", "entry",
+                   "password text", "spin button", "slider", "scroll bar", "page tab list", "tool tip", "popup menu",
+                   "switch", "terminal"}
+READ_DOC_ROLES = {"document web", "document frame", "document text", "document email", "document spreadsheet",
+                  "document presentation"}
+# Elements whose text is a block of its own (a line break around it).
+READ_BLOCK_ROLES = {"paragraph", "heading", "list item", "section", "table row", "block quote", "article",
+                    "caption", "label", "form", "list", "table", "footer", "header", "landmark", "comment",
+                    "document web", "document frame", "document text", "description list", "description term",
+                    "description value", "note", "alert", "notification"}
+
+
+def read_aloud_target(app_id):
+    """The page tool reaching this window: "zen", a bridged app (its socket
+    open), or None."""
+    if ZEN_APP_IDS.match(app_id or ""):
+        return "zen"
+    bridged = set(bridged_apps())
+    for app, rx in BRIDGED_APP_IDS:
+        if app in bridged and rx.search(app_id or ""):
+            return app
+    return None
+
+
+def read_aloud_text(pieces):
+    """The pieces collected (text, "\n" between blocks) as lines to read."""
+    lines = []
+    for line in "".join(pieces).split("\n"):
+        line = " ".join(line.replace("￼", " ").split())
+        if line and (not lines or lines[-1] != line):
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def read_aloud_collect(Atspi, root, cap=READ_ALOUD_MAX):
+    """A window's (or document's) content in reading order: a node's text
+    with each embedded object (U+FFFC: a link, a block inside it) replaced
+    by that child's own content, the children of a node without text one
+    after the other. Hidden elements and, outside a document, those not
+    showing (another tab's page) are left out."""
+    pieces, budget = [], {"chars": 0, "visits": 0}
+    deadline = time.monotonic() + UI_TIMEOUT_S
+
+    def add(t):
+        pieces.append(t)
+        budget["chars"] += len(t)
+
+    def walk(node, depth, in_doc):
+        budget["visits"] += 1
+        if budget["chars"] > cap or budget["visits"] > UI_MAX_VISITS * 2 or depth > 80 \
+                or time.monotonic() > deadline:
+            return
+        try:
+            states = node.get_state_set()
+            role = node.get_role_name() or ""
+            count = node.get_child_count()
+        except Exception:
+            return
+        if depth and not states.contains(Atspi.StateType.VISIBLE):
+            return
+        if depth and not in_doc and not states.contains(Atspi.StateType.SHOWING):
+            return
+        if role in READ_SKIP_ROLES:
+            return
+        in_doc = in_doc or role in READ_DOC_ROLES
+        block = role in READ_BLOCK_ROLES
+        if block:
+            add("\n")
+        text_ = None
+        try:
+            if node.get_text_iface() is not None:
+                n = Atspi.Text.get_character_count(node)
+                text_ = Atspi.Text.get_text(node, 0, min(n, cap)) or ""
+        except Exception:
+            text_ = None
+        if text_ is not None and (text_.strip(" ￼\n") or "￼" in text_):
+            parts = text_.split("￼")
+            for i, part in enumerate(parts):
+                add(part)
+                if i < len(parts) - 1 and i < count:
+                    try:
+                        child = node.get_child_at_index(i)
+                    except Exception:
+                        child = None
+                    if child is not None:
+                        walk(child, depth + 1, in_doc)
+        else:
+            if role == "image" and in_doc:
+                try:
+                    name = (node.get_name() or "").strip()
+                except Exception:
+                    name = ""
+                if name:
+                    add(f" Image: {name}. ")
+            for i in range(min(count, 500)):
+                try:
+                    child = node.get_child_at_index(i)
+                except Exception:
+                    continue
+                if child is not None:
+                    walk(child, depth + 1, in_doc)
+        if block:
+            add("\n")
+
+    walk(root, 0, False)
+    return read_aloud_text(pieces)[:cap]
+
+
+def read_aloud_document(Atspi, frame):
+    """The window's main document (a web view, an editor's text), when it
+    has one showing: read rather than the whole window."""
+    queue, seen = [frame], 0
+    while queue and seen < 3000:
+        node = queue.pop(0)
+        seen += 1
+        try:
+            role = node.get_role_name() or ""
+            if seen > 1 and role in READ_DOC_ROLES and node.get_state_set().contains(Atspi.StateType.SHOWING):
+                return node
+            count = node.get_child_count()
+        except Exception:
+            continue
+        for i in range(min(count, 200)):
+            try:
+                child = node.get_child_at_index(i)
+            except Exception:
+                continue
+            if child is not None:
+                queue.append(child)
+    return None
+
+
+def ui_read_aloud(w):
+    Atspi = atspi()
+    _, frame = ui_frame(Atspi, w)
+    doc = read_aloud_document(Atspi, frame)
+    if doc is not None:
+        t = read_aloud_collect(Atspi, doc)
+        if len(t) >= 20:
+            return t
+    return read_aloud_collect(Atspi, frame)
+
+
+def read_aloud(cfg, wid=None, capture=False, picture=False):
+    """{app, title, window, source: zen|<bridged app>|accessibility|screen|none,
+    text | image, why?}; ToolError when the window is off limits. picture:
+    only the capture (Describe this)."""
+    ctx = Context(cfg, "cli", "Read aloud", notify=False)
+    w = window_by_id(wid) if wid is not None else focused_window()
+    if not w:
+        raise ToolError("no window in front to read")
+    app = w.get("app_id") or ""
+    head = {"app": app, "title": w.get("title") or "", "window": w.get("id")}
+    if PASSWORD_APP_NAMES.search(app):
+        raise ToolError("a password manager is never read out")
+    # Terminals, password managers, password prompts: refused as ui_read does.
+    ui_window(ctx, {"window_id": w.get("id")})
+    if picture:
+        path, _ = capture_window_file(ctx, w.get("id"), max_edge=1800)
+        return {**head, "source": "screen", "image": path}
+    tried = []
+    target = read_aloud_target(app)
+    if target and not app_refused(ctx, target):
+        try:
+            kw = {"text": True, "chars": READ_ALOUD_MAX, "max": 10}
+            r = zen(ctx, "read", **kw) if target == "zen" else electron(ctx, target, "read", **kw)
+            sel = str(r.get("selection") or "").strip()
+            t = sel or str(r.get("text") or "").strip()
+            if t:
+                return {**head, "source": target, "selection": bool(sel), "text": t[:READ_ALOUD_MAX]}
+            tried.append(f"{target}: no text")
+        except ToolError as e:
+            tried.append(f"{target}: {e}")
+    try:
+        t = ui_read_aloud(w)
+        if t:
+            return {**head, "source": "accessibility", "text": t}
+        tried.append("accessibility: no text")
+    except (ToolError, UiElsewhere) as e:
+        tried.append(f"accessibility: {e}")
+    if capture:
+        path, _ = capture_window_file(ctx, w.get("id"), max_edge=1800)
+        return {**head, "source": "screen", "image": path}
+    return {**head, "source": "none", "why": "; ".join(tried)[:400]}
+
+
+def read_aloud_command(cfg, argv):
+    wid = None
+    if "--window" in argv:
+        try:
+            wid = int(argv[argv.index("--window") + 1])
+        except (IndexError, ValueError):
+            print(USAGE, end="", file=sys.stderr)
+            return 2
+    try:
+        out = read_aloud(cfg, wid, capture="--capture" in argv, picture="--picture" in argv)
+    except ToolError as e:
+        out = {"error": str(e)}
+    print(json.dumps(out, ensure_ascii=False))
+    return 1 if out.get("error") else 0
 
 
 def ui_listing(w, found, frame_path=None):
@@ -21794,7 +22025,9 @@ USER_ONLY_COMMANDS = {("resume",), ("notify", "off"), ("notify", "toggle"), ("pr
                       # feeds, answers, seeds or clears it.
                       ("predict", "observe"), ("predict", "feedback"), ("predict", "seed"), ("predict", "clear"),
                       ("predict", "unmute"),
-                      ("privacy", "clear"), ("sent", "clear")}
+                      ("privacy", "clear"), ("sent", "clear"),
+                      # The window's text, unmasked, for the user's ears.
+                      ("read-aloud",)}
 # Commands that may take seconds (a model's answer, a tool to undo): on a
 # thread of their own on stdin too, so the shell's quick ones aren't held.
 HELPER_THREADED = {("order", "add"), ("journal", "undo")}
@@ -22078,6 +22311,11 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
                           user's own processes ({"id", "argv", "stdin"} lines)
   tools                   the enabled tools, as MCP JSON
   call NAME [JSON]        run one tool; prints its text, exit 1 on refusal
+  read-aloud [--window ID] [--capture | --picture]
+                          the window in front (or ID) as text to read out (JSON: source
+                          zen|<app>|accessibility, text; --capture: a capture of it,
+                          source screen, image, when it has no text; --picture: only
+                          the capture, to describe); the user's only
   episode JSON|-          a task done by a client without MCP ({task, app, actions:
                           [{tool, do, error, app?}]}; app: the focused window's): to
                           the memory's learning pass
@@ -22282,6 +22520,8 @@ def main(argv):
             and agent_environment():
         print(f"refused: only the user can do this ({' '.join(argv[:2])})", file=sys.stderr)
         return 126
+    if cmd == "read-aloud":
+        return read_aloud_command(cfg, argv[1:])
     if cmd == "pause":
         try:
             os.unlink(allowed_flag())

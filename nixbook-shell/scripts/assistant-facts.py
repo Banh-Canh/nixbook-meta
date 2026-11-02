@@ -63,6 +63,11 @@ IPC = {
         "lancer la première action du presse-papiers intelligent pour ce que vous venez de copier (suivre un colis, ajouter une date à l'agenda, traduire…)",
         "die erste Aktion der intelligenten Zwischenablage für das gerade Kopierte ausführen (Paket verfolgen, Termin eintragen, übersetzen…)",
         "chạy hành động đầu tiên của bộ nhớ tạm thông minh cho thứ bạn vừa sao chép (theo dõi bưu kiện, thêm ngày vào lịch, dịch…)"),
+    ("voice", "readFocused"): t(
+        "read the window in front out loud (Read this to me: a page, an app's text, or its picture read by the vision model); again: stop",
+        "lire à voix haute la fenêtre au premier plan (Lis-moi ça : une page, le texte d'une application, ou son image lue par le modèle de vision) ; à nouveau : arrêter",
+        "das Fenster im Vordergrund laut vorlesen (Lies das vor: eine Seite, der Text einer App oder ihr Bild, gelesen vom Bildmodell); erneut: anhalten",
+        "đọc to cửa sổ phía trước (Đọc cái này cho tôi: một trang, chữ của ứng dụng, hoặc ảnh của nó do mô hình thị giác đọc); nhấn lại: dừng"),
     ("predict", "accept"): t(
         "do the next step Muse offers in its \"Next: …\" chip beside the mascot (Next up)",
         "faire l'étape suivante que Muse propose dans sa pastille « Ensuite : … » à côté de la mascotte (Ensuite)",
