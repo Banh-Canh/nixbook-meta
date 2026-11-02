@@ -1738,6 +1738,192 @@ ContentPage {
             }
         }
 
+        // The daily brief (services/DailyBrief.qml), the reply batch
+        // (services/ReplyBatch.qml), the phone handoff (services/PhoneHandoff.qml).
+        ContentSection {
+            icon: "wb_twilight"
+            title: Translation.tr("Daily brief")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("One card in Muse's bubble when your day starts (the first time you're at the computer today): today's events, the tasks due, who waits for a reply, the weather. And in the evening a recap: what Muse did for you today, the tasks done and left, how tomorrow starts. The facts are gathered on this computer; one small-model call words them, masked like everything sent. Once a day each, never during Do Not Disturb, a meeting or a fullscreen window: it waits. \"Brief me\" or \"recap my day\" in the bubble asks for one now.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.brief.morning"
+                    buttonIcon: "wb_sunny"
+                    text: Translation.tr("Morning brief")
+                    checked: Config.options.ai.brief.morning
+                    onCheckedChanged: Config.options.ai.brief.morning = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.brief.evening"
+                    buttonIcon: "bedtime"
+                    text: Translation.tr("End-of-day recap")
+                    checked: Config.options.ai.brief.evening
+                    onCheckedChanged: Config.options.ai.brief.evening = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.brief.speak"
+                    buttonIcon: "record_voice_over"
+                    text: Translation.tr("Read it out when the voice says answers on its own (always, or Full AI mode)")
+                    checked: Config.options.ai.brief.speak
+                    onCheckedChanged: Config.options.ai.brief.speak = checked
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                StyledText {
+                    text: Translation.tr("Recap at (HH:MM)")
+                    color: Appearance.colors.colOnLayer1
+                }
+                MaterialTextField {
+                    id: eveningAt
+                    Layout.preferredWidth: 110
+                    enabled: !NixManaged.isPinned("ai.brief.eveningAt") && Config.options.ai.brief.evening
+                    text: Config.options.ai.brief.eveningAt
+                    placeholderText: "18:00"
+                    onEditingFinished: {
+                        const m = /^(\d{1,2}):(\d{2})$/.exec(text.trim())
+                        if (m && Number(m[1]) < 24 && Number(m[2]) < 60)
+                            Config.options.ai.brief.eveningAt = `${m[1].padStart(2, "0")}:${m[2]}`
+                        else text = Config.options.ai.brief.eveningAt
+                    }
+                }
+                NixManagedBadge {
+                    pinned: NixManaged.isPinned("ai.brief.eveningAt")
+                }
+                Item { Layout.fillWidth: true }
+                SmallButton {
+                    enabled: !DailyBrief.running
+                    materialIcon: "wb_sunny"
+                    mainText: Translation.tr("Brief me now")
+                    onClicked: DailyBrief.run("morning", true)
+                }
+                SmallButton {
+                    enabled: !DailyBrief.running
+                    materialIcon: "bedtime"
+                    mainText: Translation.tr("Recap now")
+                    onClicked: DailyBrief.run("evening", true)
+                }
+            }
+        }
+
+        ContentSection {
+            icon: "quickreply"
+            title: Translation.tr("Reply drafts")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("The messages waiting for your answer (those you can answer from the notification, Discord DMs through nixbook's bridge, chat apps with a Reply button), each with a draft by Muse, in one card: Send, Edit or Skip. Nothing is ever sent without your click on Send, and only as your own reply where the message came from; an app taking no typed reply gets the draft copied and its conversation opened. Drafting sends the messages to the model, masked. \"Help me reply\" in the bubble opens it.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.replies.enable"
+                    buttonIcon: "quickreply"
+                    text: Translation.tr("Reply drafts")
+                    checked: Config.options.ai.replies.enable
+                    onCheckedChanged: Config.options.ai.replies.enable = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.replies.offer"
+                    buttonIcon: "chat_bubble"
+                    enabled: !nixManaged && Config.options.ai.replies.enable
+                    text: Translation.tr("Offer it in the bubble when two or more messages wait")
+                    checked: Config.options.ai.replies.offer
+                    onCheckedChanged: Config.options.ai.replies.offer = checked
+                }
+                ConfigSwitch {
+                    configKey: "ai.replies.prepare"
+                    buttonIcon: "edit_note"
+                    enabled: !nixManaged && Config.options.ai.replies.enable && Config.options.ai.replies.offer
+                    text: Translation.tr("Have the drafts ready before offering (the messages go to the model before you ask)")
+                    checked: Config.options.ai.replies.prepare
+                    onCheckedChanged: Config.options.ai.replies.prepare = checked
+                }
+            }
+            ConfigSelectionArray {
+                configKey: "ai.replies.model"
+                text: Translation.tr("Model that drafts the replies")
+                icon: "edit"
+                currentValue: Config.options.ai.replies.model
+                onSelected: newValue => { Config.options.ai.replies.model = newValue }
+                options: [
+                    { displayName: Translation.tr("Small (fastest)"), icon: "bolt", value: "small" },
+                    { displayName: Translation.tr("Main"), icon: "balance", value: "main" },
+                    { displayName: Translation.tr("Big (Muse Wonder)"), icon: "psychology", value: "big" }
+                ]
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    text: ReplyBatch.waiting === 1 ? Translation.tr("One message waits for a reply now.")
+                        : Translation.tr("%1 messages wait for a reply now.").arg(ReplyBatch.waiting)
+                }
+                SmallButton {
+                    enabled: ReplyBatch.enabled
+                    materialIcon: "quickreply"
+                    mainText: Translation.tr("Help me reply")
+                    onClicked: ReplyBatch.show()
+                }
+            }
+        }
+
+        ContentSection {
+            icon: "phone_forwarded"
+            title: Translation.tr("Phone handoff")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("When you step away (the screen locked, or no input) while Muse waits for your answer or your OK, a background task needs you, or a reminder or an event comes within the hour, one message to your phone through KDE Connect. Only what your lock screen would show: what kind of thing waits and when, never its text. Again only if something new waits; nothing during Do Not Disturb, a fullscreen window or with desktop control paused.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.handoff.enable"
+                    buttonIcon: "phone_forwarded"
+                    text: Translation.tr("Send what waits to my phone when I step away")
+                    checked: Config.options.ai.handoff.enable
+                    onCheckedChanged: Config.options.ai.handoff.enable = checked
+                }
+            }
+            ConfigSpinBox {
+                configKey: "ai.handoff.afterMinutes"
+                icon: "timer"
+                text: Translation.tr("Away for (minutes)")
+                value: Config.options.ai.handoff.afterMinutes
+                from: 1; to: 120; stepSize: 1
+                onValueChanged: Config.options.ai.handoff.afterMinutes = value
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    text: PhoneHandoff.device ? Translation.tr("Sends to %1.").arg(PhoneHandoff.device.name)
+                        : Translation.tr("No phone reachable: pair one in KDE Connect (the bar's Phone Connect).")
+                }
+                SmallButton {
+                    enabled: PhoneHandoff.device !== null
+                    materialIcon: "send_to_mobile"
+                    mainText: Translation.tr("Send a test")
+                    onClicked: KdeConnect.sendNote(PhoneHandoff.device.id, Translation.tr("Muse: the phone handoff works."))
+                }
+            }
+        }
+
         // services/SelfImprove.qml, nixbook-improve: only where Nix made it
         // available (programs.nixbook-shell.selfImprove.enable).
         ContentSection {

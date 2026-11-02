@@ -21,6 +21,7 @@ import qs.modules.ii.overview
 import qs.modules.ii.polkit
 import qs.modules.ii.settings
 import qs.modules.ii.regionSelector
+import qs.modules.ii.replies
 import qs.modules.ii.screenCorners
 import qs.modules.ii.screenTranslator
 import qs.modules.ii.sessionScreen
@@ -80,6 +81,8 @@ Scope {
     PanelLoader { component: SmartClipboardChips {} }
     PanelLoader { component: FullAiOverlay {} }
     PanelLoader { component: MeetingCaptions {} }
+    // The reply batch's card (services/ReplyBatch.qml): built the first time it opens.
+    PanelLoader { component: ReplyBatchWindow {} }
     // Muse's visible cursor: mapped the first time an agent acts, so above the popups.
     PanelLoader { component: AgentCursorOverlay {} }
     // "Next up": one chip beside the desktop mascot, mapped only while offering.

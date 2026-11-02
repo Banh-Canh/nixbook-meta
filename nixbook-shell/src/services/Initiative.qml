@@ -337,7 +337,7 @@ Singleton {
         // What they were on before the break (ai.initiative.recentContext).
         const recent = RecentContext.enabled && awayMinutes >= 10 ? RecentContext.snapshot(root._awaySince || Date.now()) : []
         root.consider({ event: "back", away: Math.round(awayMinutes), events: events, tasksDue: Todo.dueTodayCount,
-                        open: WM.windowList.map(w => w.appId), recent: recent })
+                        open: WM.windowList.map(w => w.appId), recent: recent, ownBrief: DailyBrief.morningOn })
     }
 
     // Curiosity (ai.initiative.curious): it watches what is in front (app and
@@ -752,6 +752,11 @@ Singleton {
             } else GlobalStates.openTasksPanel("")
         } else if (a.do === "journal") {
             Autonomy.openJournal()
+        } else if (a.do === "replies") {
+            const why = ReplyBatch.show()
+            if (why) Quickshell.execDetached(["notify-send", "-a", "Muse", "Muse", why])
+        } else if (a.do === "brief") {
+            DailyBrief.act(a)
         } else if (a.do === "tasks_list") {
             MuseTasks.openList()
         } else if (a.do === "settings") {
@@ -939,6 +944,21 @@ Singleton {
         item.text = String(item.text ?? "").slice(0, 1000)
         root._local(item)
         root._say(item)
+    }
+    // The daily brief's cards and the reply batch's offer (DailyBrief.qml,
+    // ReplyBatch.qml): made here, whether or not the initiative is on (the
+    // user turned them on in their own settings), with their buttons.
+    function briefWord(w) {
+        const t = Date.now()
+        const item = Object.assign({ id: Qt.md5(`brief|${w.text}|${t}`).slice(0, 12), level: "notify", title: "Muse",
+                                     time: t / 1000, expires: t / 1000 + (w.offer ? 30 * 60 : 6 * 3600) }, w)
+        item.text = String(item.text ?? "").slice(0, 2000)
+        root._local(item)
+        if (root.busy()) {
+            item.level = "badge"
+            root.pending = [...root.pending, item]
+            root._feed(item)
+        } else root._say(item)
     }
     // The day's line about what Muse did yesterday (Autonomy.daySummary):
     // a quiet word, the journal one click away.

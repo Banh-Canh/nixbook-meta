@@ -73,6 +73,11 @@ ShellRoot {
         NextUp.load()
         // "While you were away": watching for the user leaving from the start.
         AwaySummary.load()
+        // The daily brief (its day-start and evening cards), the reply
+        // batch (its offer, the `replies` target), the phone handoff.
+        DailyBrief.load()
+        ReplyBatch.load()
+        PhoneHandoff.load()
     }
     
     PanelFamilyLoader {

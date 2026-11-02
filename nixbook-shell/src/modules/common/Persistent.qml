@@ -92,6 +92,9 @@ Singleton {
                 // the others, until "Got it". Its caption window's place
                 // (-1: the default, top centre).
                 property bool meetingConsentShown: false
+                // The daily brief's day marks (YYYY-MM-DD): once a day each.
+                property string briefMorningDay: ""
+                property string briefEveningDay: ""
                 // Full AI mode's "Was that for me?" taps (services/
                 // Addressee.qml): the last words it wrongly took for
                 // someone else's, given to the model as examples.

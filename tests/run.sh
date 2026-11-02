@@ -135,6 +135,8 @@ cmd_shell() {
   bash nixbook-shell/tests/find-anything.sh || failed=1
   section 'nixbook-shell "While you were away" (nixbook-desktop-mcp away)'
   bash nixbook-shell/tests/away.sh || failed=1
+  section "nixbook-shell daily brief, reply drafts, phone handoff"
+  bash nixbook-shell/tests/brief.sh || failed=1
   section "nixbook-shell page code (Zen and the Electron apps)"
   bash nixbook-shell/tests/page.sh || failed=1
   section "nixbook-shell Actual Budget adapter (the budget tool, read only)"

@@ -190,8 +190,10 @@ Scope {
             out.push({ label: Translation.tr("No thanks"), main: false, run: () => Initiative.hush("dismissed") })
         }
         // A watch the user asked for, the journal's line, the meeting
-        // companion's, the away card: seen, nothing to silence.
-        if (it.id && (it.kind === "watch" || it.kind === "journal" || it.kind === "meeting" || it.kind === "away"))
+        // companion's, the away card, the daily brief's, the reply drafts'
+        // offer: seen, nothing to silence (their own settings turn them off).
+        if (it.id && (it.kind === "watch" || it.kind === "journal" || it.kind === "meeting" || it.kind === "away"
+                || it.kind === "dailyBrief" || it.kind === "replies"))
             out.push({ label: it.offer ? Translation.tr("Not now") : Translation.tr("OK"), main: out.length === 0,
                        run: () => Initiative.hush("later") })
         else if (it.id) {
