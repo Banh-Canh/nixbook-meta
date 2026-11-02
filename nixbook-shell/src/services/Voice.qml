@@ -169,7 +169,7 @@ Singleton {
         function onPendingChanged() {
             // A step waiting for an OK: asked out loud, answered by voice
             // (yes / no).
-            if (!QuickAi.pending || !(root.session || root.voiceTurn || FullAi.active)) return;
+            if (!QuickAi.pending || !(root.session || root.voiceTurn || FullAi.active || Accessibility.voiceOnly)) return;
             const what = QuickAi.pending.tool.replace(/_/g, " ") + (QuickAi.pending.summary ? `, ${QuickAi.pending.summary}` : "");
             if (!root.speak(Translation.tr("May I %1?").arg(what))) relisten.restart();
         }
@@ -187,6 +187,12 @@ Singleton {
     property bool voiceTurn: false
     readonly property string speakMode: Config.options.ai.voice?.speak ?? "voice"
     readonly property string voiceStyle: Config.options.ai.voice?.style ?? "natural"
+    // How fast it speaks (ai.accessibility.readSpeed, Settings' Reading
+    // speed): nixbook-voice-speak --rate, the voice kept.
+    readonly property string speechRate: String(Math.max(0.5, Math.min(2, Number(Config.options.ai.accessibility?.readSpeed ?? 1) || 1)))
+    // Reading a window out (Read this to me, Accessibility.readFocused):
+    // the key again, Mod+T or Escape stops it.
+    property bool reading: false
     // ai.quick.bubble "needed": talking to it, the bubble stays out of sight
     // (Initiative.quiet), the answers said out loud (or in Full AI's
     // mascot); not when nothing would say them.
@@ -280,6 +286,7 @@ Singleton {
         if (!rest.trim()) return false;
         root._remember(rest);
         root.stopSpeaking(false);
+        root.reading = false;
         speaker.part = 0;
         speaker.total = 0;
         speaker.text = rest;
@@ -290,6 +297,23 @@ Singleton {
         // reopen and turned `speaking` off mid-line, so the stream's echo
         // guard let Muse's own voice through as an order).
         speaker.queued = speaker.running;
+        speaker.running = true;
+        return true;
+    }
+    // Read out because the user asked (Read this to me, a description of an
+    // image): even with Muse's voice muted, never left out as "already
+    // said", up to a whole page (--max-chars).
+    function readAloud(text) {
+        const t = String(text ?? "").trim();
+        if (!t) return false;
+        root.stopSpeaking(false);
+        speaker.part = 0;
+        speaker.total = 0;
+        speaker.text = t;
+        speaker.wanted = true;
+        speaker.reopen = root._holdMic();
+        speaker.queued = speaker.running;
+        root.reading = true;
         speaker.running = true;
         return true;
     }
@@ -339,6 +363,7 @@ Singleton {
     // byUser: Mod+T, Escape (the rest of the answer being streamed isn't
     // read out either); not when it only makes way for something else to say.
     function stopSpeaking(byUser = true) {
+        root.reading = false;
         if (speaker.running) {
             speaker.wanted = false;
             speaker.signal(15);
@@ -585,7 +610,8 @@ Singleton {
         // Where this process's text starts in the answer (a turn can need a
         // second one): its {"upto"} counts from there.
         property int base: 0
-        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" --stream', "_", root.voiceStyle]
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" --rate "$2" --stream', "_",
+            root.voiceStyle, root.speechRate]
         stdout: SplitParser {
             onRead: data => {
                 let o = null;
@@ -664,8 +690,8 @@ Singleton {
                 }
             }
         }
-        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" -- "$2"', "_",
-            root.voiceStyle, speaker.text]
+        command: ["bash", "-c", 'exec setpriv --pdeathsig TERM nixbook-voice-speak --style "$1" --rate "$2" '
+            + '--max-chars "$3" -- "$4"', "_", root.voiceStyle, root.speechRate, root.reading ? "20000" : "900", speaker.text]
         stderr: StdioCollector { id: speakerErr }
         onExited: (code) => {
             if (speaker.queued) {
@@ -674,6 +700,7 @@ Singleton {
             }
             const again = speaker.reopen;
             speaker.reopen = false;
+            root.reading = false;
             root._spoken(code, speaker.wanted, again, speakerErr.text, streamSpeaker.running);
             // The answer being streamed waited for it: read on.
             if (speaker.wanted) root._feed();
@@ -681,6 +708,11 @@ Singleton {
     }
 
     function toggle() {
+        // Reading a window out (Read this to me): Mod+T stops it.
+        if (root.reading) {
+            root.stopSpeaking();
+            return;
+        }
         // Full AI mode: Mod+T mutes or unmutes the always-open microphone.
         if (FullAi.active) {
             // Talking or working: Mod+T stops it and listens; else mutes.
@@ -1141,12 +1173,17 @@ Singleton {
         function mute(): void { root.setMuted(true); }
         function unmute(): void { root.setMuted(false); }
         function toggleMute(): string { root.toggleMute(); return root.muted ? "muted" : "speaking: " + root.speakMode; }
+        // Read this to me: the window in front read out (again: stop), and
+        // a description of it (alt text, said out loud).
+        function readFocused(): void { Accessibility.readFocused(); }
+        function describeFocused(): void { Accessibility.describeFocused(); }
         // A recording sent as if it had just been said (16 kHz mono WAV;
         // the file is deleted afterwards).
         function transcribe(path: string): void { root.transcribeFile(path); }
         function status(): string {
             return JSON.stringify({ available: root.available, engine: root.engine, listening: root.listening,
                 session: root.session, source: root.source, speaking: root.speaking, speak: root.speakMode,
+                reading: root.reading, rate: Number(root.speechRate),
                 transcribing: root.transcribing, heard: root.heard, level: root.level, partial: root.partial,
                 error: root.error, last: root.lastText });
         }

@@ -65,6 +65,9 @@ Scope {
         : root.accent
     readonly property string font: root.style === "cyberpunk" ? Cyberpunk.font
         : root.style === "ghibli" ? Ghibli.titleFont : Appearance.font.family.main
+    // Larger text (ai.accessibility.largeText, the voice-only preset): the
+    // words and the field scaled, the bubble wider to keep its lines.
+    readonly property real textScale: Accessibility.textScale
     readonly property bool square: root.style === "cyberpunk" || root.style === "persona"
     readonly property real radius: root.style === "chiikawa" ? 28 : root.style === "ghibli" ? 16
         : root.style === "material" ? Appearance.rounding.large : 0
@@ -234,7 +237,7 @@ Scope {
             top: window.barTop ? Appearance.sizes.barHeight + 6 : 12
             left: window.barLeft ? Appearance.sizes.verticalBarWidth + 6 : 12
         }
-        implicitWidth: 404
+        implicitWidth: 28 + card.width
         implicitHeight: stackColumn.y + stackColumn.implicitHeight + 24
         onVisibleChanged: if (!visible && !window.remapping) {
             window.grab = false
@@ -292,7 +295,7 @@ Scope {
                 visible: root.item !== null && !Initiative.quiet
                 x: 12
                 y: 14
-                width: 376
+                width: Math.round(376 * (1 + (root.textScale - 1) * 0.6))
                 implicitHeight: body.implicitHeight + 28
                 opacity: 0
                 transform: Translate { id: slide; x: -60 }
@@ -564,7 +567,7 @@ Scope {
                         textFormat: Text.PlainText // its words may quote third-party text
                         text: root.item?.text || root.item?.offer?.say || ""
                         font.family: root.font
-                        font.pixelSize: Appearance.font.pixelSize.normal
+                        font.pixelSize: Math.round(Appearance.font.pixelSize.normal * root.textScale)
                         color: root.fg
                     }
 
@@ -588,7 +591,7 @@ Scope {
                         id: talk
                         Layout.fillWidth: true
                         visible: root.conversing && !threadList.visible
-                        implicitHeight: Math.min(lines.implicitHeight, 300)
+                        implicitHeight: Math.min(lines.implicitHeight, 300 * root.textScale)
                         contentHeight: lines.implicitHeight
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
@@ -629,7 +632,7 @@ Scope {
                                             : (said => said === null ? root.plain(line.modelData.rawContent || line.modelData.content)
                                                 : root.plain(said))(Voice.shownText(line.modelData))
                                         font.family: root.font
-                                        font.pixelSize: line.mine ? Appearance.font.pixelSize.small : Appearance.font.pixelSize.normal
+                                        font.pixelSize: Math.round((line.mine ? Appearance.font.pixelSize.small : Appearance.font.pixelSize.normal) * root.textScale)
                                         color: root.fg
                                     }
                                 }
@@ -1017,6 +1020,7 @@ Scope {
                                     color: root.fg
                                     placeholderTextColor: Qt.alpha(root.fg, 0.5)
                                     font.family: root.font
+                                    font.pixelSize: Math.round(Appearance.font.pixelSize.small * root.textScale)
                                     placeholderText: FullAi.active ? (Voice.listening ? Translation.tr("Listening… (Esc leaves Full AI)")
                                             : Translation.tr("Full AI: talk to it (Mod+T: mic)"))
                                         : Voice.listening ? (Voice.session ? Translation.tr("Listening… (say \"that's all\" to stop)")

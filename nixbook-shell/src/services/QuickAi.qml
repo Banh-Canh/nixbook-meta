@@ -31,7 +31,7 @@ import QtQuick
  * The bubble reads the state below whichever answers: busy, the step
  * waiting for an OK (`pending`), the steps (Full AI's mascot), the report,
  * and `chips` under the answer: Allow / No, the suggested replies, the
- * modes of a screen region (What's this, Explain, Summarize, Translate,
+ * modes of a screen region (What's this, Describe, Explain, Summarize, Translate,
  * Copy text), Copy. Text goes through desktop-mcp's privacy mask on the way.
  */
 Singleton {
@@ -107,6 +107,9 @@ Singleton {
         do: Translation.tr("Do it"),
         screen: Translation.tr("What's this?"),
         extract: Translation.tr("Copy text"),
+        // Accessibility: said out loud as they end (finish).
+        describe: Translation.tr("Describe"),
+        read: Translation.tr("Read it to me"),
     })
 
     function owns(chat) {
@@ -139,7 +142,7 @@ Singleton {
             out.push({ label: r, main: out.length === 0, run: () => root.sendReply(r) });
         if (out.length > 0) return out;
         if (root.convo.image && !root.agentMode) {
-            for (const m of ["screen", "explain", "summarize", "translate", "extract"])
+            for (const m of ["screen", "describe", "explain", "summarize", "translate", "extract"])
                 if (m !== root.convo.mode || root.answer.length === 0)
                     out.push({ label: root.modeInfo[m], main: out.length === 0 && root.answer.length === 0, run: () => root.run(m) });
         }
@@ -424,6 +427,14 @@ Singleton {
         root.convo = { mode: "screen", image: path, question: "", context: root.focusedApp(), start: chat.messageIDs.length };
         root.addShot(chat, Translation.tr("📷 A region of the screen: what do you want to know?"), "user");
     }
+    // A window's picture read out or described (Accessibility.qml: Read this
+    // to me when the app shows no text, Describe this): the vision model's
+    // answer in the bubble, said out loud as it ends.
+    function readImage(path, mode = "read", label = "") {
+        if (!root.available) return root.refuse();
+        const m = mode === "describe" ? "describe" : "read";
+        root.begin({ mode: m, image: path, question: "" }, label || root.modeInfo[m]);
+    }
     // The screenshot app in its Ask AI action.
     function askScreen() {
         if (!root.available) return root.refuse();
@@ -666,6 +677,14 @@ Singleton {
         m.thinking = false;
         m.done = true;
         m.model = root.model;
+        // An image described, a window read: said out loud (asked for, so
+        // even with Muse's voice muted), once (not again as the turn's answer).
+        if ((root.convo.mode === "describe" || root.convo.mode === "read") && root.shotAnswer.length > 0
+                && root.shotError.length === 0) {
+            Voice._markRead(m);
+            Voice._remember(root.shotAnswer);
+            Voice.readAloud(root.shotAnswer);
+        }
         // What the conversation showed about the user: the same memory pass
         // as the side panel's chats, once it goes quiet.
         if (root.chat) root.chat.queueMemoryPass();

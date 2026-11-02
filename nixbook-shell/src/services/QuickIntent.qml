@@ -18,9 +18,11 @@ import QtQuick
  * mode, Do Not Disturb, night light, a screenshot, locking the screen, a
  * timer or a pomodoro, a saved window layout, a task added, the shell's
  * settings, the meeting companion started or stopped ("take notes"), a
- * theme by its mood ("make my desktop calmer and cozier": ThemeMoods). In
- * English, French, German and Vietnamese (`_english` turns the three others
- * into the English commands first; the moods are read in each language).
+ * theme by its mood ("make my desktop calmer and cozier": ThemeMoods), the
+ * window in front read out or described ("read this", "describe the
+ * screen": Accessibility.qml). In English, French, German and Vietnamese
+ * (`_english` turns the three others into the English commands first; the
+ * moods are read in each language).
  *
  * Strict patterns only: anything else, or anything unsure (an app it can't
  * name for sure, two windows of the app to close), goes to Muse as before.
@@ -61,6 +63,8 @@ Singleton {
     // close / switch-to ones.
     readonly property var _phrases: [
         // ── French ──
+        [/^(?:lis|lisez)(?:-(?:moi|nous))?(?: (?:ça|ca|cela|ceci|cette (?:page|fen[eê]tre)|la (?:page|fen[eê]tre)|l'[eé]cran|le texte))?(?: [àa] (?:voix haute|haute voix))?$/, "read this"],
+        [/^(?:d[eé]cris|d[eé]crivez)(?:-moi)? (?:ça|ca|cela|ceci|cette (?:image|fen[eê]tre|page)|l'(?:image|[eé]cran)|la (?:fen[eê]tre|page))$/, "describe this"],
         [/^(?:mets?|met) (?:la )?(?:musique|chanson|lecture) en pause$|^(?:mets|fais) pause(?: (?:la|à la) musique)?$|^pause (?:la|sur la) musique$/, "pause the music"],
         [/^(?:mets? )?en pause$/, "pause"],
         [/^(?:reprends?|relance|remets|joue|lance|mets) (?:la )?(?:musique|lecture|chanson)$/, "play the music"],
@@ -100,6 +104,8 @@ Singleton {
         [/^(?:ferme|quitte) (?:l'|le |la |les |mon |ma )?(.+)$/, "close $1"],
         [/^(?:va sur|passe (?:à|sur)|bascule (?:sur|vers)|affiche|montre(?:-moi)?) (?:l'|le |la |mon |ma )?(.+)$/, "switch to $1"],
         // ── German ──
+        [/^(?:lies|lese)(?: mir)?(?: (?:das|dies|diese seite|dieses fenster|den bildschirm|den text))? vor$|^(?:das )?vorlesen$/, "read this"],
+        [/^(?:beschreib|beschreibe)(?: mir)? (?:das|dies|dieses bild|das bild|den bildschirm|dieses fenster)$/, "describe this"],
         [/^(?:pausiere|pausier|halte|stoppe|stopp) (?:die )?musik(?: an)?$|^(?:die )?musik (?:pausieren|anhalten|stoppen)$/, "pause the music"],
         [/^pausieren$|^anhalten$/, "pause"],
         [/^(?:spiel|spiele) (?:die )?musik(?: ab| weiter)?$|^(?:die )?musik (?:abspielen|fortsetzen|weiterspielen)$/, "play the music"],
@@ -138,6 +144,8 @@ Singleton {
         [/^(?:schlie(?:ß|ss)e?|beende) (?:das |die |den |mein |meine )?(.+)$|^(.+) (?:schlie(?:ß|ss)en|beenden)$/, "close $1$2"],
         [/^(?:wechsle|wechsel|geh|gehe) (?:zu|zum|zur) (?:dem |der )?(.+)$|^zeig(?:e)? (?:mir )?(?:das |die |den )?(.+)$/, "switch to $1$2"],
         // ── Vietnamese ──
+        [/^[dđ][oọ]c (?:c[aá]i n[aà]y|trang n[aà]y|m[aà]n h[iì]nh|c[uử]a s[oổ] n[aà]y|to)(?: cho (?:t[oô]i|m[iì]nh|em) nghe)?$|^[dđ][oọ]c cho (?:t[oô]i|m[iì]nh|em) nghe$/, "read this"],
+        [/^m[oô] t[aả] (?:c[aá]i n[aà]y|h[iì]nh n[aà]y|[aả]nh n[aà]y|m[aà]n h[iì]nh|c[uử]a s[oổ] n[aà]y)$/, "describe this"],
         [/^(?:t[aạ]m d[uừ]ng|d[uừ]ng) (?:nh[aạ]c|b[aà]i h[aá]t|b[aà]i)$/, "pause the music"],
         [/^t[aạ]m d[uừ]ng$/, "pause"],
         [/^(?:ph[aá]t|b[aậ]t|m[oở]) (?:ti[eế]p )?(?:nh[aạ]c|b[aà]i h[aá]t)$|^ti[eế]p t[uụ]c ph[aá]t nh[aạ]c$/, "play the music"],
@@ -199,6 +207,23 @@ Singleton {
         if (raw.length === 0 || raw.length > 80 || raw.includes("\n")) return null;
         const t = root._english(root._clean(raw));
         if (t.length === 0) return null;
+        // ── Read this to me / describe this (Accessibility.qml) ── before
+        // the "it/that" rule: "this" is the window in front; in a
+        // conversation, "read it / that to me" is Muse's last answer.
+        if (/^read(?: (?:it|that|this|this page|this window|the page|the window|the screen|my screen|the text|this text|me this|me that|me it))?(?: (?:to me|for me))?(?: (?:out loud|aloud))?$/.test(t)
+                && (t !== "read" || !inConversation)) {
+            const answer = Voice.lastAnswer();
+            if (inConversation && /\b(it|that)\b/.test(t) && answer) {
+                Voice.readAloud(answer);
+                return root._done(Translation.tr("Reading it out loud."));
+            }
+            Accessibility.readFocused();
+            return root._done(Translation.tr("Reading the window in front out loud (Mod+Alt+R or Mod+T stops)."));
+        }
+        if (/^describe(?: (?:this|that|it|this image|the image|this picture|the picture|this window|the window|the screen|my screen|what's on (?:the|my) screen))(?: (?:to me|for me))?$/.test(t)) {
+            Accessibility.describeFocused();
+            return root._done(Translation.tr("Describing the window in front."));
+        }
         // In a conversation, nothing pointing back at it.
         if (inConversation && root._deictic(t)) return null;
         // Bare commands ("pause", "next", "louder"): only when nothing is

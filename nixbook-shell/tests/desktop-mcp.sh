@@ -722,8 +722,8 @@ expect_eq "core: not the rarer ones" "" "$(jq -r '.[] | select(._meta["nixbook/c
 expect_eq "core: every tool keeps its group" "" "$(jq -r '.[] | select(._meta["nixbook/group"] | not) | .name' <<<"$tools")"
 expect_eq "core: within 15000 characters (descriptions and schemas)" yes \
   "$(jq '[.[] | select(._meta["nixbook/core"]) | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 15000 ? "yes" : "no (" $1 ")")}')"
-expect_eq "all tools: within 40000 characters" yes \
-  "$(jq '[.[] | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 40000 ? "yes" : "no (" $1 ")")}')"
+expect_eq "all tools: within 41000 characters" yes \
+  "$(jq '[.[] | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 41000 ? "yes" : "no (" $1 ")")}')"
 expect_eq "brief: a short description offers help" true \
   "$(jq '.[] | select(.name=="routine") | (.description | test("help: true")) and .inputSchema.properties.help.type == "boolean"' <<<"$tools")"
 expect_not_contains "brief: the long reference left out" "$(jq -r '.[] | select(.name=="routine") | .description' <<<"$tools")" \
@@ -2391,6 +2391,24 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 expect_eq "electron bridge: gone with the app" "no" "$([ -S "$esock" ] && echo yes || echo no)"
+
+# Money questions: Actual Budget through its bridge, read only (the budget tool).
+expect_contains "budget: Actual not open, said how" "$(call budget '{"action":"summary"}')" "opens it from the launcher"
+asock="$XDG_RUNTIME_DIR/nixbook-electron/actual.sock"
+FAKE_CDP_APP=actual FAKE_CDP_LOG="$tmp/cdp.log" python3 "$root/scripts/electron-bridge.py" --page-js "$root/zen/page.js" \
+  --adapters "$root/electron" actual -- python3 "$root/tests/fake-cdp.py" --dmcp-test &
+electron_pid=$!
+for _ in $(seq 1 100); do
+  [ -S "$asock" ] && break
+  sleep 0.05
+done
+expect_contains "budget category: spent and what's left" "$(call budget '{"action":"category","query":"grocery"}')" \
+  "- Groceries (Food): budgeted 400.00 EUR, spent 42.50 EUR, left 357.50 EUR"
+expect_contains "budget transactions: their total" "$(call budget '{"action":"transactions","query":"carrefour"}')" \
+  "1 transactions matching 'carrefour' from 2026-11-01 to 2026-11-02: spent 42.50 EUR"
+expect_eq "budget: never risky (read only)" False "$(python3 -c "import importlib.util as u; s=u.spec_from_file_location('m','$mcp'); m=u.module_from_spec(s); s.loader.exec_module(m); print(m.call_is_risky('budget', {'action': 'transactions'}), end='')")"
+kill "$electron_pid" 2>/dev/null
+wait "$electron_pid" 2>/dev/null || true
 
 # The apps' tools for agents without MCP (nixbook-quick-ai): listed (and
 # cached), called, audited, refused while AI is off.

@@ -12,8 +12,8 @@ sherpa-onnx), on this computer, in one of two styles (ai.voice.style):
     younger character), then the pitch raised again keeping the timbre
     (clear, not a chipmunk), a touch of treble, and a bouncier pace.
 
-  nixbook-voice-speak [--lang auto|en|fr] [--style cute|natural] [--file WAV] TEXT…
-  nixbook-voice-speak --stream [--lang …] [--style …]   the text on stdin as
+  nixbook-voice-speak [--lang auto|en|fr] [--style cute|natural] [--rate R] [--max-chars N] [--file WAV] TEXT…
+  nixbook-voice-speak --stream [--lang …] [--style …] [--rate R]   the text on stdin as
                        it is written (an answer streaming in): each sentence
                        spoken as soon as it is complete, out at EOF after
                        the last
@@ -22,6 +22,11 @@ Sentence after sentence: the first is heard while the next ones are made.
 The text is made speakable first (no Markdown, code, links or emoji;
 numbers spelled out: MMS reads letters only). SIGTERM / SIGINT stop it at
 once (the key, Escape). --file writes one WAV instead of playing (tests).
+--max-chars N: longer than an answer's 900 characters (Read this to me:
+a window's text, up to READ_MAX).
+--rate R (or NIXBOOK_VOICE_RATE): how fast it speaks, 0.5 to 2 (1: as
+made; Settings' Reading speed, ai.accessibility.readSpeed): VITS' length
+scale, so the pitch and the voice stay the same.
 NIXBOOK_MMS_VOICES: a folder with en/ and fr/ (model.onnx, tokens.txt).
 """
 
@@ -38,13 +43,29 @@ import threading
 
 VOICES = os.environ.get("NIXBOOK_MMS_VOICES", "")
 MAX_CHARS = 900
+READ_MAX = 20000
 # The cute chain, per voice (MMS's English voice speaks around 134 Hz, the
 # French one around 107 Hz): (raise with the timbre, raise keeping it).
 CUTE = {"en": (1.35, 1.5), "fr": (1.4, 1.55)}
 PACE = 1.08
 # The natural style: VITS sampling (sherpa-onnx's defaults are 0.667, 0.8, 1)
 # and the polish after it.
-NATURAL_VITS = ["--vits-noise-scale=0.55", "--vits-noise-scale-w=0.7", "--vits-length-scale=0.97"]
+NATURAL_VITS = ["--vits-noise-scale=0.55", "--vits-noise-scale-w=0.7"]
+# VITS' length scale (durations; sherpa-onnx's default 1): the natural style
+# a touch quicker. Divided by the rate asked for.
+LENGTH = {"natural": 0.97, "cute": 1.0}
+RATE_MIN, RATE_MAX = 0.5, 2.0
+
+
+def rate_of(value):
+    """The speed asked for (--rate, NIXBOOK_VOICE_RATE), within RATE_MIN..RATE_MAX; 1 when unreadable."""
+    try:
+        r = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if r != r:  # NaN
+        return 1.0
+    return max(RATE_MIN, min(RATE_MAX, r))
 POLISH = ("aresample=48000:resampler=soxr,highpass=f=85,equalizer=f=280:t=q:w=1.2:g=-3,"
           "equalizer=f=3300:t=q:w=1.0:g=3.5,aexciter=amount=2:drive=6:freq=3500:blend=0,highshelf=f=7000:g=2,"
           "acompressor=threshold=0.12:ratio=3:attack=8:release=120:makeup=1.6,aecho=0.85:0.6:28|47:0.10|0.07,"
@@ -97,7 +118,10 @@ def language(text):
     return "fr" if fr > len(EN.findall(text)) else "en"
 
 
-def speakable(text, lang):
+def speakable(text, lang, limit=None):
+    """The text as MMS can say it, cut at `limit` characters (MAX_CHARS: an
+    answer; --max-chars: a window read out)."""
+    limit = limit or MAX_CHARS
     s = str(text)
     s = re.sub(r"```.*?```", " ", s, flags=re.S)
     s = re.sub(r"<think>.*?(</think>|$)", " ", s, flags=re.S)
@@ -123,9 +147,9 @@ def speakable(text, lang):
     s = re.sub(r"\d+", lambda m: words(int(m.group(0))), s)
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\n{2,}", "\n", s).strip()
-    if len(s) > MAX_CHARS:
-        cut = s.rfind(".", 0, MAX_CHARS)
-        s = s[:cut + 1 if cut > MAX_CHARS // 2 else MAX_CHARS]
+    if len(s) > limit:
+        cut = s.rfind(".", 0, limit)
+        s = s[:cut + 1 if cut > limit // 2 else limit]
     return s
 
 
@@ -142,8 +166,9 @@ def sentences(text):
 
 
 class Speaker:
-    def __init__(self, lang, style, tmp):
+    def __init__(self, lang, style, tmp, rate=1.0):
         self.lang, self.style, self.tmp = lang, style, tmp
+        self.rate = rate_of(rate)
         self.model = os.path.join(VOICES, lang)
         self.procs = []
         self.stopped = False
@@ -169,6 +194,7 @@ class Speaker:
         natural = self.style != "cute"
         self.run(["sherpa-onnx-offline-tts", f"--vits-model={self.model}/model.onnx",
                   f"--vits-tokens={self.model}/tokens.txt", "--num-threads=2", *(NATURAL_VITS if natural else []),
+                  f"--vits-length-scale={LENGTH['natural' if natural else 'cute'] / self.rate:.3f}",
                   f"--output-filename={raw}", text])
         if natural:
             out = os.path.join(self.tmp, f"voice{self.n}.wav")
@@ -281,7 +307,7 @@ def read_pieces(stream):
         yield chunk
 
 
-def stream_main(lang, style):
+def stream_main(lang, style, rate=1.0):
     """--stream: sentences spoken as they arrive on stdin."""
     for tool in ("sherpa-onnx-offline-tts", "ffmpeg", "rubberband-r3", "pw-play"):
         if not shutil.which(tool):
@@ -292,7 +318,7 @@ def stream_main(lang, style):
     pending = queue.Queue()
     failed = []
     with tempfile.TemporaryDirectory(prefix="nixbook-voice-") as tmp:
-        sp = Speaker(lang if lang in ("en", "fr") else "en", style, tmp)
+        sp = Speaker(lang if lang in ("en", "fr") else "en", style, tmp, rate)
         signal.signal(signal.SIGTERM, lambda *_: (sp.stop(), os._exit(0)))
         signal.signal(signal.SIGINT, lambda *_: (sp.stop(), os._exit(0)))
         chosen = {"lang": lang if lang in ("en", "fr") else None, "said": 0}
@@ -381,6 +407,8 @@ def stream_main(lang, style):
 
 def main(argv):
     lang, style, out_file, words = "auto", "natural", None, []
+    rate = os.environ.get("NIXBOOK_VOICE_RATE") or 1.0
+    limit = MAX_CHARS
     streamed = False
     args = list(argv[1:])
     while args:
@@ -391,6 +419,13 @@ def main(argv):
             lang = args.pop(0)[:2].lower()
         elif a == "--style" and args:
             style = args.pop(0)
+        elif a == "--rate" and args:
+            rate = args.pop(0)
+        elif a == "--max-chars" and args:
+            try:
+                limit = max(1, min(READ_MAX, int(args.pop(0))))
+            except ValueError:
+                pass
         elif a == "--file" and args:
             out_file = args.pop(0)
         elif a == "--":
@@ -399,11 +434,11 @@ def main(argv):
         else:
             words.append(a)
     if streamed and not words and not out_file:
-        return stream_main(lang, style)
+        return stream_main(lang, style, rate)
     raw_text = " ".join(words) if words else sys.stdin.read()
     if lang not in ("en", "fr"):
         lang = language(raw_text)
-    text = speakable(raw_text, lang)
+    text = speakable(raw_text, lang, limit)
     if not text:
         return 0
     if not os.path.exists(os.path.join(VOICES, lang, "model.onnx")):
@@ -414,7 +449,7 @@ def main(argv):
             print(f"{tool} isn't installed", file=sys.stderr)
             return 2
     with tempfile.TemporaryDirectory(prefix="nixbook-voice-") as tmp:
-        sp = Speaker(lang, style, tmp)
+        sp = Speaker(lang, style, tmp, rate)
         signal.signal(signal.SIGTERM, lambda *_: (sp.stop(), sys.exit(0)))
         signal.signal(signal.SIGINT, lambda *_: (sp.stop(), sys.exit(0)))
         if out_file:

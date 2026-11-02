@@ -450,6 +450,18 @@ Singleton {
                     // name (or answering its question); "all": every sentence.
                     property string addressee: "all"
                 }
+                // Accessibility (services/Accessibility.qml). voiceOnly: the
+                // voice-only preset (Full AI mode at login, every answer said,
+                // the conversation kept open, every question before a step
+                // said, larger text; turning it off gives back what those
+                // settings were). readSpeed: how fast Muse speaks (0.6–1.8,
+                // its answers and Read this to me, Mod+Alt+R). largeText: the
+                // speech bubble's text larger.
+                property JsonObject accessibility: JsonObject {
+                    property bool voiceOnly: false
+                    property real readSpeed: 1.0
+                    property bool largeText: false
+                }
                 // Muse in the side panel: nixbook-meta-agent (the shell's own
                 // agent, on the model provider: Meta's Model API by default),
                 // the "Muse" model, with the desktop tools

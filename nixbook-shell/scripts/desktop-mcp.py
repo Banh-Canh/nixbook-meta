@@ -13454,6 +13454,19 @@ def niri_silent_capture():
 
 def screenshot_window(ctx, wid):
     w = window_by_id(wid)
+    path, size = capture_window_file(ctx, wid)
+    info = (
+        f"Window {wid} ({w.get('app_id')}: {w.get('title')!r}), captured whole"
+        + (f", {size[0]}x{size[1]} pixels" if size else "")
+        + ". For pointer coordinates, take a monitor screenshot."
+    )
+    return screenshot_reply(ctx, path, info)
+
+
+def capture_window_file(ctx, wid, max_edge=None):
+    """A window, whole, wherever it is, as a file in the runtime directory
+    (0600; JPEG unless screenshotFormat is png, at most max_edge pixels, by
+    default screenshotMaxEdge): (path, its size before scaling)."""
     silent = niri_silent_capture()
     # Without --silent niri also puts the capture in the clipboard (no way
     # around that): keep what was there to put it back.
@@ -13482,7 +13495,7 @@ def screenshot_window(ctx, wid):
         if saved:
             wl_copy(saved[1], saved[0])
     size = png_size(data)
-    max_edge = int(ctx.cfg.get("screenshotMaxEdge", 1280))
+    max_edge = int(max_edge or ctx.cfg.get("screenshotMaxEdge", 1280))
     if shutil.which("magick"):
         # Scaled down to the size limit, and to JPEG unless PNG is asked for.
         out = path
@@ -13500,12 +13513,7 @@ def screenshot_window(ctx, wid):
             os.unlink(path)
             os.chmod(out, 0o600)
             path = out
-    info = (
-        f"Window {wid} ({w.get('app_id')}: {w.get('title')!r}), captured whole"
-        + (f", {size[0]}x{size[1]} pixels" if size else "")
-        + ". For pointer coordinates, take a monitor screenshot."
-    )
-    return screenshot_reply(ctx, path, info)
+    return path, size
 
 
 def screenshot_reply(ctx, path, info):
@@ -17076,6 +17084,229 @@ def t_ui_read(ctx, args):
     return [text(head + "\n" + ui_listing(w, found, frame_path) + more)]
 
 
+# --------------------------------------------------------------------------
+# Read this to me (the user's own: Mod+Alt+R, the shell's `voice
+# readFocused`, "read this" in Muse's bubble): the window in front as text,
+# for nixbook-voice-speak to say. A page in Zen or a bridged app through the
+# page itself; other apps through their accessibility tree, the content in
+# reading order (a document's text, labels, paragraphs, list items; their
+# buttons, menus, fields and tab strips left out); with --capture, when
+# neither has text, a capture of the window for the shell to hand to the
+# vision model. What is read here goes to the user's ears only (no model, no
+# privacy mask: they read it on their own screen); the CLI command is the
+# user's (USER_ONLY_COMMANDS), never an agent's.
+# --------------------------------------------------------------------------
+
+READ_ALOUD_MAX = 20000
+ZEN_APP_IDS = re.compile(r"^(zen|zen[-_.]?(browser|twilight|beta|alpha|bin)|app\.zen_browser\.zen)$", re.I)
+# The bridged apps' windows, by their niri app id.
+BRIDGED_APP_IDS = (("discord", re.compile(r"vesktop|discord", re.I)), ("slack", re.compile(r"slack", re.I)),
+                   ("youtube-music", re.compile(r"youtube.?music|pear", re.I)),
+                   ("actual", re.compile(r"actual", re.I)))
+# A window's controls and chrome, not its content: never read out.
+READ_SKIP_ROLES = {"menu bar", "menu", "menu item", "check menu item", "radio menu item", "tool bar", "status bar",
+                   "push button", "toggle button", "check box", "radio button", "combo box", "entry",
+                   "password text", "spin button", "slider", "scroll bar", "page tab list", "tool tip", "popup menu",
+                   "switch", "terminal"}
+READ_DOC_ROLES = {"document web", "document frame", "document text", "document email", "document spreadsheet",
+                  "document presentation"}
+# Elements whose text is a block of its own (a line break around it).
+READ_BLOCK_ROLES = {"paragraph", "heading", "list item", "section", "table row", "block quote", "article",
+                    "caption", "label", "form", "list", "table", "footer", "header", "landmark", "comment",
+                    "document web", "document frame", "document text", "description list", "description term",
+                    "description value", "note", "alert", "notification"}
+
+
+def read_aloud_target(app_id):
+    """The page tool reaching this window: "zen", a bridged app (its socket
+    open), or None."""
+    if ZEN_APP_IDS.match(app_id or ""):
+        return "zen"
+    bridged = set(bridged_apps())
+    for app, rx in BRIDGED_APP_IDS:
+        if app in bridged and rx.search(app_id or ""):
+            return app
+    return None
+
+
+def read_aloud_text(pieces):
+    """The pieces collected (text, "\n" between blocks) as lines to read."""
+    lines = []
+    for line in "".join(pieces).split("\n"):
+        line = " ".join(line.replace("￼", " ").split())
+        if line and (not lines or lines[-1] != line):
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def read_aloud_collect(Atspi, root, cap=READ_ALOUD_MAX):
+    """A window's (or document's) content in reading order: a node's text
+    with each embedded object (U+FFFC: a link, a block inside it) replaced
+    by that child's own content, the children of a node without text one
+    after the other. Hidden elements and, outside a document, those not
+    showing (another tab's page) are left out."""
+    pieces, budget = [], {"chars": 0, "visits": 0}
+    deadline = time.monotonic() + UI_TIMEOUT_S
+
+    def add(t):
+        pieces.append(t)
+        budget["chars"] += len(t)
+
+    def walk(node, depth, in_doc):
+        budget["visits"] += 1
+        if budget["chars"] > cap or budget["visits"] > UI_MAX_VISITS * 2 or depth > 80 \
+                or time.monotonic() > deadline:
+            return
+        try:
+            states = node.get_state_set()
+            role = node.get_role_name() or ""
+            count = node.get_child_count()
+        except Exception:
+            return
+        if depth and not states.contains(Atspi.StateType.VISIBLE):
+            return
+        if depth and not in_doc and not states.contains(Atspi.StateType.SHOWING):
+            return
+        if role in READ_SKIP_ROLES:
+            return
+        in_doc = in_doc or role in READ_DOC_ROLES
+        block = role in READ_BLOCK_ROLES
+        if block:
+            add("\n")
+        text_ = None
+        try:
+            if node.get_text_iface() is not None:
+                n = Atspi.Text.get_character_count(node)
+                text_ = Atspi.Text.get_text(node, 0, min(n, cap)) or ""
+        except Exception:
+            text_ = None
+        if text_ is not None and (text_.strip(" ￼\n") or "￼" in text_):
+            parts = text_.split("￼")
+            for i, part in enumerate(parts):
+                add(part)
+                if i < len(parts) - 1 and i < count:
+                    try:
+                        child = node.get_child_at_index(i)
+                    except Exception:
+                        child = None
+                    if child is not None:
+                        walk(child, depth + 1, in_doc)
+        else:
+            if role == "image" and in_doc:
+                try:
+                    name = (node.get_name() or "").strip()
+                except Exception:
+                    name = ""
+                if name:
+                    add(f" Image: {name}. ")
+            for i in range(min(count, 500)):
+                try:
+                    child = node.get_child_at_index(i)
+                except Exception:
+                    continue
+                if child is not None:
+                    walk(child, depth + 1, in_doc)
+        if block:
+            add("\n")
+
+    walk(root, 0, False)
+    return read_aloud_text(pieces)[:cap]
+
+
+def read_aloud_document(Atspi, frame):
+    """The window's main document (a web view, an editor's text), when it
+    has one showing: read rather than the whole window."""
+    queue, seen = [frame], 0
+    while queue and seen < 3000:
+        node = queue.pop(0)
+        seen += 1
+        try:
+            role = node.get_role_name() or ""
+            if seen > 1 and role in READ_DOC_ROLES and node.get_state_set().contains(Atspi.StateType.SHOWING):
+                return node
+            count = node.get_child_count()
+        except Exception:
+            continue
+        for i in range(min(count, 200)):
+            try:
+                child = node.get_child_at_index(i)
+            except Exception:
+                continue
+            if child is not None:
+                queue.append(child)
+    return None
+
+
+def ui_read_aloud(w):
+    Atspi = atspi()
+    _, frame = ui_frame(Atspi, w)
+    doc = read_aloud_document(Atspi, frame)
+    if doc is not None:
+        t = read_aloud_collect(Atspi, doc)
+        if len(t) >= 20:
+            return t
+    return read_aloud_collect(Atspi, frame)
+
+
+def read_aloud(cfg, wid=None, capture=False, picture=False):
+    """{app, title, window, source: zen|<bridged app>|accessibility|screen|none,
+    text | image, why?}; ToolError when the window is off limits. picture:
+    only the capture (Describe this)."""
+    ctx = Context(cfg, "cli", "Read aloud", notify=False)
+    w = window_by_id(wid) if wid is not None else focused_window()
+    if not w:
+        raise ToolError("no window in front to read")
+    app = w.get("app_id") or ""
+    head = {"app": app, "title": w.get("title") or "", "window": w.get("id")}
+    if PASSWORD_APP_NAMES.search(app):
+        raise ToolError("a password manager is never read out")
+    # Terminals, password managers, password prompts: refused as ui_read does.
+    ui_window(ctx, {"window_id": w.get("id")})
+    if picture:
+        path, _ = capture_window_file(ctx, w.get("id"), max_edge=1800)
+        return {**head, "source": "screen", "image": path}
+    tried = []
+    target = read_aloud_target(app)
+    if target and not app_refused(ctx, target):
+        try:
+            kw = {"text": True, "chars": READ_ALOUD_MAX, "max": 10}
+            r = zen(ctx, "read", **kw) if target == "zen" else electron(ctx, target, "read", **kw)
+            sel = str(r.get("selection") or "").strip()
+            t = sel or str(r.get("text") or "").strip()
+            if t:
+                return {**head, "source": target, "selection": bool(sel), "text": t[:READ_ALOUD_MAX]}
+            tried.append(f"{target}: no text")
+        except ToolError as e:
+            tried.append(f"{target}: {e}")
+    try:
+        t = ui_read_aloud(w)
+        if t:
+            return {**head, "source": "accessibility", "text": t}
+        tried.append("accessibility: no text")
+    except (ToolError, UiElsewhere) as e:
+        tried.append(f"accessibility: {e}")
+    if capture:
+        path, _ = capture_window_file(ctx, w.get("id"), max_edge=1800)
+        return {**head, "source": "screen", "image": path}
+    return {**head, "source": "none", "why": "; ".join(tried)[:400]}
+
+
+def read_aloud_command(cfg, argv):
+    wid = None
+    if "--window" in argv:
+        try:
+            wid = int(argv[argv.index("--window") + 1])
+        except (IndexError, ValueError):
+            print(USAGE, end="", file=sys.stderr)
+            return 2
+    try:
+        out = read_aloud(cfg, wid, capture="--capture" in argv, picture="--picture" in argv)
+    except ToolError as e:
+        out = {"error": str(e)}
+    print(json.dumps(out, ensure_ascii=False))
+    return 1 if out.get("error") else 0
+
+
 def ui_listing(w, found, frame_path=None):
     """The elements as numbered lines, saved for ui_act's `index` (with the
     window's frame, for the targets ui_act learns)."""
@@ -17723,7 +17954,8 @@ def t_page_list(ctx, args):
         except ToolError as e:
             lines.append(f"{app}: {short(str(e), 120)}")
             continue
-        label = APP_LABELS.get(app, app) + (" (also the discord tool)" if app == "discord" else "")
+        label = APP_LABELS.get(app, app) + {"discord": " (also the discord tool)",
+                                            "actual": " (also the budget tool)"}.get(app, "")
         for p in pages:
             lines.append(f"{app if p.get('main') else app + ':' + str(p.get('id'))} {short(p.get('title') or '', 90)!r} "
                          f"{short(p.get('url') or '', 120)} · {label}")
@@ -18180,6 +18412,131 @@ def t_discord(ctx, args):
         ctx.verified = bool(r.get("reacted"))
         return [text(f"reacted {args.get('emoji')} to message {r.get('id')} in {discord_channel(r.get('channel'))}")]
     raise ToolError("action: status, find, channels, read, send or react")
+
+
+# Actual Budget (through its bridge): the money questions ("how much did I
+# spend on food this month?", "what's left in groceries?") answered from
+# Actual's own client in its page (electron/actual.js: $send / $query, its
+# public API's reading handlers), never its window. Read-only: the adapter
+# names no handler that writes, the bridge accepts only its reading
+# operations, and this tool has no action that changes anything. Payees
+# and notes go through the privacy mask like every reply (call_tool).
+
+BUDGET_ACTIONS = ("status", "summary", "category", "transactions", "accounts")
+BUDGET_NOT_OPEN = ("Actual Budget isn't open with nixbook's bridge: the user opens it from the launcher (\"Actual "
+                   "Budget\") and their budget file, then asks again (if it was already open, quit it completely "
+                   "and start it again from the launcher). Nothing else reads it: don't screenshot it")
+
+
+def money_text(amount, currency=""):
+    try:
+        n = float(amount)
+    except (TypeError, ValueError):
+        return str(amount)
+    sign = "-" if n < 0 else ""
+    return f"{sign}{abs(n):,.2f}" + (f" {currency}" if currency else "")
+
+
+def budget_month_line(m, cur):
+    # Actual: spending is negative; said as spent, positive.
+    return (f"{m.get('month')}: income {money_text(m.get('income'), cur)}, budgeted "
+            f"{money_text(abs(m.get('budgeted') or 0), cur)}, spent {money_text(-(m.get('spent') or 0), cur)}, "
+            f"to budget {money_text(m.get('toBudget'), cur)}")
+
+
+def budget_category_line(c, cur):
+    if c.get("income"):
+        return f"- {c.get('name')} (income): received {money_text(c.get('spent'), cur)}"
+    where = f" ({c['group']})" if c.get("group") else ""
+    kind = "group " if c.get("kind") == "group" else ""
+    return (f"- {kind}{c.get('name')}{where}: budgeted {money_text(c.get('budgeted'), cur)}, spent "
+            f"{money_text(-(c.get('spent') or 0), cur)}, left {money_text(c.get('balance'), cur)}"
+            + (f" — its categories: {', '.join(c['categories'][:20])}" if c.get("categories") else ""))
+
+
+@tool(
+    "budget",
+    "pages",
+    "The user's money in Actual Budget, read only, without its window (nothing can be changed): "
+    "`summary` (a month's income, budgeted, spent, to budget and each group; default this month, "
+    "`month` YYYY-MM), `category` (`query`: a category or group as the user said it — food, "
+    "groceries —: budgeted, spent and what's left that month), `transactions` (`query` words in the "
+    "payee, notes or category, `category`, `account`, `from`/`to` YYYY-MM-DD — default this month "
+    "so far —, `limit`; their count and totals), `accounts` (balances), `status`. Spent amounts are "
+    "said positive. Answer with the figure asked for, not the whole list.",
+    obj({"action": {"type": "string", "enum": list(BUDGET_ACTIONS)},
+         "query": {"type": "string"}, "category": {"type": "string"}, "account": {"type": "string"},
+         "month": {"type": "string", "description": "YYYY-MM (default this month)"},
+         "from": {"type": "string", "description": "YYYY-MM-DD"}, "to": {"type": "string", "description": "YYYY-MM-DD"},
+         "limit": {"type": "integer", "description": "Transactions listed (default 20, at most 100)"}}, ["action"]),
+    read_only=True,
+    brief=("Money in Actual Budget, read only: summary (a month), category (query: food…: spent, left), "
+           "transactions (query, category, account, from/to: totals), accounts."),
+    props={"query": None, "category": None, "account": None, "month": "YYYY-MM", "from": None, "to": None,
+           "limit": None},
+)
+def t_budget(ctx, args):
+    action = as_str(args, "action", max_len=20)
+    if action not in BUDGET_ACTIONS:
+        raise ToolError("action: " + ", ".join(BUDGET_ACTIONS))
+    if "actual" not in bridged_apps() and "actual" not in unbridged_apps():
+        raise ToolError(BUDGET_NOT_OPEN)
+
+    def app(op, **kw):
+        try:
+            return electron(ctx, "actual", "app", op=op, args={k: v for k, v in kw.items() if v not in (None, "")})
+        except ToolError as e:
+            if "isn't reachable" in str(e):
+                raise ToolError(BUDGET_NOT_OPEN)
+            raise
+
+    def opt(key, n=100, pattern=None):
+        return as_str(args, key, max_len=n, required=False, pattern=pattern) or None
+
+    if action == "status":
+        r = app("status")
+        if not r.get("open"):
+            return [text("Actual Budget runs with the bridge, but no budget is open in it.")]
+        months = r.get("months") or {}
+        return [text(f"Actual Budget: the budget {r.get('budget')!r} is open"
+                     + (f" ({months.get('first')} to {months.get('last')})" if months else "")
+                     + (f", in {r['currency']}" if r.get("currency") else "") + ".")]
+    if action == "summary":
+        r = app("month", month=opt("month", 7, r"\d{4}-\d{2}"))
+        cur = r.get("currency") or ""
+        lines = [budget_month_line(r, cur)]
+        lines += [budget_category_line(g, cur) for g in r.get("groups") or [] if not g.get("hidden")]
+        return [text("\n".join(lines))]
+    if action == "category":
+        query = as_str(args, "query", max_len=100)
+        r = app("categories", query=query, month=opt("month", 7, r"\d{4}-\d{2}"))
+        cur = r.get("currency") or ""
+        if not r.get("matches"):
+            return [text(f"No category or group in Actual matches {query!r}. Its categories: "
+                         + ", ".join(r.get("names") or []))]
+        return [text(f"{r.get('month')}:\n" + "\n".join(budget_category_line(c, cur) for c in r["matches"]))]
+    if action == "transactions":
+        limit = max(1, min(100, int(args["limit"]))) if isinstance(args.get("limit"), int) else 20
+        r = app("transactions", query=opt("query"), category=opt("category"), account=opt("account"),
+                limit=limit, **{"from": opt("from", 10, r"\d{4}-\d{2}-\d{2}"), "to": opt("to", 10, r"\d{4}-\d{2}-\d{2}")})
+        cur = r.get("currency") or ""
+        which = " ".join(bit for bit in (
+            f"matching {args['query']!r}" if args.get("query") else "",
+            f"in {', '.join(r['categories'])}" if r.get("categories") else "",
+            f"from {', '.join(r['accounts'])}" if r.get("accounts") else "") if bit)
+        head = (f"{r.get('count')} transactions {which + ' ' if which else ''}from {r.get('from')} to {r.get('to')}: "
+                f"spent {money_text(-(r.get('spent') or 0), cur)}, received {money_text(r.get('received'), cur)}, "
+                f"net {money_text(r.get('total'), cur)}")
+        rows = [f"- {t.get('date')} {money_text(t.get('amount'), cur)} {t.get('payee') or '?'}"
+                + (f" · {t['category']}" if t.get("category") else "") + (f" · {t['account']}" if t.get("account") else "")
+                + (f" · {t['notes']}" if t.get("notes") else "") for t in r.get("transactions") or []]
+        more = (r.get("count") or 0) - len(rows)
+        return [text("\n".join([head] + rows + ([f"… and {more} more (`limit`)"] if more > 0 else [])))]
+    r = app("accounts")
+    cur = r.get("currency") or ""
+    lines = [f"- {a.get('name')}: {money_text(a.get('balance'), cur)}"
+             + (" (off budget)" if a.get("offBudget") else "") for a in r.get("accounts") or [] if not a.get("closed")]
+    return [text("Accounts:\n" + ("\n".join(lines) or "none"))]
 
 
 # --------------------------------------------------------------------------
@@ -19566,7 +19923,9 @@ INSTRUCTIONS = (
     "work in the page itself (page_list gives the targets: zen:<tab>, discord, slack…), in the "
     "background, on another workspace, without the mouse or keyboard, so the user keeps working "
     "meanwhile: prefer them to clicking or typing in those windows. Discord messages (find, read, "
-    "send, react): the discord tool. YouTube Music: playing, the queue, likes through its own MCP "
+    "send, react): the discord tool. Money questions (spent, left in a category, balances, "
+    "transactions): the budget tool, Actual Budget read through its own client, never changed. "
+    "YouTube Music: playing, the queue, likes through its own MCP "
     "server (youtube-music) when you have it, the page tools for the rest (lyrics, the library). "
     "Windows on other workspaces: read them "
     "(ui_read, page_read) or screenshot them by window_id where they are; don't focus them "
@@ -22682,7 +23041,9 @@ USER_ONLY_COMMANDS = {("resume",), ("notify", "off"), ("notify", "toggle"), ("pr
                       ("predict", "unmute"),
                       # The away card's model call is the shell's to spend.
                       ("away", "summary"),
-                      ("privacy", "clear"), ("sent", "clear")}
+                      ("privacy", "clear"), ("sent", "clear"),
+                      # The window's text, unmasked, for the user's ears.
+                      ("read-aloud",)}
 # Commands that may take seconds (a model's answer, a tool to undo): on a
 # thread of their own on stdin too, so the shell's quick ones aren't held.
 HELPER_THREADED = {("order", "add"), ("journal", "undo"), ("find",), ("away", "summary")}
@@ -22966,6 +23327,11 @@ USAGE = """usage: nixbook-desktop-mcp [COMMAND]
                           user's own processes ({"id", "argv", "stdin"} lines)
   tools                   the enabled tools, as MCP JSON
   call NAME [JSON]        run one tool; prints its text, exit 1 on refusal
+  read-aloud [--window ID] [--capture | --picture]
+                          the window in front (or ID) as text to read out (JSON: source
+                          zen|<app>|accessibility, text; --capture: a capture of it,
+                          source screen, image, when it has no text; --picture: only
+                          the capture, to describe); the user's only
   episode JSON|-          a task done by a client without MCP ({task, app, actions:
                           [{tool, do, error, app?}]}; app: the focused window's): to
                           the memory's learning pass
@@ -23179,6 +23545,8 @@ def main(argv):
             and agent_environment():
         print(f"refused: only the user can do this ({' '.join(argv[:2])})", file=sys.stderr)
         return 126
+    if cmd == "read-aloud":
+        return read_aloud_command(cfg, argv[1:])
     if cmd == "pause":
         try:
             os.unlink(allowed_flag())

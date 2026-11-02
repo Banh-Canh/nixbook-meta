@@ -61,6 +61,7 @@ Niri is column/scroll based; it has no numbered workspaces (workspaces stack ver
 | `Mod+Shift+T`      | —                                                        | Full AI mode: the AI runs the desktop, you talk (again: leaves)    |
 | `Mod+Alt+N`        | —                                                        | Meeting notes: Muse takes notes of any call (again: stop, summary) |
 | `Mod+Alt+V`        | —                                                        | Smart clipboard: run the first action offered for a copy           |
+| `Mod+Alt+R`        | —                                                        | Read this to me: the window in front read out loud (again: stop)   |
 | `Mod+Shift+Return` | —                                                        | Next up: do the step Muse's chip offers (beside the mascot)        |
 | `Ctrl+Space`       | Toggle fcitx5 input method (when `fcitx5Config` enabled) | same                                                               |
 
