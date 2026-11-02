@@ -120,7 +120,11 @@ Scope {
     // under it).
     readonly property string status: {
         if (!root.responding) return ""
+        // On for 20 s with no answer: said, the background chip beside it.
         const doing = root.chat?.strategy?.doing ?? ""
+        if (root.quick && QuickAi.slow)
+            return doing ? Translation.tr("This is taking a while · doing %1…").arg(doing.replace(/_/g, " "))
+                : Translation.tr("This is taking a while…")
         if (doing) return Translation.tr("Doing %1…").arg(doing.replace(/_/g, " "))
         const ids = root.chat.messageIDs
         const m = ids.length > 0 ? root.chat.messageByID[ids[ids.length - 1]] : null
@@ -662,8 +666,12 @@ Scope {
                         Layout.fillWidth: true
                         readonly property var last: root.lines.length > 0 ? root.lines[root.lines.length - 1] : null
                         visible: root.conversing && !threadList.visible && last?.role === "assistant"
-                            && ((last?.orders ?? []).length > 0 || (last?.told ?? []).length > 0 || (last?.trustSuggest ?? []).length > 0)
+                            && ((last?.orders ?? []).length > 0 || (last?.told ?? []).length > 0 || (last?.trustSuggest ?? []).length > 0
+                                || (last?.suggested ?? []).length > 0)
                         message: last
+                        // A held step taken ("Also: …?" → Yes): its order to the
+                        // bubble's session, past the plain commands (QuickIntent).
+                        sendOrder: text => { if (!QuickAi.handle(text)) Initiative.reply(text) }
                         fg: root.fg
                         accent: root.accent
                         bg: root.bg

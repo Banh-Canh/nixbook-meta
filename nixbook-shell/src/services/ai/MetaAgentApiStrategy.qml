@@ -25,6 +25,9 @@ import QtQuick
 // … Undo" line), three yeses in a row for one class bring a suggestion to
 // stop asking ({"type":"trust_suggest"}: `trustSuggest`, a chip), and a
 // standing_order tool result is a card to turn the order on (`orders`).
+// Scope (--scope-guard): a step the request didn't ask for (music started,
+// an app opened, a message sent) is held, not run ({"type":"suggest"}:
+// `suggested`, an "Also: …?" chip whose Yes sends its order).
 //
 // Speed: the turn's final text is complete before its checks
 // ({"type":"answer"}: the message's `answered`, shown and read out at once;
@@ -298,7 +301,9 @@ QtObject {
                 _ran(block.tool_use_id);
                 const call = toolCalls[block.tool_use_id] ?? "**tool**";
                 const text = brief(resultText(block.content), 400);
-                setStep(block.tool_use_id, { status: block.is_error ? "error" : "ok", result: brief(resultText(block.content), 120) });
+                // A step held by the scope guard stays "held" (not done).
+                const wasHeld = steps.find(x => x.id === block.tool_use_id)?.status === "held";
+                setStep(block.tool_use_id, { status: block.is_error ? "error" : wasHeld ? "held" : "ok", result: brief(resultText(block.content), 120) });
                 if (!block.is_error && toolNames[block.tool_use_id] === "standing_order") _order(message, resultText(block.content));
                 if (toolNames[block.tool_use_id] === "terminal_run")
                     _terminalRun(message, block.tool_use_id, resultText(block.content), block.is_error === true);
@@ -347,6 +352,14 @@ QtObject {
             // Allowed three times in a row: stop asking? (the user's click).
             if (!(message.trustSuggest ?? []).some(x => x.class === ev.class))
                 _push(message, "trustSuggest", { class: String(ev.class ?? ""), summary: unmask(brief(ev.summary || ev.class || "", 120)) });
+        } else if (ev.type === "suggest") {
+            // A step the request didn't ask for (--scope-guard), held: "Also:
+            // …?" under the answer, whose Yes sends `order` (AutonomyNotes).
+            const id = String(ev.id ?? "");
+            setStep(id, { tool: toolName(ev.tool), summary: brief(ev.summary || ev.input || "", 80), status: "held" });
+            if (!(message.suggested ?? []).some(x => x.id === id))
+                _push(message, "suggested", { id: id, kind: String(ev.kind ?? ""), summary: unmask(brief(ev.summary || ev.tool || "", 120)),
+                                              order: unmask(String(ev.order ?? "")), answered: "" });
         } else if (ev.type === "verify") {
             // Checked after acting (--verify): met, or why not.
             message.verify = { met: ev.met === true, note: String(ev.note ?? "") };

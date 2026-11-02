@@ -40,6 +40,14 @@ them):
   command_risk, command_segments, terminal_never
                           a command line read as the shell would: its kind,
                           whether it is risky, the kinds always asked
+  scope_kind, scope_implied, own_words
+                          the steps a request has to ask for (something
+                          played, an app opened, words sent) and whether it
+                          does (meta-agent --scope-guard)
+  only_looks, command_reads, asks_for_answer, same_request
+                          a call that only looks (reads, navigates, a reading
+                          command), a request answered by its answer, the
+                          same request said again (meta-agent --verify, turns)
   config(), routing()     the shell's settings (config.json)
 
 Heavy modules (http.client, ssl, urllib) are imported when first used: the
@@ -1747,3 +1755,286 @@ def build_report(answer_text, steps):
     parts = [summary]
     parts += [f"- ✓ {d}" for d in done] + [f"- ✗ {f}" for f in failed] + [f"- → {n}" for n in needs]
     return "\n".join(parts), report
+
+
+# ── What a request asks for: the scope guard, repeats, the check ───────────
+# The agent did what nobody asked ("something cute and playful", a theme,
+# also opened YouTube Music and started a song), did again what was asked a
+# second time (an episode request repeated queued the next one), and checked
+# a turn that only read ("⚠ Couldn't confirm it worked" after a PR review).
+
+def own_words(text):
+    """The user's own words in a turn's message: what follows the shell's
+    last "The user now says:", without its notes ([Current date & time…;
+    Focused app…], an attached file, a question it asked to learn) and the
+    computer's blocks (<context>, <intent>, <note>)."""
+    t = str(text or "")
+    cut = t.rfind("The user now says:")
+    if cut >= 0:
+        t = t[cut + len("The user now says:"):]
+    t = re.sub(r"<context>.*?</context>|<intent>.*?</intent>|<note>.*?</note>", " ", t, flags=re.S)
+    t = re.sub(r"\[[^\]]*(?:Focused app|Current date)[^\]]*\]", " ", t)
+    t = re.sub(r"\n\n\((?:Attached file|[^()\n]*\?)[^\n]*\)\s*$", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _fold(text):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text or "").lower()) if not unicodedata.combining(c))
+
+
+# The kinds of step a request has to ask for (meta-agent --scope-guard):
+# something started playing, an app opened, words sent to other people.
+# Done unasked they are noise at best (music over a call), harm at worst;
+# held, they are offered to the user instead.
+MEDIA_APP = re.compile(r"youtube|music|spotify|jellyfin|moonfin|pear|mpv|vlc|celluloid|totem|rhythmbox|strawberry|"
+                       r"amberol|tidal|deezer|netflix|plex|kodi|stremio|haruna|elisa|lollypop|cider|feishin|"
+                       r"supersonic|freetube|podcast|radio|player", re.I)
+MEDIA_TOOL = re.compile(r"media|mpris|player|playback|music|song|track|video|episode|movie", re.I)
+PLAY_TOOL = re.compile(r"(^|_)(play|playpause|play_pause|resume|unpause|queue|enqueue|playlist_add|add_to_queue|"
+                       r"cast)(_|s?$)", re.I)
+PLAY_ACTION = re.compile(r"^(play|play_?pause|toggle|resume|unpause|next|previous|skip|queue|enqueue|add_to_queue)",
+                         re.I)
+PLAY_IPC = re.compile(r"^(play|playpause|toggleplaying|next|previous|resume|unpause)", re.I)
+PLAY_TARGET = re.compile(r"\b(play|resume|shuffle|lire|jouer|abspielen|wiedergabe|ph[áa]t)\b", re.I)
+SEND_TOOL = re.compile(r"(^|_)(send|sms|reply|react|forward)(_|s?$)", re.I)
+SEND_ACTION = re.compile(r"^(send|reply|react|post|forward)", re.I)
+# What the user's words hold when they ask for each (en, fr, de, vi).
+SCOPE_WORDS = {
+    "play": re.compile(
+        r"\b(play(s|ing|ed)?|listen(s|ing)?|music|songs?|tracks?|albums?|playlists?|artists?|radio|podcasts?|"
+        r"watch(es|ing)?|videos?|movies?|films?|episodes?|seasons?|series|stream(s|ing)?|queue[ds]?|resume|unpause|"
+        r"put on|soundtrack|tunes?|jams?|beats|lofi|spotify|youtube|jellyfin|moonfin|mpv|"
+        r"jou(e|er|es|ez)|[ée]cout(e|er|es|ez)|musique|chansons?|morceaux?|regard(e|er|ez)|vid[ée]os?|[ée]pisodes?|"
+        r"saisons?|s[ée]ries?|reprend(s|re)?|"
+        r"spiel(e|en|t)?|abspielen|h[öo]r(e|en|t)?|anh[öo]ren|musik|lied(er)?|schau(e|en|t)?|anschauen|folgen?|"
+        r"staffeln?|serien?|filme?|"
+        r"ph[áa]t|nghe|nh[ạa]c|b[àa]i h[áa]t|xem|phim|t[ậa]p|m[ùu]a)\b", re.I),
+    # An app opened is a small thing: also when the request is about what
+    # an app is for (check my mail, search the web, the file…); a media app
+    # is "play", strict.
+    "launch": re.compile(
+        r"\b(open(s|ing)?|launch|start|run|bring up|fire up|pull up|switch to|go to|show|view|read|check|browse|"
+        r"search|look up|google|find|e?-?mails?|inbox|browser|web|website|site|page|url|link|tab|terminal|shell|"
+        r"files?|folders?|director(y|ies)|documents?|pdf|calendar|editor|settings|chat|photos?|pictures?|images?|"
+        r"maps?|"
+        r"ouvr(e|ir|ez)|lanc(e|er|ez)|d[ée]marr(e|er|ez)|affiche|montre|lis|v[ée]rifie|cherche|courriels?|"
+        r"navigateur|lien|onglet|fichiers?|dossiers?|calendrier|[ée]diteur|param[èe]tres|r[ée]glages|"
+        r"[öo]ffne(n)?|starte(n)?|zeig(e|en)?|lies|pr[üu]fe?|such(e|en)?|posteingang|seite|datei(en)?|ordner|"
+        r"dokumente?|kalender|einstellungen|"
+        r"m[ởo]|b[ậa]t|kh[ởo]i đ[ộo]ng|ch[ạa]y|t[ìi]m|th[ưu]|tr[ìi]nh duy[ệe]t|trang|t[ệe]p|th[ưu] m[ụu]c|"
+        r"t[àa]i li[ệe]u|l[ịi]ch|c[àa]i đ[ặa]t)\b", re.I),
+    "send": re.compile(
+        r"\b(send|reply|respond|answer|message|text|write|tell|dm|post|react|forward|e?mail|"
+        r"envo(ie|yer|yez)|r[ée]pon(ds|dre|dez)|[ée]cri(s|re|vez)|dis|dire|transf[ée]re|"
+        r"schick(e|en)?|sende(n)?|antworte(n)?|schreib(e|en)?|sag(e|en)?|nachricht|weiterleiten|"
+        r"g[ửu]i|tr[ảa] l[ờo]i|nh[ắa]n|vi[ếe]t|n[óo]i)\b", re.I),
+}
+# Opening said outright: what lets a media app open ("open YouTube Music")
+# without a word of playing.
+OPEN_WORDS = re.compile(r"\b(open|launch|start|bring up|fire up|ouvr(e|ir|ez)|lanc(e|er|ez)|d[ée]marr(e|er|ez)|"
+                        r"[öo]ffne(n)?|starte(n)?|m[ởo]|kh[ởo]i đ[ộo]ng)\b", re.I)
+# Said in the follow-up the shell sends when the user takes a held step
+# ("Also: …?" → Yes): the kind's word, so the step passes then.
+SCOPE_ORDER = {"play": "play it", "launch": "open it", "send": "send it"}
+# Parts of an app's id that say nothing of it (com.github.th-ch.youtube-music).
+APP_ID_NOISE = {"com", "org", "net", "github", "gitlab", "desktop", "app", "kde", "gnome", "the"}
+
+
+def _launched_app(name, args, meta=None):
+    """The app a launch_app call opens, "" for another call."""
+    if _bare(name, meta).lower() not in ("launch_app", "open_app") or not isinstance(args, dict):
+        return ""
+    return str(args.get("app") or args.get("name") or args.get("query") or "")
+
+
+def scope_kind(name, args, meta=None):
+    """The kind of step a call is for the scope guard: "play" (something
+    starts playing, or a media app opens), "launch" (another app opens),
+    "send" (words go to other people), or None (anything else)."""
+    low = _bare(name, meta).lower()
+    args = args if isinstance(args, dict) else {}
+    server = str((meta or {}).get(name, {}).get("server") or "") if isinstance(meta, dict) else ""
+    if not server:
+        m = re.match(r"^mcp__(.+?)__", str(name))
+        server = m.group(1) if m else ""
+    action = str(args.get("action") or "")
+    if low in ("launch_app", "open_app"):
+        return "play" if MEDIA_APP.search(_launched_app(name, args, meta)) else "launch"
+    if low == "shell_ipc":
+        target, fn = str(args.get("target") or ""), str(args.get("function") or "")
+        return "play" if re.search(r"mpris|media|player", target, re.I) and PLAY_IPC.match(fn) else None
+    if low == "press_keys":
+        keys = str(args.get("keys") or "")
+        return "play" if re.search(r"audio(play|next|prev)|media(play|next|prev)", keys, re.I) else None
+    if low == "notification_action":
+        return "send" if args.get("reply") else None
+    if SEND_TOOL.search(low) or SEND_ACTION.match(action):
+        return "send"
+    target = str(args.get("target") or args.get("app") or "")
+    if low in ("page_act", "browser_act"):
+        if CHAT_TARGETS.match(target) and page_act_risky(args):
+            return "send"
+        if MEDIA_APP.search(target) and action in ("click", "press") and PLAY_TARGET.search(str(args.get("name") or "")):
+            return "play"
+        return None
+    if PLAY_TOOL.search(low):
+        return "play"
+    if PLAY_ACTION.match(action) and (MEDIA_TOOL.search(low) or MEDIA_APP.search(server)):
+        return "play"
+    if low in ("ui_act", "click") and (MEDIA_APP.search(target) or MEDIA_APP.search(server)) and PLAY_TARGET.search(
+            " ".join(str(v) for v in args.values() if isinstance(v, str))):
+        return "play"
+    return None
+
+
+def scope_implied(kind, text, name="", args=None, meta=None):
+    """Whether the user's words (TEXT) ask for a step of KIND: one of its
+    words; for a media app opened ("open YouTube Music"), an opening word
+    said outright or the app's own name."""
+    words = SCOPE_WORDS.get(kind)
+    if words is None:
+        return True
+    said = str(text or "")
+    if words.search(said) or words.search(_fold(said)):
+        return True
+    app = _launched_app(name, args, meta)
+    if not app:
+        return False
+    if OPEN_WORDS.search(said):
+        return True
+    folded = " " + re.sub(r"[^a-z0-9]+", " ", _fold(said)) + " "
+    parts = {p for p in re.split(r"[^a-z0-9]+", _fold(app)) if len(p) >= 3} - APP_ID_NOISE
+    return any(f" {p} " in folded for p in parts)
+
+
+# The calls that only look: they read, or move the view without changing
+# anything (a page opened or scrolled, a window focused), or run a command
+# that only reads. A turn of these alone has nothing to check (meta-agent
+# --verify): its answer is what it delivers.
+NAV_TOOLS = {"page_read", "page_wait", "page_screenshot", "page_history", "page_list", "browser_tabs", "browser_read",
+             "browser_wait", "browser_screenshot", "focus_window", "focus_workspace", "scroll", "move_pointer",
+             "screenshot", "read_screen", "ui_read", "ui_wait", "list_windows", "list_workspaces", "get_status"}
+NAV_GO = {"page_go", "browser_open", "browser_tab"}
+NAV_GO_ACTIONS = {"", "open", "search", "activate", "navigate", "back", "forward", "reload"}
+# Commands that only read (their kind: command_head), whatever their files.
+READ_COMMANDS = {
+    "cat", "bat", "head", "tail", "less", "more", "ls", "ll", "la", "tree", "exa", "eza", "find", "fd", "grep",
+    "egrep", "fgrep", "rg", "ag", "ack", "wc", "sort", "uniq", "cut", "tr", "diff", "cmp", "file", "stat", "du", "df",
+    "pwd", "echo", "printf", "which", "whereis", "type", "whoami", "id", "date", "uname", "hostname", "jq", "yq",
+    "sed", "column", "nl", "realpath", "readlink", "basename", "dirname", "test", "[", "true", "printenv", "ps",
+    "pgrep", "free", "uptime", "lsblk", "man", "tldr", "journalctl", "nproc", "cd", "pushd", "popd", "curl",
+    "git-status", "git-log", "git-diff", "git-show", "git-blame", "git-ls-files", "git-ls-tree", "git-rev-parse",
+    "git-describe", "git-grep", "git-shortlog", "git-cat-file", "git-fetch", "git-reflog", "git-merge-base",
+    "systemctl-status", "systemctl-show", "systemctl-cat", "systemctl-is-active", "systemctl-list-units",
+    "kubectl-get", "kubectl-describe", "kubectl-logs", "docker-ps", "docker-logs", "docker-inspect", "podman-ps",
+    "podman-logs", "podman-inspect", "nix-eval", "nix-search", "nix-path-info", "nix-why-depends", "cargo-tree",
+}
+# gh's reading subcommands (gh pr view 42, gh pr diff, gh run list…).
+GH_READS = {"view", "diff", "list", "status", "checks"}
+CURL_WRITES = {"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "-F", "--form", "-T",
+               "--upload-file", "-X", "--request", "-o", "--output", "-O", "--remote-name"}
+
+
+def command_reads(command):
+    """Whether a command line only reads: every part of it a reading kind,
+    nothing written through a redirection."""
+    segments = command_segments(command)
+    if not segments:
+        return False
+    for s in segments:
+        if any(not (re.fullmatch(r"\d+|-", str(r)) or DEV_SAFE.match(str(r))) for r in s["redirects"]):
+            return False
+        words = [str(w) for w in s["words"]]
+        if not words:
+            continue
+        head = command_head(words)
+        if head == "gh":
+            rest = _nonopts(words[1:])
+            if len(rest) < 2 or rest[1] not in GH_READS:
+                return False
+            continue
+        if head not in READ_COMMANDS:
+            return False
+        if head == "sed" and any(w.startswith("-i") or w.startswith("--in-place") for w in words[1:]):
+            return False
+        if head == "find" and any(w in ("-delete", "-fprint", "-fprintf", "-fls") for w in words):
+            return False
+        if head == "curl" and any(w.split("=", 1)[0] in CURL_WRITES or re.fullmatch(r"-[a-zA-Z]*[dFTXoO]", w)
+                                  for w in words[1:]):
+            return False
+    return True
+
+
+def only_looks(name, args, meta=None):
+    """True for a call that changes nothing the user asked to change: it
+    reads (reads_only), moves the view (NAV_TOOLS; a page opened, navigated,
+    or one of its elements focused or scrolled), or runs a command that only
+    reads (Bash, terminal_run)."""
+    if reads_only(name, args, meta):
+        return True
+    tool = _bare(name, meta)
+    args = args if isinstance(args, dict) else {}
+    action = str(args.get("action") or "").lower()
+    if tool in NAV_TOOLS:
+        return True
+    if tool in NAV_GO:
+        return action in NAV_GO_ACTIONS
+    if tool in ("page_act", "browser_act"):
+        return action in ("focus", "scroll")
+    if tool in ("Bash", "terminal_run"):
+        return command_reads(args.get("command"))
+    return False
+
+
+# A request whose deliverable is the answer itself (a question, "review
+# PR 42", "summarize this"): nothing to check once answered, unless it also
+# asks for a change.
+ANSWER_REQUEST = re.compile(
+    r"^\s*(what|which|who|whom|whose|when|where|why|how|tell me|explain|describe|summari[sz]e|review|compare|"
+    r"analy[sz]e|find out|look at|read|check|qu(e|oi|el|elle|els|elles)|qui|quand|o[uù]|pourquoi|comment|"
+    r"est-ce|explique|r[ée]sume|d[ée]cris|v[ée]rifie|regarde|lis|analyse|"
+    r"was|wer|wann|wo|warum|wieso|wie|welche[rsmn]?|erkl[äa]re?|fasse|beschreib\w*|vergleich\w*|pr[üu]f\w*|lies|"
+    r"c[áa]i g[ìi]|ai|khi n[àa]o|[ởo] đ[âa]u|t[ạa]i sao|v[ìi] sao|th[ếe] n[àa]o|gi[ảa]i th[íi]ch|t[óo]m t[ắa]t|"
+    r"so s[áa]nh|ki[ểe]m tra|đ[ọo]c)\b|[?？]\s*$", re.I)
+CHANGE_WORDS = re.compile(
+    r"\b(close|quit|send|reply|delete|remove|clear|install|uninstall|set|turn|switch|change|make|create|add|move|"
+    r"put|write|edit|fix|rename|play|pause|launch|start|stop|book|schedule|remind|mute|unmute|lock|save|copy|"
+    r"share|download|merge|approve|enable|disable|"
+    r"ferme|envoie|supprime|efface|installe|mets|cr[ée]e|ajoute|d[ée]place|[ée]cris|corrige|renomme|joue|"
+    r"lance|arr[êe]te|enregistre|copie|active|d[ée]sactive|"
+    r"schlie(ß|ss)e|sende|l[öo]sche|installiere|stell|[äa]ndere|erstelle|f[üu]ge|verschiebe|schreib|behebe|"
+    r"spiel|starte|stoppe|speichere|kopiere|aktiviere|"
+    r"đ[óo]ng|g[ửu]i|x[óo]a|c[àa]i|đ[ặa]t|đ[ổo]i|t[ạa]o|th[êe]m|chuy[ểe]n|vi[ếe]t|s[ửu]a|ph[áa]t|t[ắa]t|b[ậa]t|"
+    r"l[ưu]u)\b", re.I)
+
+
+def asks_for_answer(text):
+    """Whether the request (the user's own words) asks to be answered, not
+    for a change: a question, "review…", "summarize…"."""
+    t = str(text or "").strip()
+    return bool(t) and bool(ANSWER_REQUEST.search(t)) and not CHANGE_WORDS.search(t)
+
+
+# Asked again: the same request twice in a row (meta-agent tells the second
+# turn so; done already, it says so instead of doing it again). Not when it
+# asks for it again ("another one", "encore").
+AGAIN_WORDS = re.compile(r"\b(again|another|once more|one more|encore|une autre|un autre|nochmal|noch einmal|"
+                         r"wieder|noch ein(e|en)?|l[ầa]n n[ữu]a)\b", re.I)
+
+
+def normalized_request(text):
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", _fold(text))).strip()
+
+
+def same_request(a, b, threshold=0.85):
+    """Whether two requests say the same (normalized, at least THRESHOLD
+    alike, the same numbers: episode 3 isn't episode 4), neither asking for
+    it again."""
+    import difflib
+    x, y = normalized_request(a), normalized_request(b)
+    if not x or not y or AGAIN_WORDS.search(str(a or "")) or AGAIN_WORDS.search(str(b or "")):
+        return False
+    if re.findall(r"\d+", x) != re.findall(r"\d+", y):
+        return False
+    return x == y or difflib.SequenceMatcher(None, x, y).ratio() >= threshold

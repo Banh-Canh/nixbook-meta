@@ -100,7 +100,19 @@ to do behind the options below (all off by default).
                              "verify", met, note}; result `verified`); one fix
                              round when it isn't done. The `verification`
                              tool is offered from the first call (the prompt
-                             cache stays valid)
+                             cache stays valid). Not for a turn whose steps
+                             only looked (read, navigated, a command that
+                             only reads: nixbook_ai.only_looks), nor for a
+                             request its answer delivers (a question, "review
+                             …": nixbook_ai.asks_for_answer)
+  --scope-guard              a step the request didn't ask for (something
+                             played, an app opened, words sent:
+                             nixbook_ai.scope_kind) when the user's words
+                             have nothing implying it (scope_implied) isn't
+                             run: held, the model told it was offered
+                             instead, {"type": "suggest", id, tool, input,
+                             summary, kind, order} out (the shell's "Also:
+                             …?" chip; Yes sends ORDER as the next message)
   --trust                    the trust ladder: each step that doesn't only
                              read is of a class (nixbook_ai.action_class:
                              `close_window@firefox`, `calendar:add`) the user
@@ -124,6 +136,11 @@ name} as soon as a tool runs (a tool call runs as soon as its block has
 streamed, unless it waits for the user or the resolver), {"type": "answer",
 text} as soon as the turn's answer is complete (before the check; again with
 "revised": true after a fix round), then the result.
+
+A request said again (the same words, ≥ 85 % alike, the same numbers,
+within 10 minutes of a turn that acted: nixbook_ai.same_request) gets a
+<note> before it: done already, the model says so instead of doing it again
+(an episode asked twice queued the next one).
 
 The prompt cache: breakpoints at the end of the tools, of the system prompt,
 of the previous turn and of the last user message; the older turns' <context>
@@ -164,7 +181,8 @@ MULTI_FLAGS = {"--allowedTools", "--allowed-tools", "--disallowedTools", "--disa
 BOOL_FLAGS = {"-p", "--print", "--verbose", "--include-partial-messages", "--strict-mcp-config",
               "--no-session-persistence", "--privacy", "--restricted", "--safe-mode", "--continue", "-c",
               "--dangerously-skip-permissions", "--fork-session", "--replay-user-messages", "--debug", "-d",
-              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools", "--quiet-steps", "--finish"}
+              "--report", "--learn", "--resolve", "--verify", "--trust", "--core-tools", "--quiet-steps", "--finish",
+              "--scope-guard"}
 
 MAX_TOKENS = int(os.environ.get("NIXBOOK_AI_MAX_TOKENS") or 16000)
 CUT_MAX_TOKENS = 32000  # the most a reply cut by the output limit is asked again with
@@ -230,6 +248,20 @@ UNANSWERED = "No answer in time: not done (the user didn't say no; ask again if 
 NO_ONE_TO_ASK = ("Not done: this step needs the user's OK and there is no one to ask here. Don't retry it another "
                  "way; say it needs them.")
 CHECK_ONLY = "Not now: this round only checks, with tools that read. Don't change anything."
+# --scope-guard: a step the request didn't ask for, held (not an error: the
+# rest of the turn goes on, --finish's answer stands).
+HELD = ("Held, not done: the user didn't ask for this ({what}). It is offered to them as a suggestion they can "
+        "take with one click; don't do it another way. Finish what they asked; you may mention it in one short line.")
+SCOPE_WHAT = {"play": "starting something to play or watch", "launch": "opening an app",
+              "send": "sending a message"}
+SCOPE_PROMPT = ("Do only what the user asked. Never start music or videos, open apps or send messages they didn't ask "
+                "for (a theme, a mood or a question is not a request to play something): the computer holds such a "
+                "step and offers it to them instead.")
+# A request said again: within this long of a turn that acted, it is told.
+REPEAT_WINDOW = 600
+REPEAT_NOTE = ("<note>Written by the computer, not the user: they said the same thing {ago} ago, and you acted on it "
+               "then{did}. If it is already done, say so briefly and don't do it again; act again only if they clearly "
+               "ask for more or say it didn't work.</note>\n\n")
 # A name made up for a hidden person (--privacy): the user asked for
 # ⟦Person 7 first⟧ and the model searched Discord, the contacts and its
 # memory for "Guilloux", a name nobody said; it could as well have written
@@ -521,6 +553,7 @@ class Options:
         self.resolve = False
         self.verify = False
         self.trust = False
+        self.scope_guard = False
         self.fork = False
         self.journal_source = "agent"
         self.task = ""
@@ -648,6 +681,8 @@ class Options:
                 raise AgentError(f"--lazy-mcp: a number, not {v}")
         elif name in ("--report", "--learn", "--resolve", "--verify", "--trust"):
             setattr(self, name[2:], True)
+        elif name == "--scope-guard":
+            self.scope_guard = True
         elif name == "--core-tools":
             self.core_tools = True
         elif name == "--quiet-steps":
@@ -2151,6 +2186,8 @@ class Agent:
                          "steps, and tells you when they say no.")
         if o.report:
             parts.append(REPORT_PROMPT)
+        if o.scope_guard:
+            parts.append(SCOPE_PROMPT)
         if self.mcp.openers and any(self.mcp.lazy_of.get(k, ("", ""))[1] for k in self.mcp.openers.values()):
             parts.append("More desktop tools wait behind the open_tools__desktop_* tools: call one to load its group "
                          "(or call one of the tools it names directly).")
@@ -2165,6 +2202,7 @@ class Agent:
     # transcript and the stream's deltas stay masked (the shell unmasks those,
     # holding back half a name).
     SHOWN_FIELDS = {"approval_request": ("input", "summary"), "told": ("summary",), "trust_suggest": ("summary",),
+                    "suggest": ("input", "summary", "order"),
                     "verify": ("note",), "answer": ("text",), "result": ("result", "report", "structured_output"),
                     "assistant": ("message",)}
 
@@ -2388,6 +2426,9 @@ class Agent:
         reads = self.reads(name, args)
         if checking and not reads:
             return "refuse", CHECK_ONLY, "refused"
+        kind = self.out_of_scope(name, args) if not reads else None
+        if kind:
+            return "hold", kind, "held"
         ask = self.needs_ok(name, args)
         cls = ""
         if self.opts.trust and not reads and name not in self.mcp.openers:
@@ -2456,6 +2497,37 @@ class Agent:
             return None
         return invented(hidden[0])
 
+    # ── The scope guard (--scope-guard) ──
+
+    def out_of_scope(self, name, args):
+        """The kind of step (nixbook_ai.scope_kind) this call is when the
+        request didn't ask for it, else None."""
+        if not self.opts.scope_guard or name in self.mcp.openers:
+            return None
+        m = self.meta(name)
+        kind = nixbook_ai.scope_kind(name, args, {name: m})
+        if not kind:
+            return None
+        shown = self.privacy.unmask_args(args) if isinstance(args, dict) else args
+        said = getattr(self, "scope_text", "")
+        if nixbook_ai.scope_implied(kind, said, name, shown, {name: m}):
+            return None
+        return kind
+
+    def hold(self, call, kind, step=None):
+        """A step out of the request's scope, held: offered to the user
+        ({"type": "suggest"}: the shell's "Also: …?" chip, whose Yes sends
+        `order`), the model told. Its tool_result's text."""
+        name, args = call.get("name", ""), call.get("input") or {}
+        shown = self.privacy.unmask_args(args)
+        m = self.meta(name)
+        line = nixbook_ai.step_line({"tool": m["tool"], "summary": nixbook_ai.step_summary(shown), "status": "ok"})
+        self.emit({"type": "suggest", "id": call.get("id"), "tool": m["shown"], "input": shown, "summary": line,
+                   "kind": kind, "order": f"Yes, do that too ({nixbook_ai.SCOPE_ORDER.get(kind, 'do it')}): {line}"})
+        if step is not None:
+            step["status"], step["result"] = "held", "offered as a suggestion"
+        return HELD.format(what=SCOPE_WHAT.get(kind, kind))
+
     def gate(self, call, checking, step=None):
         """None when the call may run, else why not (its tool_result)."""
         what, why, status = self.decide(call, checking, step)
@@ -2463,6 +2535,8 @@ class Agent:
             return None, ""
         if what == "refuse":
             return why, status
+        if what == "hold":
+            return self.hold(call, why, step), status
         return self.ask_user(call, step)
 
     def shape(self, name, content):
@@ -2554,7 +2628,10 @@ class Agent:
         m = self.meta(name)
         step = {"id": call["id"], "tool": m["shown"], "bare": m["tool"], "server": m["server"],
                 "summary": nixbook_ai.step_summary(self.privacy.unmask_args(args)),
-                "status": "run", "result": "", "read_only": self.reads(name, args)}
+                "status": "run", "result": "", "read_only": self.reads(name, args),
+                # It only looked (navigated, a reading command): nothing for
+                # --verify to check.
+                "looks": nixbook_ai.only_looks(name, args, {name: m})}
         if name not in self.mcp.openers and name not in (VERIFY, FINISH):
             self.steps.append(step)
         return step
@@ -2566,6 +2643,8 @@ class Agent:
         what, why, status = self.decide(call, checking, step)
         if what == "refuse":
             return ("refused", why, status)
+        if what == "hold":
+            return ("refused", self.hold(call, why, step), status)
         if what == "ask":
             return ("ask", None, "")
         if not self.gate_.wait():
@@ -2591,8 +2670,10 @@ class Agent:
                                   "content": "Not run: the request was unclear."}
                     continue
                 if kind == "refused":
-                    step["status"], step["result"] = status, value
-                    results[i] = {"type": "tool_result", "tool_use_id": c["id"], "is_error": True, "content": value}
+                    if status != "held":
+                        step["status"], step["result"] = status, value
+                    results[i] = {"type": "tool_result", "tool_use_id": c["id"], "content": value,
+                                  **({} if status == "held" else {"is_error": True})}
                     continue
                 why, status = self.ask_user(c, step)
             else:
@@ -2600,9 +2681,12 @@ class Agent:
                 why, status = self.gate(c, checking, step)
             if why:
                 # denied: the user said no; error: no one to ask; refused:
-                # not now (the check round), left out of the report.
-                step["status"], step["result"] = status, why
-                results[i] = {"type": "tool_result", "tool_use_id": c["id"], "is_error": True, "content": why}
+                # not now (the check round), left out of the report; held:
+                # out of the request's scope, offered instead (no error).
+                if status != "held":
+                    step["status"], step["result"] = status, why
+                results[i] = {"type": "tool_result", "tool_use_id": c["id"], "content": why,
+                              **({} if status == "held" else {"is_error": True})}
             else:
                 todo.append((i, c, step))
         if todo and not self.gate_.wait():
@@ -2617,6 +2701,15 @@ class Agent:
 
     def acted(self):
         return any(not s["read_only"] and s["status"] == "ok" for s in self.steps)
+
+    def to_check(self, request):
+        """Whether the turn has something --verify should check: a step
+        that changed something (not one that only looked: read, navigated,
+        ran a reading command), for a request not answered by its answer
+        alone (a question, "review PR 42")."""
+        if not any(not s["read_only"] and not s.get("looks") and s["status"] == "ok" for s in self.steps):
+            return False
+        return not nixbook_ai.asks_for_answer(nixbook_ai.own_words(request))
 
     # ── Structured answers ──
 
@@ -2707,8 +2800,34 @@ class Agent:
             if not t or t.startswith("[verify]"):
                 continue
             t = CONTEXT_BLOCK.sub("", t)
-            return re.sub(r"^<intent>.*?</intent>\s*", "", t, flags=re.S).strip()
+            t = re.sub(r"^<intent>.*?</intent>\s*", "", t, flags=re.S)
+            return re.sub(r"^<note>.*?</note>\s*", "", t, flags=re.S).strip()
         return ""
+
+    def last_answer_text(self):
+        """The model's last answer (its text), "" when none."""
+        for m in reversed(self.messages):
+            if m.get("role") == "assistant":
+                t = content_text(m.get("content")).strip()
+                if t:
+                    return t[-1500:]
+        return ""
+
+    def repeat_note(self, own):
+        """The <note> a request said again gets: the same words as the last
+        one (nixbook_ai.same_request), within REPEAT_WINDOW of it, and it
+        acted then (an episode asked twice queued the next one). "" else."""
+        last = self.state.get("lastRequest") or {}
+        if not own or not last.get("acted") or time.time() - float(last.get("at") or 0) > REPEAT_WINDOW:
+            return ""
+        if not nixbook_ai.same_request(own, str(last.get("text") or "")):
+            return ""
+        secs = max(1, int(time.time() - float(last.get("at") or 0)))
+        ago = f"{secs} s" if secs < 90 else f"{round(secs / 60)} min"
+        # The steps' summaries carry the real names: masked for the model.
+        did = "; ".join(str(d) for d in last.get("did") or [] if d)
+        did = self.privacy.mask_text(did) if did else ""
+        return REPEAT_NOTE.format(ago=ago, did=f" (you did: {did})" if did else "")
 
     def wants_resolve(self, text, clarified):
         """Whether the request may be ambiguous (a local heuristic: no model
@@ -2834,7 +2953,7 @@ class Agent:
         (_meta.verified); else one call on the verify model (ai.routing.
         verify): the acting calls, their replies and the engine's own look
         (observe). None when no verdict came."""
-        acting = [s for s in self.steps if not s["read_only"] and s["status"] in ("ok", "error")]
+        acting = [s for s in self.steps if not s["read_only"] and not s.get("looks") and s["status"] in ("ok", "error")]
         if not acting:
             return None
         if all(s["status"] == "ok" and (s.get("meta") or {}).get("verified") is True for s in acting):
@@ -2979,8 +3098,10 @@ class Agent:
             results = self.run_tools(calls, early=early)
             fin = next((c for c in calls if c.get("name") == FINISH), None) if self.opts.finish else None
             answer = str(((fin or {}).get("input") or {}).get("answer") or "").strip()
+            # A held step (--scope-guard) too: the answer written with it may
+            # say it was done.
             done = bool(fin) and bool(answer) and not cut_note and not any(
-                r.get("is_error") or result_text(r) in (DENIED, UNANSWERED)
+                r.get("is_error") or result_text(r) in (DENIED, UNANSWERED) or result_text(r).startswith(HELD[:15])
                 for r in results if r.get("tool_use_id") != fin.get("id"))
             if fin and not done:
                 results = [dict(r, content=NOT_FINISHED) if r.get("tool_use_id") == fin.get("id") else r
@@ -3057,6 +3178,15 @@ class Agent:
         if not as_blocks(content):
             content = "(empty message)"
         text = content_text(content)
+        own = nixbook_ai.own_words(text)
+        # What the scope guard reads the request's words in: the user's own,
+        # and for a short reply ("yes", "the other one") the turn before
+        # and the answer it replies to (it offered the music: "yes" asks
+        # for it).
+        self.scope_text = own
+        if len(own.split()) <= 8:
+            last = self.state.get("lastRequest") or {}
+            self.scope_text = "\n".join([own, str(last.get("text") or ""), self.last_answer_text()])
         # The waiting tools this request plainly needs: offered now, not
         # after an open_tools__ round trip.
         for key in self.mcp.prefetch(text):
@@ -3068,6 +3198,9 @@ class Agent:
             block = self.context_block(text, hints)
             clarified = self.state.pop("clarified", False)
             sent = content
+            note = self.repeat_note(own)
+            if note:
+                sent = prepend(sent, note)
             if block:
                 sent = prepend(sent, f"<context>\n{block}\n</context>\n\n")
             if self.wants_resolve(text, clarified):
@@ -3094,7 +3227,7 @@ class Agent:
             # An answer that asks the user something (which chat, whether to
             # send) waits for them: not a task left undone to push through
             # (the check's "not done yet" made it send what it had asked about).
-            if self.opts.verify and not error and not self.schema and self.acted() and not asks_user(result):
+            if self.opts.verify and not error and not self.schema and self.to_check(text) and not asks_user(result):
                 check = self.verify(text)
                 if check is not None:
                     self.emit({"type": "verify", "met": check["met"], "note": check["note"], "by": check["by"]})
@@ -3121,6 +3254,12 @@ class Agent:
             self.state["targets"] = targets[-3:]
         elif not error:
             self.state.pop("targets", None)
+        # The request, for the next one said again (repeat_note) and the
+        # scope guard's short replies.
+        if own:
+            did = [nixbook_ai.step_line({"tool": s["bare"], "summary": s.get("summary"), "status": "ok"})
+                   for s in self.steps if not s["read_only"] and s["status"] == "ok"]
+            self.state["lastRequest"] = {"text": own[:500], "at": time.time(), "acted": self.acted(), "did": did[-3:]}
         self.save()
         report = None
         if self.opts.report and not error and not self.schema:
@@ -3137,7 +3276,7 @@ class Agent:
             ev["report"] = {k: report[k] for k in ("summary", "done", "failed", "needsYou")}
         if check is not None:
             ev["verified"] = check["met"]
-        elif self.opts.verify and self.acted():
+        elif self.opts.verify and self.to_check(text):
             ev["verified"] = False
         return ev
 

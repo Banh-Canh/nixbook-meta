@@ -58,6 +58,11 @@ QtObject {
     property var orders: []
     property var told: []
     property var trustSuggest: []
+    // The steps the request didn't ask for, held (meta-agent --scope-guard:
+    // music started, an app opened, a message sent): {id, kind, summary,
+    // order, answered ("" | "yes" | "no")}, an "Also: …?" chip each; Yes
+    // sends `order` to the same session.
+    property var suggested: []
     // The commands Muse ran in this answer (terminal_run: {id, command,
     // cwd, exit, output, duration, visible, error}): "Ran `cmd` (exit N)"
     // with Show output (TerminalNotes).

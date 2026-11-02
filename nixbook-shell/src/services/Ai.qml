@@ -878,6 +878,10 @@ Singleton {
         // (Settings > Desktop agents > Autonomy); what it does unasked is
         // journaled with its Undo.
         if ((Config.options.ai.autonomy?.trust ?? true) && Config.options.policies.ai !== 0) args.push("--trust");
+        // Only what was asked: music started, an app opened or a message sent
+        // that the request doesn't ask for is held and offered ("Also: …?"),
+        // not done ("something cute" set a theme and started YouTube Music).
+        args.push("--scope-guard");
         if (bubble) {
             const confirm = Config.options.ai.quick?.confirm ?? "destructive";
             args.push("--confirm", ["destructive", "actions", "never"].includes(confirm) ? confirm : "destructive", "--report");
