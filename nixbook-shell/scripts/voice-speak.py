@@ -1,11 +1,16 @@
 """nixbook-voice-speak: the desktop agent's answers read out loud
-(services/Voice.qml, ai.voice.speak), in a cute voice. Meta's Model API has
-no speech synthesis, so it is Meta's MMS-TTS (Massively Multilingual Speech,
+(services/Voice.qml, ai.voice.speak). Meta's Model API has no speech
+synthesis, so it is Meta's MMS-TTS (Massively Multilingual Speech,
 facebook/mms-tts, English and French; the ONNX conversion run by
-sherpa-onnx), on this computer, made cute (ai.voice.style "cute"): the
-voice and its timbre raised a little together (a smaller, younger
-character), then the pitch raised again keeping the timbre (clear, not a
-chipmunk), a touch of treble, and a bouncier pace.
+sherpa-onnx), on this computer, in one of two styles (ai.voice.style):
+  natural (the default): MMS's voice sampled a little steadier (VITS noise
+    and duration noise lowered, a touch quicker), then polished: resampled
+    to 48 kHz, the low rumble and the boxy mids cut, presence and a little
+    air added (MMS is a 16 kHz voice: an exciter brings back some of the
+    highs it lacks), gently compressed, a small room, limited;
+  cute: the voice and its timbre raised a little together (a smaller,
+    younger character), then the pitch raised again keeping the timbre
+    (clear, not a chipmunk), a touch of treble, and a bouncier pace.
 
   nixbook-voice-speak [--lang auto|en|fr] [--style cute|natural] [--file WAV] TEXT…
   nixbook-voice-speak --stream [--lang …] [--style …]   the text on stdin as
@@ -37,6 +42,13 @@ MAX_CHARS = 900
 # French one around 107 Hz): (raise with the timbre, raise keeping it).
 CUTE = {"en": (1.35, 1.5), "fr": (1.4, 1.55)}
 PACE = 1.08
+# The natural style: VITS sampling (sherpa-onnx's defaults are 0.667, 0.8, 1)
+# and the polish after it.
+NATURAL_VITS = ["--vits-noise-scale=0.55", "--vits-noise-scale-w=0.7", "--vits-length-scale=0.97"]
+POLISH = ("aresample=48000:resampler=soxr,highpass=f=85,equalizer=f=280:t=q:w=1.2:g=-3,"
+          "equalizer=f=3300:t=q:w=1.0:g=3.5,aexciter=amount=2:drive=6:freq=3500:blend=0,highshelf=f=7000:g=2,"
+          "acompressor=threshold=0.12:ratio=3:attack=8:release=120:makeup=1.6,aecho=0.85:0.6:28|47:0.10|0.07,"
+          "alimiter=limit=0.89:level=disabled")
 
 FR = re.compile(r"\b(le|la|les|des|est|une|pas|vous|tu|je|il|elle|avec|pour|dans|sur|c'est|ce|cette|sont|ont|aux|du|au|et|j'ai|oui|non)\b", re.I)
 EN = re.compile(r"\b(the|is|are|and|you|your|to|of|in|it|on|with|for|this|that|have|has|was|i|yes|no)\b", re.I)
@@ -149,15 +161,19 @@ class Speaker:
             raise RuntimeError(f"{os.path.basename(cmd[0])} failed ({p.returncode}): {last[0][:300]}")
 
     def make(self, text):
-        """One sentence → a WAV, made cute."""
+        """One sentence → a WAV, in the style asked for."""
         # Never an option to sherpa-onnx (a sentence starting with a dash).
         text = text.lstrip("-–— ")
         self.n += 1
         raw = os.path.join(self.tmp, f"raw{self.n}.wav")
+        natural = self.style != "cute"
         self.run(["sherpa-onnx-offline-tts", f"--vits-model={self.model}/model.onnx",
-                  f"--vits-tokens={self.model}/tokens.txt", "--num-threads=2", f"--output-filename={raw}", text])
-        if self.style != "cute":
-            return raw
+                  f"--vits-tokens={self.model}/tokens.txt", "--num-threads=2", *(NATURAL_VITS if natural else []),
+                  f"--output-filename={raw}", text])
+        if natural:
+            out = os.path.join(self.tmp, f"voice{self.n}.wav")
+            self.run(["ffmpeg", "-loglevel", "error", "-y", "-i", raw, "-af", POLISH, out])
+            return out
         both, keep = CUTE.get(self.lang, CUTE["en"])
         mid = os.path.join(self.tmp, f"mid{self.n}.wav")
         out = os.path.join(self.tmp, f"cute{self.n}.wav")
@@ -364,7 +380,7 @@ def stream_main(lang, style):
 
 
 def main(argv):
-    lang, style, out_file, words = "auto", "cute", None, []
+    lang, style, out_file, words = "auto", "natural", None, []
     streamed = False
     args = list(argv[1:])
     while args:

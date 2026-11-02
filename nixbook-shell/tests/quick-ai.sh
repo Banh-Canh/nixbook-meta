@@ -322,7 +322,7 @@ expect_eq "learn: forgotten" '{}' "$(python3 -I "$script" learned)"
 unset XDG_STATE_HOME NIXBOOK_AI_BIG_MODEL
 
 # The answers read out (scripts/voice-speak.py): the text made speakable,
-# the language, and the cute chain run with stub tools (no model).
+# the language, and the natural and cute chains run with stub tools (no model).
 speak="$root/scripts/voice-speak.py"
 vs() { python3 -I -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("vs",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(eval(sys.argv[2]))' "$speak" "$1"; }
 expect_eq "speak: English picked" en "$(vs 'm.language("Firefox is open on workspace 3.")')"
@@ -370,7 +370,13 @@ expect_eq "speak: played in order" "play cute1.wav|play cute2.wav" "$(grep '^pla
 : >"$tmp/speak.log"
 sp --style natural "Coucou ! Julien demande si tu viens ce soir."
 expect_eq "speak: French voice" "tts fr" "$(grep '^tts' "$tmp/speak.log" | cut -d' ' -f1-2 | sort -u)"
-expect_eq "speak: natural = no cute chain" "" "$(grep -E '^(ffmpeg|rubberband)' "$tmp/speak.log" || true)"
+expect_contains_ "speak: natural = MMS sampled steadier" "$(cat "$tmp/speak.log")" "tts fr"
+expect_contains_ "speak: natural = polished (48 kHz, EQ, exciter, compressor, room, limiter)" \
+  "$(grep '^ffmpeg' "$tmp/speak.log" | head -n1)" "aresample=48000:resampler=soxr,highpass=f=85"
+expect_eq "speak: natural = no cute chain" "" "$(grep -E '^rubberband|asetrate' "$tmp/speak.log" || true)"
+: >"$tmp/speak.log"
+sp -- "No style asked for."
+expect_contains_ "speak: natural is the default" "$(grep '^ffmpeg' "$tmp/speak.log" | head -n1)" "aexciter"
 : >"$tmp/speak.log"
 sp -- "-5 degrees outside."
 expect_eq "speak: a sentence never starts with a dash (an option to sherpa-onnx)" "tts en five degrees outside." "$(grep '^tts' "$tmp/speak.log")"
@@ -397,10 +403,10 @@ expect_eq "speak: no voice installed" 2 "$(
 ) | sp --stream --style natural >"$tmp/upto.log" &
 speaker=$!
 sleep 1
-expect_eq "speak --stream: the first sentence spoken before the text ended" "tts en Firefox is open on workspace three.|play raw1.wav" \
+expect_eq "speak --stream: the first sentence spoken before the text ended" "tts en Firefox is open on workspace three.|play voice1.wav" \
   "$(grep -E '^(tts|play)' "$tmp/speak.log" | paste -sd'|')"
 wait "$speaker"
-expect_eq "speak --stream: then the rest, at the end" "tts en Firefox is open on workspace three.|play raw1.wav|tts en And anything else for you?|play raw2.wav" \
+expect_eq "speak --stream: then the rest, at the end" "tts en Firefox is open on workspace three.|play voice1.wav|tts en And anything else for you?|play voice2.wav" \
   "$(grep -E '^(tts|play)' "$tmp/speak.log" | paste -sd'|')"
 # Where each sentence ends in the text, said as it starts playing: the shell
 # shows the answer up to there (text and voice together).

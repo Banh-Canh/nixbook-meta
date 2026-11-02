@@ -24,7 +24,7 @@ import QtQuick
  * what was said is sent there (Initiative.reply: a plain command done at
  * once by QuickIntent, else Quick AI answers or acts with the desktop
  * tools, or Muse in its own thread). Escape in the bubble cancels.
- * The answers are read out (ai.voice.speak) in a cute voice: Meta's MMS-TTS
+ * The answers are read out (ai.voice.speak): Meta's MMS-TTS
  * on this computer (`nixbook-voice-speak`, English or French), as they
  * stream: one `nixbook-voice-speak --stream` per answer, fed the text as it
  * comes, so the first sentence plays before the answer is over.
@@ -178,7 +178,7 @@ Singleton {
     // ── The answers read out (ai.voice.speak: "voice", the answers to what
     // was said; "always"; "never"). Meta's model API has no speech synthesis:
     // Meta's MMS-TTS on this computer (`nixbook-voice-speak`, English or
-    // French from the answer's language), made cute (ai.voice.style). The
+    // French from the answer's language), polished or cute (ai.voice.style). The
     // microphone doesn't take it for the user: closed meanwhile, or, Full AI
     // mode's always-open stream, held (silence sent). Mod+T or Escape cuts it
     // short.
@@ -186,7 +186,7 @@ Singleton {
     // The last message was said, not typed: its answer is read out.
     property bool voiceTurn: false
     readonly property string speakMode: Config.options.ai.voice?.speak ?? "voice"
-    readonly property string voiceStyle: Config.options.ai.voice?.style ?? "cute"
+    readonly property string voiceStyle: Config.options.ai.voice?.style ?? "natural"
     // ai.quick.bubble "needed": talking to it, the bubble stays out of sight
     // (Initiative.quiet), the answers said out loud (or in Full AI's
     // mascot); not when nothing would say them.

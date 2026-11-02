@@ -136,6 +136,14 @@ Singleton {
                 voice.addressee = "all";
             done.addresseeAll = true;
         }
+        // The voice's default became the polished natural one (it was
+        // "cute", written into config.json): moved once, unless Nix sets it.
+        if (!done.voiceNatural) {
+            const voice = root.options.ai.voice;
+            if (voice && voice.style === "cute" && !NixManaged.isPinned("ai.voice.style"))
+                voice.style = "natural";
+            done.voiceNatural = true;
+        }
     }
     property int readWriteDelay: 50 // milliseconds
     property bool blockWrites: false
@@ -428,13 +436,13 @@ Singleton {
                     // The answers read out, by Meta's MMS-TTS on this computer
                     // (English or French): "voice" (the answers to what was
                     // said, and Full AI mode), "always", "never". The style:
-                    // "cute" or "natural" (MMS's own voice).
+                    // "natural" (MMS's voice, polished) or "cute" (higher).
                     property string speak: "voice"
                     // Speak up to interrupt: with the echo-cancelled
                     // microphone it listens while it speaks, and "stop",
                     // "wait"… (or any words of the user's) cut it short.
                     property bool bargeIn: true
-                    property string style: "cute"
+                    property string style: "natural"
                     // Full AI mode's always-open microphone: what is acted on.
                     // "smart": what is said to Muse (its name, a reply to it,
                     // else the small model judges; not the user's call nor

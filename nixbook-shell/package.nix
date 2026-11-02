@@ -201,7 +201,7 @@ let
   # The desktop agent's voice (scripts/voice-speak.py, ai.voice.speak):
   # Meta's MMS-TTS (facebook/mms-tts, English and French) in sherpa-onnx's
   # ONNX conversion, on this computer (Meta's Model API has no speech
-  # synthesis), made cute with ffmpeg + Rubber Band. The MMS weights are
+  # synthesis), polished (or made cute) with ffmpeg + Rubber Band. The MMS weights are
   # CC-BY-NC 4.0: personal use.
   mmsVoices = pkgs.linkFarm "nixbook-mms-voices" [
     {
@@ -479,7 +479,7 @@ let
       voiceTranscribe # `nixbook-voice-transcribe` — Quick AI's voice, whisper.cpp (services/Voice.qml)
       voiceStream # `nixbook-voice-stream` — Quick AI's voice through Meta's Muse Voice Transcribe
       meeting # `nixbook-meeting` — the meeting companion: live captions, notes, the record (services/Meeting.qml)
-      voiceSpeak # `nixbook-voice-speak` — the agent's answers read out loud (Meta MMS, cute)
+      voiceSpeak # `nixbook-voice-speak` — the agent's answers read out loud (Meta MMS, polished)
       desktopMcp # `nixbook-desktop-mcp` — desktop tools of the AI chat
       updateCheck # `nixbook-update-check` — the update check (services/UpdateState.qml)
       improve # `nixbook-improve` — the desktop agent's fixes to nixbook (services/SelfImprove.qml)

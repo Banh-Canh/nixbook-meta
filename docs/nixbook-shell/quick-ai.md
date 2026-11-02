@@ -239,7 +239,7 @@ something failed. The mascot is the mode's only sign on screen.
   Since it hears the whole room, it only acts on
   [what is said to it](#only-what-is-said-to-muse).
 - **It talks**: what it says in its balloon (what it does, its questions, the
-  outcome) is said out loud in its cute voice, the words appearing as they are
+  outcome) is said out loud, the words appearing as they are
   said (never ahead of the voice), and each answer only once.
 - **Its balloon tells thinking from talking**: what it thinks or is doing
   (_Thinking…_, a step, a reaction) is a dimmer thought cloud in italics with
@@ -523,7 +523,7 @@ computer's own sound taken out (a PipeWire echo canceller,
 video playing isn't taken for what you say. After the first deploy with it,
 restart PipeWire once: `systemctl --user restart pipewire pipewire-pulse wireplumber`.
 
-**It answers out loud, in a cute voice** (_Read the answers out_: _When I talk_
+**It answers out loud** (_Read the answers out_: _When I talk_
 by default, _Always_ or _Never_). The answer to what you said is read on this
 computer by Meta's MMS voices (Massively Multilingual Speech), in English or
 French, picked from the answer's language: Meta's Model API has no speech
@@ -531,8 +531,9 @@ synthesis. After acting, it says what it did (a report's outcome and what needs 
 a step waits for your OK, it asks "May I …?"; a plain command says what it did.
 The answer is read as it is written: each sentence is said as soon as it is
 complete, while the next one is made.
-_Voice_ picks **Cute** (higher and bouncier, the default) or **Natural** (MMS's
-own voice). The microphone doesn't take it for you, and `Mod+T` or `Esc` cuts
+_Voice_ picks **Natural** (the default: MMS's voice sampled a little steadier,
+then polished — resampled to 48 kHz, the boxy mids cut, presence and a little
+air added, gently compressed, a small room) or **Cute** (higher and bouncier). The microphone doesn't take it for you, and `Mod+T` or `Esc` cuts
 it short. The voices are MMS's (CC-BY-NC: for personal use).
 
 **Muting it in one click**: the speaker button at the top of Muse's bubble

@@ -206,11 +206,11 @@ ContentPage {
                 configKey: "ai.voice.style"
                 text: Translation.tr("Voice")
                 icon: "face"
-                currentValue: Config.options.ai.voice?.style ?? "cute"
+                currentValue: Config.options.ai.voice?.style ?? "natural"
                 onSelected: newValue => { if (Config.options.ai.voice) Config.options.ai.voice.style = newValue }
                 options: [
-                    { displayName: Translation.tr("Cute"), icon: "favorite", value: "cute" },
-                    { displayName: Translation.tr("Natural"), icon: "person", value: "natural" }
+                    { displayName: Translation.tr("Natural"), icon: "person", value: "natural" },
+                    { displayName: Translation.tr("Cute"), icon: "favorite", value: "cute" }
                 ]
             }
             StyledText {
