@@ -62,10 +62,14 @@ What you say or type in the bubble is an order or a question:
    > _Never_.
 6. **What it does without asking is yours to widen**: with the
    [trust ladder](./desktop-agents.md#trust-ladder), the other steps that change
-   something are done and then told (a **Did: …** line with **Undo**); after
-   three yeses in a row to the same kind of step, it offers **Stop asking
-   before …?**. Everything done unasked is in
-   [What Muse did](./desktop-agents.md#what-muse-did), with Undo.
+   something are done and then told (a **Did: …** line with **Why?** and
+   **Undo**); after three yeses in a row to the same kind of step, it offers
+   **Stop asking before …?**. Everything done unasked is in
+   [What Muse did](./desktop-agents.md#what-muse-did), with Why? and Undo.
+   Steps are always said in plain words, in your language: "Checking your
+   watch list…", "Did: Changed the wallpaper", "Looked something up" — never
+   a tool's name, a server, a file path or its arguments (hover the line for
+   those; in the side panel a step block opens on the call itself).
 7. **Long orders can go on in the background**: while Muse works on a long
    order, **Do it in the background** under the bubble hands it to a
    [background task](./desktop-agents.md#background-tasks) and frees the
@@ -184,6 +188,7 @@ it can be undone, and Muse hears of it with your next message.
 | Apps               | open Firefox, close Firefox, switch to Firefox                              |
 | Workspaces         | workspace 2, next workspace, previous workspace, move window to workspace 3 |
 | Look               | dark mode, light mode                                                       |
+| Theme by mood      | make my desktop calmer and cozier, something cute, neon and edgy            |
 | Notifications      | do not disturb on, do not disturb off                                       |
 | Night light        | night light on, night light off                                             |
 | Screen             | take a screenshot, lock the screen                                          |
@@ -196,6 +201,19 @@ Starting a conversation, the short forms work too ("pause", "next", "louder",
 "pause it", "open the file I just downloaded" or "the other one" go to Muse,
 who knows what you were talking about. An app is opened only when its name is
 certain; anything unsure goes to Muse as before.
+
+**A theme by its mood.** A request about the desktop's look (a word for the
+desktop, the screen, its theme, look, vibe or style) that names a mood puts on
+the theme for it at once, with **Undo**: cozy, calm, relaxing, warm → Studio
+Ghibli; cute, playful, kawaii → Chiikawa; neon, edgy, futuristic → Cyberpunk
+2077; bold, stylish → Persona; plain, clean, simple, default → Material (or a
+theme by its name). In French (un bureau plus cosy), German (mach meinen
+Desktop gemütlicher) and Vietnamese (làm màn hình ấm cúng hơn) too. The theme
+keeps the variant you chose for it. Two moods at once ("cute but clean"), a
+negation ("less cute"), a question ("which theme is cozy?") go to Muse, and so
+does everything when the theme is set in Nix. "Dark" alone stays dark mode
+(`src/modules/common/functions/theme_moods.js`, tested in
+`tests/ux-rules.sh`).
 
 **Films and episodes (Jellyfin).** Once [Jellyfin is set up](/nixbook-shell/desktop-agents#jellyfin)
 and on for Muse, a request that starts with a watching verb — play, watch,

@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -25,8 +26,11 @@ import QtQuick
  *     command failing in a terminal, the day starting, unlocking, back from a
  *     break, a monitor / Wi-Fi / audio output / Bluetooth device, a routine
  *     having run.
- * The chip: "Next: open Jira", why on hover ("You usually open Jira after
- * your 09:00 standup — 14 times"). A click or Mod+Shift+Return does it, as
+ * The chip: "Next: open Jira", why under it ("You usually open Jira after
+ * your 09:00 standup — 14 times") and what taking it does (`preview`). Only
+ * one offer per moment (Offers.qml): what Muse's own word already offers
+ * (the same file, pull request, meeting) isn't offered here too, and taking
+ * one takes the other away. A click or Mod+Shift+Return does it, as
  * the user's own action (an app focused or started through AppLaunch, a
  * layout restored, a link opened, a timer, a routine run; a follow-up is an
  * order for Muse in its bubble, QuickAi.command, only with policies.ai 1).
@@ -108,6 +112,12 @@ Singleton {
     }
     function _show(o) {
         if (root.blocked()) return;
+        // One offer per moment (Offers.qml): what Muse already offers about
+        // this file, pull request or meeting isn't offered again here.
+        if (!Offers.claim("nextup", o.id, OfferCues.fromNextUp(o))) {
+            DesktopHelper.run(["predict", "feedback", o.id, "done"], "", () => {});
+            return;
+        }
         root.screenName = WM.focusedMonitor?.name ?? root.screenName;
         root.lingering = false;
         root.offer = o;
@@ -119,6 +129,7 @@ Singleton {
     }
     function _hide() {
         if (!root.offer) return;
+        Offers.release("nextup", root.offer.id);
         root.offer = null;
         root.held = false;
         fade.stop();
@@ -129,9 +140,18 @@ Singleton {
     function _answerOffer(outcome) {
         const o = root.offer;
         if (!o) return null;
+        // Taken: the same moment offered elsewhere goes (Muse's word).
+        if (outcome === "accepted") Offers.taken("nextup", o.id);
         root._hide();
         DesktopHelper.run(["predict", "feedback", o.id, outcome], "", () => {});
         return o;
+    }
+    // Taken elsewhere, or about what is gone: it goes, nothing learned.
+    Connections {
+        target: Offers
+        function onWithdraw(surface, id, why) {
+            if (surface === "nextup" && root.offer?.id === id) root._answerOffer("done");
+        }
     }
     Timer {
         id: fade
@@ -206,7 +226,7 @@ Singleton {
             break;
         case "followup":
             // An order for Muse: a model, only with AI online.
-            if (root.policy === 1) QuickAi.command(o.instruction, "predict", o.label);
+            if (root.policy === 1) QuickAi.command(o.instruction, "predict", o.label, { text: o.explain ?? "", from: "habit" });
             break;
         }
     }

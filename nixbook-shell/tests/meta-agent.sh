@@ -616,8 +616,8 @@ expect_eq "trust: a silent one not said" "1" "$(jq -c 'select(.type == "told")' 
 expect_eq "trust: reading steps never checked; an input step's class is the app in front" \
   "check launch_app@firefox --risky 0|check type_text@firefox --risky 0" "$(sed 's/^trust //' "$tmp/trust.log" | paste -sd'|')"
 sid=$(jq -r 'select(.type == "result") | .session_id' <<<"$out")
-expect_eq "trust: the journal gets both, the undo from the tool's _meta.undo" \
-  "$(jq -cn --arg s "$sid" '[{source: "task", class: "launch_app@firefox", summary: "launch app (app=firefox)", tool: "launch_app", args: {app: "firefox"}, session: $s, task: "abc123def456", undo: {tool: "close_window", args: {id: 9}}}, {source: "task", class: "type_text@firefox", summary: "type text (text=hello)", tool: "type_text", args: {text: "hello"}, session: $s, task: "abc123def456"}]')" \
+expect_eq "trust: the journal gets both, the undo from the tool's _meta.undo, why (the request)" \
+  "$(jq -cn --arg s "$sid" '[{source: "task", class: "launch_app@firefox", summary: "launch app (app=firefox)", tool: "launch_app", args: {app: "firefox"}, session: $s, why: "AGENTTEST:trusttell open firefox and type", whyFrom: "request", task: "abc123def456", undo: {tool: "close_window", args: {id: 9}}}, {source: "task", class: "type_text@firefox", summary: "type text (text=hello)", tool: "type_text", args: {text: "hello"}, session: $s, why: "AGENTTEST:trusttell open firefox and type", whyFrom: "request", task: "abc123def456"}]')" \
   "$(jq -sc . "$tmp/journal.log")"
 
 script trustrisky '[[{"type": "tool_use", "id": "d1", "name": "mcp__desktop__tasks", "input": {"action": "delete", "id": "t1"}}],
@@ -870,7 +870,7 @@ out=$(printf '%s\n%s\n' \
   '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:scopeyes make it cute"}}' \
   '{"type": "user", "message": {"role": "user", "content": "yes please"}}' |
   agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --scope-guard)
-expect_eq "scope: \"yes\" to its offer runs it" "launch_app 0" \
+expect_eq 'scope: "yes" to its offer runs it' "launch_app 0" \
   "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ') $(jq -c 'select(.type == "suggest")' <<<"$out" | wc -l | tr -d ' ')"
 
 # -- Said again: the second turn told -------------------------------------------------------------------

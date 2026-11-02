@@ -91,7 +91,11 @@ Item {
                     id: thinkBlockLanguage
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignLeft
-                    text: root.completed ? Translation.tr("Thought") : (Translation.tr("Thinking") + ".".repeat(Math.random() * 4))
+                    // A tool call ("**jellyfin: next_up** {…}") in words ("Checked
+                    // your watch list"); the call itself stays in the block.
+                    readonly property string tool: StepLabels.thinkName(root.segmentContent)
+                    text: tool.length > 0 ? (root.completed ? StepLabels.done(tool) : `${StepLabels.doing(tool)}…`)
+                        : root.completed ? Translation.tr("Thought") : (Translation.tr("Thinking") + ".".repeat(Math.random() * 4))
                 }
                 Item { Layout.fillWidth: true }
                 RippleButton { // Expand button

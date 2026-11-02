@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import QtQuick
@@ -141,6 +142,24 @@ Singleton {
     function canUndo(e) {
         return !!e?.undo && !e.undone && root.undoState[e.id] !== "done"
     }
+    // Why it was done ("What Muse did" and the told lines' Why?): the
+    // entry's `why` (journal add: what the user asked, the routine, the
+    // event reacted to, the habit Next up offered it from, the offer said
+    // yes to), else what its source says; "" when nothing is known.
+    function whyText(e) {
+        const why = String(e?.why ?? "").trim()
+        const from = String(e?.whyFrom ?? "")
+        if (why.length > 0) {
+            if (from === "routine") return Translation.tr("Your routine: %1").arg(why)
+            if (from === "event") return Translation.tr("It reacted to: %1").arg(why)
+            if (from === "habit") return Translation.tr("Next up, from your habit: %1").arg(why)
+            if (from === "offer") return Translation.tr("You said yes to: %1").arg(why)
+            return Translation.tr("You asked: “%1”").arg(why)
+        }
+        if (e?.source === "routine" || e?.source === "order") return Translation.tr("One of your routines ran it.")
+        if (e?.source === "task") return Translation.tr("A background task you started did it.")
+        return ""
+    }
     // done(ok, text).
     function undo(id, done) {
         const key = String(id ?? "")
@@ -212,7 +231,9 @@ Singleton {
         DesktopHelper.run(["journal", "list", "--day", day], "", (code, out) => {
             const entries = root._list(root._json(code, out), "entries")
             if (entries.length === 0) return
-            const shown = entries.slice(0, 3).map(e => String(e.summary ?? "").trim()).filter(s => s).join(" · ")
+            // In words ("Changed the wallpaper"), never a tool's name or a path.
+            const shown = entries.slice(0, 3).map(e => (e.class || e.tool) ? StepLabels.done(e.class || e.tool, e.args)
+                : String(e.summary ?? "").trim()).filter(s => s).join(" · ")
             Initiative.journalLine(entries.length === 1 ? Translation.tr("Yesterday I did one thing for you: %1").arg(shown)
                 : Translation.tr("Yesterday I did %1 things for you: %2").arg(entries.length).arg(shown))
         })

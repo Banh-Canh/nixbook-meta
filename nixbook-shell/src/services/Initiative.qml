@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Notifications
@@ -129,6 +130,31 @@ Singleton {
         for (const p of words) root.markRead(p)
         for (const id of ids) root.answer(id, "later")
         return ids.length
+    }
+    // Taken elsewhere, or about what is gone (Offers.qml): the word goes
+    // from the small bubbles and the bar, answered "later" (neither taken
+    // nor refused). Never the conversation it opened in the bubble.
+    function withdraw(id) {
+        if (!id) return
+        if (root.speaking?.id === id && (root.chat !== null || root.typing)) return
+        root.putAway(p => p.id === id)
+    }
+    Connections {
+        target: Offers
+        function onWithdraw(surface, id, why) {
+            if (surface === "initiative") root.withdraw(id)
+        }
+    }
+    // Full AI mode starts: the words of a while ago don't come along (their
+    // moment passed; still in the bar). A routine it offered keeps its Yes.
+    Connections {
+        target: FullAi
+        function onActiveChanged() {
+            if (!FullAi.active) return
+            const t = Date.now() / 1000
+            root.putAway(p => (p === root.speaking || root.stack.some(q => q.id === p.id))
+                && t - (p.time ?? 0) > 120 && !p.accept)
+        }
     }
     // Read: what the user has seen in the bubble (hovered, answered, closed
     // or opened from the bar), by id. Still there, but the bar's bubble only
@@ -263,6 +289,13 @@ Singleton {
             if (tag && answer.item) {
                 answer.item.trigger = tag
                 if (answer.item.id) root._offerTags = Object.assign({}, root._offerTags, { [answer.item.id]: tag })
+            }
+            // One offer per moment (Offers.qml): the same file, link or
+            // trigger already offered elsewhere isn't said again.
+            if ((answer.action === "notify" || answer.action === "badge") && answer.item?.id
+                    && !Offers.claim("initiative", answer.item.id, OfferCues.fromInitiative(answer.item))) {
+                root.answer(answer.item.id, "later")
+                answer.action = "merged"
             }
             if (answer.action === "notify") root._say(answer.item)
             if (answer.action === "badge") {
@@ -543,6 +576,8 @@ Singleton {
         root._answeredId = item.id
         root.markRead(item)
         root._opened = { id: item.id, time: Date.now() }
+        // Taken here: the same moment offered elsewhere goes (Next up's chip).
+        Offers.taken("initiative", item.id)
         root.answer(item.id, "replied")
     }
     // The user's answer, in the bubble: Muse answers there.
@@ -889,6 +924,8 @@ Singleton {
         const item = Object.assign({ id: Qt.md5(`meeting|${w.text}|${t}`).slice(0, 12), level: "notify", title: "Muse",
                                      time: t / 1000, expires: t / 1000 + (w.offer ? 15 * 60 : 6 * 3600) }, w)
         item.text = String(item.text ?? "").slice(0, 4000)
+        // The call's record: Next up's "write the follow-up" is the same moment.
+        if (w.meetingTitle) Offers.claim("initiative", item.id, OfferCues.fromMeeting(w.meetingTitle))
         root._local(item)
         root._say(item)
     }
@@ -941,7 +978,9 @@ Singleton {
         if (item.id) root.answer(item.id, "replied")
         if (root.speaking === item) root.speaking = null
         const shown = order.split("\n")[0]
-        QuickAi.command(order, "offer", shown.length > 140 ? shown.slice(0, 139) + "…" : shown)
+        // Why, in the journal: the offer said yes to.
+        QuickAi.command(order, "offer", shown.length > 140 ? shown.slice(0, 139) + "…" : shown,
+                        { text: String(item.offer?.say || item.text || ""), from: "offer" })
     }
     // Never for this: a preference in the one memory (never offered again),
     // and the trigger itself quiet for 30 days.
@@ -964,6 +1003,7 @@ Singleton {
     }
     function answer(id, outcome) {
         if (!/^[0-9a-f]{1,16}$/.test(id ?? "")) return
+        Offers.release("initiative", id)
         root.pending = root.pending.filter(p => p.id !== id)
         root.stack = root.stack.filter(p => p.id !== id)
         if (root._localItems.some(p => p.id === id)) {

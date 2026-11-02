@@ -7551,7 +7551,8 @@ def routine_run(cfg, rid, event, now=None):
     audit("routine", "routine", {"id": rid}, "ok")
     source = "order" if r.get("origin") == "order" else "routine"
     for d in did:
-        journal_add(cfg, dict(d, source=source, routine=rid))
+        # Why: the routine itself ("When I join a meeting, mute the music").
+        journal_add(cfg, dict(d, source=source, routine=rid, why=str(r.get("text") or ""), whyFrom="routine"))
     if not (r.get("learned") and not r["learned"].get("trial")):
         routine_say(r, (said or f"{r['text']}: done.") + (" (learned from your habits)" if r.get("learned") else ""))
     return {"ran": True, "said": said}
@@ -20322,11 +20323,17 @@ def trust_command(cfg, argv):
 # `tell`/`silent` steps, background tasks. Kept JOURNAL_DAYS days. An entry
 # may carry its undo {tool, args} (call_tool's undo hints): `journal undo`
 # runs it through call_tool (the pause and tool groups apply), marks the
-# entry undone and brings its kind's trust a step down.
+# entry undone and brings its kind's trust a step down. And why it was done
+# (`why`, `whyFrom`: what the user asked, the routine, the event reacted to,
+# the habit Next up offered it from, the offer said yes to): "What Muse did"
+# shows it on Why?. Shown to the user only (real names: unmasked), never an
+# instruction to anyone.
 JOURNAL_DAYS = 30
 JOURNAL_MAX = 2000
 JOURNAL_SOURCES = ("routine", "order", "reaction", "task", "agent")
 JOURNAL_ARGS_MAX = 600
+JOURNAL_WHY_MAX = 240
+JOURNAL_WHY_FROM = ("request", "routine", "event", "habit", "offer")
 # What an Undo may run: the reversible tools' own way back, nothing else.
 UNDO_TOOLS = {"move_window_to_workspace", "window_action", "set_theme", "do_not_disturb", "equalizer", "shell_ipc",
               "close_window", "calendar", "tasks", "widget", "restore_layout", "terminal_suggest", "editor_open"}
@@ -20395,6 +20402,11 @@ def journal_add(cfg, data, now=None):
     for k, cap in (("session", 80), ("task", 80), ("routine", 16)):
         if isinstance(data.get(k), str) and data[k].strip():
             e[k] = clean_text(data[k], cap)
+    why = clean_text(re.sub(r"\s+", " ", unmask_text(data["why"])).strip(), JOURNAL_WHY_MAX) \
+        if isinstance(data.get("why"), str) else ""
+    if why:
+        e["why"] = why
+        e["whyFrom"] = data.get("whyFrom") if data.get("whyFrom") in JOURNAL_WHY_FROM else "request"
     if data.get("by") == "desktop-mcp":
         e["by"] = "desktop-mcp"
     try:
@@ -20408,7 +20420,7 @@ def journal_add(cfg, data, now=None):
                              and str((x.get("args") or {}).get("command") or "")[:150] == said), None)
                 if mine:
                     mine["source"] = source
-                    mine.update({k: e[k] for k in ("session", "task", "routine") if k in e})
+                    mine.update({k: e[k] for k in ("session", "task", "routine", "why", "whyFrom") if k in e})
                     j.save()
                     return {"id": mine["id"]}
             j.data["entries"] = [x for x in j.data["entries"] if isinstance(x, dict)
@@ -21723,7 +21735,9 @@ def offer_consider(cfg, kind, event, now):
 # of the prior. A step is offered only when it clears the bar: probability at
 # least ai.predict.threshold, seen at least ai.predict.minCount times, not
 # turned down, muted, done or offered lately, at most PREDICT_PER_HOUR an
-# hour, never in quiet hours.
+# hour, never in quiet hours — but for a built-in follow-up of what the user
+# has just done (its event within PREDICT_QUIET_FRESH: they are at the
+# computer, the PDF just downloaded).
 #
 # Learning: taken, it is counted again (PREDICT_ACCEPT_BONUS); let fade, a
 # "nothing" is counted after its cue (its share drops) and it rests
@@ -21746,6 +21760,7 @@ PREDICT_COOL_IGNORED = 45 * 60
 PREDICT_COOL_DISMISSED = 4 * 3600
 PREDICT_REOFFER = 20 * 60  # the same step not offered again this soon, whatever came of it
 PREDICT_JUST_DONE = 10 * 60  # nor a step the user just took
+PREDICT_QUIET_FRESH = 120  # s: a follow-up of an event this recent shows in quiet hours too
 PREDICT_PER_HOUR = 6
 PREDICT_MAX_CUES = 300
 PREDICT_MAX_NEXT = 16
@@ -21789,6 +21804,33 @@ PREDICT_SAY = {
                 "fr": "Muse le propose {after} : accepte ou laisse filer, il apprend",
                 "de": "Muse bietet das {after} an: annehmen oder verblassen lassen, es lernt dazu",
                 "vi": "Muse gợi ý việc này {after}: nhận hoặc bỏ qua, nó sẽ học"},
+}
+# What taking it does, shown on the chip (`preview`).
+PREDICT_PREVIEW = {
+    "app": {"en": "Opens {name}, or brings it to the front", "fr": "Ouvre {name}, ou le met au premier plan",
+            "de": "Öffnet {name} oder holt es nach vorn", "vi": "Mở {name} hoặc đưa lên phía trước"},
+    "layout": {"en": "Puts your windows back as in “{name}”", "fr": "Remet tes fenêtres comme dans « {name} »",
+               "de": "Ordnet deine Fenster wie in „{name}“", "vi": "Xếp lại cửa sổ như bố cục “{name}”"},
+    "url": {"en": "Opens {name} in your browser", "fr": "Ouvre {name} dans ton navigateur",
+            "de": "Öffnet {name} im Browser", "vi": "Mở {name} trong trình duyệt"},
+    "timer": {"en": "Starts a {name}-minute countdown", "fr": "Lance un compte à rebours de {name} min",
+              "de": "Startet einen Countdown von {name} Minuten", "vi": "Bắt đầu đếm ngược {name} phút"},
+    "focus": {"en": "Starts a pomodoro", "fr": "Lance un pomodoro", "de": "Startet einen Pomodoro",
+              "vi": "Bắt đầu một pomodoro"},
+    "routine": {"en": "Runs your routine “{name}” now", "fr": "Lance ta routine « {name} » maintenant",
+                "de": "Führt deine Routine „{name}“ jetzt aus", "vi": "Chạy thói quen “{name}” ngay"},
+    "followup:meeting": {"en": "Muse will draft the recap and the action items — nothing is sent",
+                         "fr": "Muse rédigera le récap et les actions — rien n'est envoyé",
+                         "de": "Muse entwirft die Zusammenfassung und die Aufgaben — nichts wird gesendet",
+                         "vi": "Muse sẽ soạn tóm tắt và việc cần làm — không gửi gì cả"},
+    "followup:review": {"en": "Muse will read the pull request and review it — nothing is posted",
+                        "fr": "Muse lira la pull request et te dira ce qu'il en pense — rien n'est publié",
+                        "de": "Muse liest den Pull Request und prüft ihn — nichts wird gepostet",
+                        "vi": "Muse sẽ đọc pull request và nhận xét — không đăng gì cả"},
+    "followup:summarize": {"en": "Muse will read {name} and give you the key points",
+                           "fr": "Muse lira {name} et t'en donnera l'essentiel",
+                           "de": "Muse liest {name} und fasst das Wichtigste zusammen",
+                           "vi": "Muse sẽ đọc {name} và tóm tắt ý chính"},
 }
 # "after …" for each kind of cue.
 PREDICT_AFTER = {
@@ -22264,6 +22306,11 @@ def predict_describe(d, c, lang, opts):
          "explain": (PREDICT_SAY["builtin"][lang].format(after=after) if c["builtin"] and c["n"] == 0 else
                      PREDICT_SAY["usually"][lang].format(label=label, Label=_pcap(label), after=after, n=c["n"]))}
     lab = d["labels"].get(x) or {}
+    preview = PREDICT_PREVIEW.get(x) or PREDICT_PREVIEW.get(kind)
+    if preview:
+        name = ((event or {}).get("name") or "PDF") if x == "followup:summarize" else (
+            value if kind == "timer" else predict_name(d, x))
+        o["preview"] = preview[lang].format(name=name)
     if kind == "app":
         o["app"] = value
         o["desktop"] = lab.get("desktop") or desktop_for_app(value, applications()) or ""
@@ -22277,17 +22324,44 @@ def predict_describe(d, c, lang, opts):
         o["routine"] = value
     elif kind == "followup":
         o["instruction"] = predict_instruction(x, event)
+        # What it is about, for the shell's one offer per moment (Offers.qml):
+        # Muse's own word about the same file, pull request or meeting.
+        target = PREDICT_TARGETS.get(x)
+        what = (event or {}).get("path" if target == "path" else "name") or ""
+        if target and what:
+            o["target"] = {target: what}
     return o
+
+
+# A follow-up's subject (its event's label): Muse's word about it is the same moment.
+PREDICT_TARGETS = {"followup:summarize": "path", "followup:review": "repo", "followup:meeting": "title"}
+
+
+def predict_quiet_ok(d, c, now):
+    """In quiet hours: a built-in follow-up of an event the user caused just
+    now (they are at the computer); nothing else."""
+    if not c["x"].startswith("followup:") or not c.get("builtin"):
+        return False
+    for t, key, kind, ctx in reversed(d["recent"]):
+        if now - t > PREDICT_QUIET_FRESH:
+            break
+        if kind == "event" and c["cue"] in ctx:
+            return True
+    return False
 
 
 def predict_make_offer(cfg, d, opts, now, cues=None):
     """The one step to offer now, or None, and why."""
     force = opts.get("force") is True
-    if not force and quiet_hours(cfg, now):
-        return None, "quiet hours"
+    quiet = not force and quiet_hours(cfg, now)
     if not force and sum(1 for o in d["offers"] if now - o.get("t", 0) < 3600) >= PREDICT_PER_HOUR:
         return None, f"{PREDICT_PER_HOUR} offers this hour already"
     cands = predict_candidates(cfg, d, opts, now, cues)
+    if quiet:
+        # Only a follow-up of what the user just did.
+        cands = [c for c in cands if predict_quiet_ok(d, c, now)]
+        if not cands:
+            return None, "quiet hours"
     if not cands:
         return None, "nothing learned after this yet"
     best = cands[0]

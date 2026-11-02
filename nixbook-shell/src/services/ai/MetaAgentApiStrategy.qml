@@ -53,7 +53,8 @@ QtObject {
     property bool clarify: false
     property string error: ""
     // The tools running now (tool_started, until their result), by id ->
-    // name; `doing`: the one started last, as the bubble says it.
+    // full name (`mcp__jellyfin__next_up`); `doing`: the one started last,
+    // the bubble says it in words (StepLabels: "Checking your watch list").
     property var running: ({})
     property string doing: ""
     // The turn's final answer, before its checks (the `answer` event).
@@ -324,8 +325,8 @@ QtObject {
             // streaming (no approval needed).
             const id = String(ev.id ?? "");
             const name = toolName(ev.name);
-            running = Object.assign({}, running, { [id]: name });
-            doing = name;
+            running = Object.assign({}, running, { [id]: String(ev.name ?? "") });
+            doing = String(ev.name ?? "");
             if (!steps.some(x => x.id === id)) setStep(id, { tool: name, summary: "", status: "run" });
         } else if (ev.type === "answer") {
             // The final text, complete before the checks: shown as done and

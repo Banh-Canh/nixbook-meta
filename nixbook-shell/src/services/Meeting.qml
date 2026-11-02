@@ -403,7 +403,7 @@ Singleton {
     function _said() {
         const s = root.summary
         if (!s || s.empty) return
-        Initiative.meetingWord({ kind: "meeting", text: `${Translation.tr("Notes from “%1”").arg(root.summaryTitle || Translation.tr("the call"))}\n\n${root.recordText(s, root.summaryTitle, "plain")}`,
+        Initiative.meetingWord({ kind: "meeting", meetingTitle: root.title || root.summaryTitle, text: `${Translation.tr("Notes from “%1”").arg(root.summaryTitle || Translation.tr("the call"))}\n\n${root.recordText(s, root.summaryTitle, "plain")}`,
             actions: [
                 ...((s.actions ?? []).length > 0 ? [{ label: Translation.tr("Add tasks"), do: "meeting", what: "tasks" }] : []),
                 { label: Translation.tr("Save as note"), do: "meeting", what: "note" },

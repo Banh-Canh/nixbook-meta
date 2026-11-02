@@ -227,6 +227,10 @@ Singleton {
 
     // ── Showing it ──
     function show(offer) {
+        // One offer per moment (Offers.qml): a link or a file Muse or Next
+        // up offers already isn't offered again here.
+        if (!Offers.claim("clipboard", String(offer.time), OfferCues.fromClipboard(offer.text, offer.kind))) return
+        if (root.current) Offers.release("clipboard", String(root.current.time))
         root.current = offer
         const s = Object.assign({}, root.stats[offer.kind] ?? {})
         s.shown = (s.shown ?? 0) + 1
@@ -244,6 +248,7 @@ Singleton {
     function dismiss(ignored) {
         const c = root.current
         if (!c) return
+        Offers.release("clipboard", String(c.time))
         root.current = null
         hideTimer.stop()
         root.hovered = false
@@ -292,9 +297,19 @@ Singleton {
             : root.kindName(kind)
     }
 
+    // Taken elsewhere, or about what is gone: it goes, nothing learned.
+    Connections {
+        target: Offers
+        function onWithdraw(surface, id, why) {
+            if (surface === "clipboard" && String(root.current?.time ?? "") === id) root.dismiss(false)
+        }
+    }
+
     // ── Running a chip ──
     function runChip(chip) {
         if (!chip) return false
+        // Taken: the same moment offered elsewhere goes.
+        if (root.current) Offers.taken("clipboard", String(root.current.time))
         root.current = null
         hideTimer.stop()
         root.hovered = false

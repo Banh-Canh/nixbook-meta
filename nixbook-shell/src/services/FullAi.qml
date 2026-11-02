@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import QtQuick
@@ -124,7 +125,8 @@ Singleton {
         if (root.reacting) return { text: root.reactingLine, kind: "thought" };
         if (QuickAi.busy) {
             const step = [...QuickAi.steps].reverse().find(s => s.status === "run") ?? QuickAi.steps[QuickAi.steps.length - 1];
-            if (step) return { text: `${step.tool.replace(/_/g, " ")}${step.summary ? " · " + step.summary : ""}…`, kind: "thought" };
+            // In words ("Checking your watch list…"), never its raw name or arguments.
+            if (step) return { text: `${step.status === "run" ? StepLabels.doing(step.tool, StepLabels.argsOf(step.summary)) : StepLabels.done(step.tool, StepLabels.argsOf(step.summary))}…`, kind: "thought" };
             return { text: Translation.tr("Thinking…"), kind: "thought" };
         }
         if (root.said.length > 0) return { text: root.tailOf(root.said), kind: "say" };
@@ -311,7 +313,8 @@ Singleton {
         } else if (d.action === "do") {
             root.didAlone = { sig: d.sig, at: Date.now() };
             if (said) root.say(said);
-            QuickAi.command(d.instruction, "react", said || root.describe(ev));
+            // Why, in the journal: what it reacted to.
+            QuickAi.command(d.instruction, "react", said || root.describe(ev), { text: root.describe(ev), from: "event" });
             root.remember(d.sig, "do", "did it");
         }
         pump.restart();
