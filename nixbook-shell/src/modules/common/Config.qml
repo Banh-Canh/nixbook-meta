@@ -655,6 +655,41 @@ Singleton {
                     property real threshold: 0.5
                     property int minCount: 4
                 }
+                // The daily brief (services/DailyBrief.qml): one card in the
+                // bubble at the day's start (`morning`: today's events, tasks
+                // due, who waits for a reply, the weather) and at `eveningAt`
+                // (HH:MM; `evening`: what Muse did today, tasks done and left,
+                // tomorrow's first event); read out with `speak` when the
+                // voice says answers on its own (ai.voice.speak always, or
+                // Full AI mode).
+                property JsonObject brief: JsonObject {
+                    property bool morning: true
+                    property bool evening: true
+                    property string eveningAt: "18:00"
+                    property bool speak: true
+                }
+                // The reply batch (services/ReplyBatch.qml): the messages
+                // waiting for an answer, each with a draft (`model`: small,
+                // main or big), in one card where the user sends, edits or
+                // skips each; `offer`: a chip in the bubble when two or more
+                // wait; `prepare`: the drafts made before the chip says so
+                // ("drafts ready": the messages go to the model unasked).
+                property JsonObject replies: JsonObject {
+                    property bool enable: true
+                    property bool offer: true
+                    property bool prepare: false
+                    property string model: "main"
+                }
+                // The phone handoff (services/PhoneHandoff.qml), off by
+                // default: away (locked, or no input) `afterMinutes` while
+                // Muse waits for an answer or an OK, a background task needs
+                // the user or a reminder or event comes within the hour, one
+                // message to the paired phone through KDE Connect (what kind
+                // of thing waits and when, never its text).
+                property JsonObject handoff: JsonObject {
+                    property bool enable: false
+                    property int afterMinutes: 5
+                }
                 // Muse in the terminal and the editor (nixbook-desktop-mcp's
                 // `terminal` tools, kitty's remote control and nvim's server):
                 // `read`, the kitty windows and what they show (the last

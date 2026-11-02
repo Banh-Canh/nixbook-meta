@@ -306,6 +306,8 @@ Singleton {
 
     function setTaskDone(task, done) {
         if (!task) return
+        // When (the daily brief's recap counts today's).
+        task.completed = done ? new Date().toISOString() : ""
         if (root.synced) {
             if (!task.id) return
             task.done = done
@@ -442,6 +444,7 @@ Singleton {
                 notes: t.notes ?? "",
                 due: m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null,
                 allDay: !!m,
+                completed: t.completed ?? "",
             })
         }
         const dueKey = item => item.due ? item.due.getTime() : Number.MAX_SAFE_INTEGER
@@ -682,6 +685,8 @@ Singleton {
                     due: t.due ? root._dayKey(t.due) : null,
                     deadline: t.done ? null : root.deadlineGroup(t),
                 }
+                // When it was done (the day: the daily brief's recap).
+                if (t.done && t.completed) out.completed = root._dayKey(new Date(t.completed))
                 const parent = t.parentUid ? byUid[t.parentUid] : null
                 if (parent) out.parent = parent.id
                 if (!t.id) out.syncing = true

@@ -162,6 +162,22 @@
       "threshold": 0.5,
       "minCount": 4
     },
+    "brief": {
+      "morning": true,
+      "evening": true,
+      "eveningAt": "18:00",
+      "speak": true
+    },
+    "replies": {
+      "enable": true,
+      "offer": true,
+      "prepare": false,
+      "model": "main"
+    },
+    "handoff": {
+      "enable": false,
+      "afterMinutes": 5
+    },
     "terminal": {
       "read": true,
       "suggest": true,

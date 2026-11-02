@@ -94,6 +94,20 @@ Singleton {
     function sendClipboard(id) { root.call("clipboard", id, "clipboard", "org.kde.kdeconnect.device.clipboard", "sendClipboard") }
     function shareUrl(id, url) { root.call("share", id, "share", "org.kde.kdeconnect.device.share", "shareUrl", "s", [url]) }
     function shareText(id, text) { root.call("shareText", id, "share", "org.kde.kdeconnect.device.share", "shareText", "s", [text]) }
+    // A message shown on the phone: a ping with its text (the phone shows
+    // it as a notification), else the text shared (the phone offers to
+    // copy it). Never an SMS. False: no reachable device takes either.
+    function sendNote(id, text) {
+        const d = root.devices.find(x => x.id === id);
+        if (!d?.reachable) return false;
+        if (root.hasPlugin(d, "ping")) root.call("pingText", id, "ping", "org.kde.kdeconnect.device.ping", "sendPing", "s", [text]);
+        else if (root.hasPlugin(d, "share")) root.shareText(id, text);
+        else return false;
+        return true;
+    }
+    // The device such a message goes to: the first reachable paired one
+    // with ping or share.
+    readonly property var noteDevice: root.reachableDevices.find(d => root.hasPlugin(d, "ping") || root.hasPlugin(d, "share")) ?? null
     function browse(id) { root.call("browse", id, "sftp", "org.kde.kdeconnect.device.sftp", "startBrowsing") }
     function openSms(id) { root.call("sms", id, "sms", "org.kde.kdeconnect.device.sms", "launchApp") }
     function requestPairing(id) { root.call("pair", id, "", "org.kde.kdeconnect.device", "requestPairing") }

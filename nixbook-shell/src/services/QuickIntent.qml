@@ -16,7 +16,9 @@ import QtQuick
  * number, the next, the previous; the window moved to one), dark or light
  * mode, Do Not Disturb, night light, a screenshot, locking the screen, a
  * timer or a pomodoro, a saved window layout, a task added, the shell's
- * settings, the meeting companion started or stopped ("take notes"). In English, French, German and Vietnamese (`_english` turns the
+ * settings, the meeting companion started or stopped ("take notes"), the
+ * daily brief or the day's recap ("brief me", "recap my day"), the reply
+ * batch ("help me reply"). In English, French, German and Vietnamese (`_english` turns the
  * three others into the English commands first).
  *
  * Strict patterns only: anything else, or anything unsure (an app it can't
@@ -88,6 +90,9 @@ Singleton {
         [/^(?:ouvre |affiche )?(?:les )?(?:param[eè]tres|r[eé]glages)(?: du shell)?$/, "settings"],
         [/^(?:prends?|commence [aà] prendre) (?:des |les )?notes(?: de (?:la )?r[eé]union| de l'appel)?$|^(?:sous-titre|transcris) (?:la r[eé]union|l'appel)$/, "take meeting notes"],
         [/^(?:arr[eê]te|stoppe|termine) (?:de prendre )?(?:les )?notes(?: de (?:la )?r[eé]union| de l'appel)?$/, "stop taking notes"],
+        [/^aide[- ]moi [aà] r[eé]pondre(?: (?:aux|[aà] mes) messages)?$|^r[eé]dige (?:les |mes )?r[eé]ponses$|^r[eé]ponds? (?:aux|[aà] mes) messages$/, "help me reply"],
+        [/^(?:fais[- ]moi )?(?:le |mon )?(?:briefing|point) (?:du (?:jour|matin)|de la journ[eé]e)$|^fais[- ]moi le point$|^briefing$/, "daily brief"],
+        [/^(?:fais[- ]moi )?(?:le |mon )?(?:r[eé]cap(?:itulatif)?|bilan) (?:de )?(?:ma |la )?journ[eé]e$/, "recap my day"],
         [/^(?:(?:va|passe|bascule) (?:sur|au|à|vers) (?:le |l')?)?(?:bureau|espace(?: de travail)?) (?:num[eé]ro )?(\d{1,2})$/, "workspace $1"],
         [/^(?:(?:va|passe) (?:sur|au|à) (?:le |l')?)?(?:bureau|espace(?: de travail)?) suivant$/, "next workspace"],
         [/^(?:(?:va|passe) (?:sur|au|à) (?:le |l')?)?(?:bureau|espace(?: de travail)?) pr[eé]c[eé]dent$/, "previous workspace"],
@@ -126,6 +131,9 @@ Singleton {
         [/^(?:[oö]ffne )?(?:die )?einstellungen$/, "settings"],
         [/^(?:mach|mache|schreib|schreibe) (?:die )?(?:meeting-?)?notizen(?: zum (?:meeting|anruf|termin))?$|^protokolliere (?:das meeting|den anruf)$/, "take meeting notes"],
         [/^(?:h[oö]r|h[oö]re) auf(?:,)? notizen zu (?:machen|schreiben)$|^(?:beende|stoppe) (?:die )?(?:meeting-?)?notizen$/, "stop taking notes"],
+        [/^hilf mir (?:beim )?antworten$|^entw[uü]rfe (?:die |meine )?antworten$|^(?:beantworte|antworte auf) (?:die |meine )?nachrichten$/, "help me reply"],
+        [/^(?:mein |das )?(?:tages|morgen)-?briefing$|^brief mich$/, "daily brief"],
+        [/^(?:mein |der )?tagesr[uü]ckblick$|^wie war mein tag$/, "recap my day"],
         [/^(?:(?:wechsle|wechsel|geh|gehe) (?:zu|zum|auf|zur) )?(?:arbeitsbereich|arbeitsfl[aä]che|desktop) (?:nummer )?(\d{1,2})$/, "workspace $1"],
         [/^(?:n[aä]chster|n[aä]chste|n[aä]chstes) (?:arbeitsbereich|arbeitsfl[aä]che|desktop)$/, "next workspace"],
         [/^(?:vorheriger|vorherige|vorheriges|letzter) (?:arbeitsbereich|arbeitsfl[aä]che|desktop)$/, "previous workspace"],
@@ -160,6 +168,9 @@ Singleton {
         [/^(?:m[oở] )?c[aà]i [dđ][aặ]t$/, "settings"],
         [/^ghi (?:ch[eé]p|ch[uú]|bi[eê]n b[aả]n)(?: cu[oộ]c h[oọ]p| cu[oộ]c g[oọ]i)?$/, "take meeting notes"],
         [/^(?:d[uừ]ng|th[oô]i) ghi (?:ch[eé]p|ch[uú]|bi[eê]n b[aả]n)(?: cu[oộ]c h[oọ]p| cu[oộ]c g[oọ]i)?$/, "stop taking notes"],
+        [/^tr[aả] l[oờ]i (?:c[aá]c |nh[uữ]ng )?tin nh[aắ]n$|^so[aạ]n (?:c[aâ]u )?tr[aả] l[oờ]i$/, "help me reply"],
+        [/^t[oó]m t[aắ]t (?:ng[aà]y|bu[oổ]i s[aá]ng)(?: h[oô]m nay)?$|^b[aả]n tin (?:s[aá]ng|h[oô]m nay)$/, "daily brief"],
+        [/^t[oổ]ng k[eế]t (?:ng[aà]y|h[oô]m nay)$/, "recap my day"],
         [/^(?:chuy[eể]n (?:sang|qua|t[oớ]i|[dđ][eế]n) )?(?:kh[oô]ng gian l[aà]m vi[eệ]c|workspace|m[aà]n h[iì]nh [aả]o) (?:s[oố] )?(\d{1,2})$/, "workspace $1"],
         [/^(?:kh[oô]ng gian l[aà]m vi[eệ]c|workspace|m[aà]n h[iì]nh [aả]o) (?:ti[eế]p theo|k[eế] ti[eế]p|sau)$/, "next workspace"],
         [/^(?:kh[oô]ng gian l[aà]m vi[eệ]c|workspace|m[aà]n h[iì]nh [aả]o) tr[uư][oớ]c$/, "previous workspace"],
@@ -316,6 +327,21 @@ Singleton {
             if (!Meeting.running) return null;
             Meeting.stop();
             return root._done(Translation.tr("Stopped listening: writing the summary."));
+        }
+
+        // ── The reply batch (ReplyBatch.qml): drafts for what waits ──
+        if (/^(?:help me |let'?s )?(?:reply|answer)(?: to)? (?:my |the )?(?:messages|notifications)$|^help me (?:reply|answer)$|^draft (?:my |the )?replies$/.test(t)) {
+            const why = ReplyBatch.show();
+            return root._done(why || Translation.tr("Drafting replies to what waits: they open in a card, nothing is sent without your click."));
+        }
+        // ── The daily brief (DailyBrief.qml) ──
+        if (/^(?:brief me|(?:my |the )?(?:daily|morning) brief(?:ing)?)$/.test(t)) {
+            if (!DailyBrief.run("morning", true)) return null;
+            return root._done(Translation.tr("Your brief is coming."));
+        }
+        if (/^(?:recap my day|(?:my |the )?(?:end[- ]of[- ](?:the[- ])?day|evening) recap|how did my day go)$/.test(t)) {
+            if (!DailyBrief.run("evening", true)) return null;
+            return root._done(Translation.tr("Your recap is coming."));
         }
 
         // ── A timer, a pomodoro ──

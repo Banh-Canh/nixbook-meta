@@ -69,6 +69,11 @@ ShellRoot {
         Meeting.load()
         // "Next up": its IPC target (the accept key) from the start.
         NextUp.load()
+        // The daily brief (its day-start and evening cards), the reply
+        // batch (its offer, the `replies` target), the phone handoff.
+        DailyBrief.load()
+        ReplyBatch.load()
+        PhoneHandoff.load()
     }
     
     PanelFamilyLoader {

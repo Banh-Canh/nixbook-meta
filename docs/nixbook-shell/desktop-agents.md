@@ -551,6 +551,42 @@ A seed file gives labels and transitions (`from` a cue, `to` a step, `count`, th
 }
 ```
 
+## Your day, your messages, your phone
+
+### Daily brief
+
+When your day starts — the first time you're at the computer today (the shell starting, unlocking, the screens waking) — Muse puts **one card in its bubble**: today's events, the tasks due today and overdue, who waits for a reply (who and on which app, never what they wrote), the weather and plans coming from the personal memory. At **Recap at** (`ai.brief.eveningAt`, 18:00 by default) an **end-of-day recap**: what Muse did for you today (the [journal](#what-muse-did)), the tasks you finished and those still open, who still waits, how tomorrow starts. Its buttons: **Help me reply** (the [reply drafts](#reply-drafts)), **Calendar**, **Tasks**, **What Muse did**.
+
+The facts are gathered on this computer in plain code (`nixbook-desktop-mcp brief compose`: the shell's calendar, tasks and notification centre, its facts file, the journal); **one small-model call** words them, masked like everything sent. With AI local only and no local model, or desktop control paused, the same facts come in plain words (English, French, German or Vietnamese). Once a day each; during Do Not Disturb, a meeting, a fullscreen window or while locked it waits. With **Read it out** (`ai.brief.speak`) it is said aloud when the voice says answers on its own (Voice answers **always**, or Full AI mode). When the brief is on, the [initiative](#talks-to-you-on-its-own)'s welcome-back word leaves the day to it (it keeps your usual start and where you were). Nothing with AI off.
+
+Ask for one now: "brief me" / "recap my day" in the bubble (also "briefing du jour", "bilan de ma journée", „Tagesbriefing“, „Tagesrückblick“, "tóm tắt ngày hôm nay", "tổng kết ngày"), or **Brief me now** / **Recap now** in Settings. Agents read the same facts with the read-only **`daily_brief`** tool (the morning's and the evening's together), for "what's my day like?".
+
+**Settings → Desktop agents → Daily brief**: **Morning brief** (`ai.brief.morning`), **End-of-day recap** (`ai.brief.evening`), **Recap at (HH:MM)** (`ai.brief.eveningAt`), **Read it out** (`ai.brief.speak`).
+
+```sh
+nixbook-desktop-mcp brief collect morning      # the facts (JSON), no model
+nixbook-desktop-mcp brief compose evening --lang fr --plain
+nixbook-shell ipc call brief status
+```
+
+### Reply drafts
+
+"**Help me reply**": the messages waiting for your answer, each with a draft by Muse, in **one card** — **Send**, **Edit** (the draft is a text field) or **Skip**. Which messages: those still in the notification centre that you can answer — the notification takes a typed reply (`canReply`), a Discord DM through nixbook's [bridge](#apps-and-browser-through-the-page), or a chat or mail app's notification with a Reply button — one per conversation (its newest), the people who matter to you and urgent ones first; never the shell's own, codes, banks, password managers, what you silenced, nor your own words echoed back by the phone.
+
+**Nothing is ever sent without your click on Send**, and only as your own reply where the message came from: the notification's inline reply, or `discord send` as you (the agents' pause and the bridge's limits apply). For an app that takes no typed reply, **Copy & open** copies the draft and opens the conversation. Drafting is **one model call** for all of them (`ai.replies.model`: main by default), masked; the drafts are short, in each message's language and tone, and never commit you to anything (a holding reply when the answer is yours to decide).
+
+Open it: "help me reply" in the bubble ("aide-moi à répondre", „hilf mir antworten“, "trả lời tin nhắn"), the daily brief's **Help me reply**, Settings, or the bubble's chip when two or more messages wait (`ai.replies.offer`; 30 minutes apart, only when more wait than last time, never while busy). With **Have the drafts ready** (`ai.replies.prepare`, off) the drafts are made before the chip says "drafts ready" — the messages then go to the model before you ask.
+
+**Settings → Desktop agents → Reply drafts**: the switch (`ai.replies.enable`), the offer, the drafts ready first, the model, **Help me reply**. From a terminal: `nixbook-desktop-mcp replies list` (what waits, JSON), `replies draft` (with drafts), `nixbook-shell ipc call -- replies show` (the card; the `--` keeps `show` from being read as `ipc show`). Agents can't open the card (`replies` is in `shellIpcDenyTargets`).
+
+### Phone handoff
+
+Off by default (`ai.handoff.enable`). When you step away — the screen locked, or no input — for **Away for** minutes (`ai.handoff.afterMinutes`, 5) while something waits for you, **one message to your phone through KDE Connect**: a ping with its text (the phone shows it as a notification), else the text shared — never an SMS. What counts: Muse asked you something and waits for the answer, a step waits for your OK (the bubble or the side panel), a background task needs you, a reminder or a calendar event comes within the hour.
+
+It says only what your lock screen would: **what kind of thing waits and when** ("A step waits for your OK.", "Reminder at 15:30."), never a question's words, a step, a reminder's or a task's text — so never a secret. Sent again while you're away only when something new waits; nothing during Do Not Disturb, a fullscreen window, with desktop control paused or AI off, or without a reachable paired phone (pair it in the bar's Phone Connect).
+
+**Settings → Desktop agents → Phone handoff**: the switch, **Away for (minutes)**, **Send a test**. `nixbook-shell ipc call handoff status` says whether it would send now and what; agents can't send (`handoff` is in `shellIpcDenyTargets`).
+
 ## Fixes it makes itself
 
 On machines that have it (totoro), tell an agent something of nixbook is broken ("report this") and, with **Fixes it makes itself** on, its `report_problem` tool files it for the fixer. The fixer makes a small fix in a confined `nixbook-meta-agent` session (Muse), checks it and opens a pull request you merge. Ask for something new instead ("I wish the bar showed…") and, with **Features it builds** on, its `request_feature` tool files it as a feature request: built the same way but bigger, never merged on its own. A fix found too big becomes a feature request by itself, and the agent may propose a fix or feature from what it saw get in your way. Ask "did you file it?" or "how's my feature going?" and its read-only `list_requests` tool shows what was filed: when, by whom (you or the fixer itself), and whether it is queued, building, a pull request (its link and checks), merged, dropped or too big. Say "build it now" (or "fix it now") and it starts at once, as **Build now** in Settings. See [Fixes it makes itself](./self-improve).
