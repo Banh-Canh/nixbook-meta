@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import qs
 import qs.services
 import qs.modules.common
+import qs.modules.common.functions
 import qs.modules.common.widgets
 import QtQuick
 import QtQuick.Controls
@@ -115,13 +116,14 @@ Scope {
         return out.slice(-8)
     }
     // While it answers: what it is doing (the tool running now, said the
-    // moment it starts: meta-agent's tool_started; else its last tool),
-    // else thinking; nothing once the answer is there (its checks follow,
-    // under it).
-    readonly property string status: {
+    // moment it starts: meta-agent's tool_started; else its last tool), in
+    // words ("Checking your watch list…": StepLabels), else thinking;
+    // nothing once the answer is there (its checks follow, under it).
+    // `statusTool`: the raw tool name, in the line's tooltip.
+    readonly property string statusTool: {
         if (!root.responding) return ""
         const doing = root.chat?.strategy?.doing ?? ""
-        if (doing) return Translation.tr("Doing %1…").arg(doing.replace(/_/g, " "))
+        if (doing) return doing
         const ids = root.chat.messageIDs
         const m = ids.length > 0 ? root.chat.messageByID[ids[ids.length - 1]] : null
         if (m?.answered) return ""
@@ -130,7 +132,17 @@ Scope {
         const re = /<think>\n\*\*([^*]+)\*\*/g
         let tool = "", m2
         while ((m2 = re.exec(raw)) !== null) tool = m2[1]
-        if (tool && !open) return Translation.tr("Used %1…").arg(tool)
+        return tool && !open ? tool : ""
+    }
+    readonly property string status: {
+        if (!root.responding) return ""
+        if ((root.chat?.strategy?.doing ?? "") !== "") return `${StepLabels.doing(root.statusTool)}…`
+        if (root.statusTool) return `${StepLabels.done(root.statusTool)}…`
+        const ids = root.chat.messageIDs
+        const m = ids.length > 0 ? root.chat.messageByID[ids[ids.length - 1]] : null
+        if (m?.answered) return ""
+        const raw = m?.rawContent ?? ""
+        const open = raw.lastIndexOf("<think>") > raw.lastIndexOf("</think>")
         return open ? Translation.tr("Thinking…") : raw.trim().length > 0 ? "" : Translation.tr("Thinking…")
     }
     // What it says when nothing is said yet in the bubble.
@@ -433,6 +445,12 @@ Scope {
                                 font.pixelSize: Appearance.font.pixelSize.smaller
                                 color: root.fg
                                 opacity: 0.7
+                                // The tool's own name, for the curious.
+                                HoverHandler { id: statusHover }
+                                StyledToolTip {
+                                    text: root.statusTool
+                                    extraVisibleCondition: statusHover.hovered && root.statusTool.length > 0
+                                }
                             }
                         }
                         HeaderButton {

@@ -377,13 +377,16 @@ Singleton {
     // An order given by the shell itself (a Kiroshi task, Full AI doing
     // what it decided): `label` is what the bubble shows as the user's
     // message. Muse's agent does it in a new conversation of the bubble.
-    function command(text, kind = "scan", label = "") {
+    // `why` ({text, from: request|routine|event|habit|offer}): what the
+    // journal says it was done for ("What Muse did" → Why?); the order's
+    // own words when none.
+    function command(text, kind = "scan", label = "", why = null) {
         if (!root.available) return root.refuse();
         const t = String(text ?? "").trim();
         if (t.length === 0) return;
         const chat = root.newConversation();
         if (!chat) return;
-        root.agentTurn(chat, t, label || t);
+        root.agentTurn(chat, t, label || t, why);
     }
     // A region of the screen (the screenshot app's Ask AI, Kiroshi's Tell me
     // more): the modes as chips, or the question asked at once.
@@ -476,13 +479,20 @@ Singleton {
     }
     // A turn of Muse's agent in the bubble's chat: its state becomes the
     // bubble's (busy, the OK it waits for, its steps and report).
-    function agentTurn(chat, text, label) {
+    function agentTurn(chat, text, label, why = null) {
         if (root.shotBusy) root.stop();
         root.chat = chat;
         root.agentChat = chat;
         root.clear();
         root.convo = { mode: "agent", question: text, context: root.focusedApp(), start: chat.messageIDs.length };
-        chat.sendFromBubble(text, Initiative.skipContext ? { noActivity: true } : {}, label);
+        // What it names, offered elsewhere (a file, a link): taken by this turn.
+        Offers.mentioned(`${text}\n${label ?? ""}`);
+        const hints = Initiative.skipContext ? { noActivity: true } : {};
+        if (why?.text) {
+            hints.why = String(why.text).slice(0, 240);
+            hints.whyFrom = String(why.from ?? "request");
+        }
+        chat.sendFromBubble(text, hints, label);
     }
 
     // A one-shot conversation started by the shell, with `label` as the
@@ -496,6 +506,7 @@ Singleton {
         root.clear();
         root.convo = Object.assign({ context: root.focusedApp() }, convo, { start: chat.messageIDs.length });
         root.addShot(chat, String(label || convo.question || ""), "user");
+        Offers.mentioned(`${label ?? ""}\n${convo.text ?? ""}`);
         root.request();
     }
     // A message of a one-shot answer: outside the agent's session, which

@@ -4,7 +4,9 @@
 #   - the statistics: a step after its cue, by time of day, decayed; the
 #     time-of-day prior when nothing just happened;
 #   - the bar: probability >= threshold, seen >= minCount times, the step in
-#     front or just done never offered, quiet hours, an hour's offers;
+#     front or just done never offered, quiet hours (but a follow-up of
+#     what was just done), an hour's offers; what an offer is about and
+#     what taking it does (target, preview);
 #   - learning: accepted counted again, ignored and dismissed lower its odds
 #     and rest it, never mutes it (after its cue, or anywhere), done by hand;
 #   - follow-ups from the start (a pull request), only with policies.ai 1;
@@ -70,6 +72,7 @@ expect_eq "its chip" "Next: open Jira" "$(jq -r '.offer.chip' <<<"$out")"
 expect_eq "its explain line" "You usually open Jira after your 09:00 Daily standup — 14 times" \
   "$(jq -r '.offer.explain' <<<"$out")"
 expect_eq "it carries what to do (an app)" "jira" "$(jq -r '.offer.app' <<<"$out")"
+expect_eq "what taking it does" "Opens Jira, or brings it to the front" "$(jq -r '.offer.preview' <<<"$out")"
 expect_eq "no model needed" "false" "$(jq -r '.offer.model' <<<"$out")"
 expect_eq "the file is the user's only" "600" "$(stat -c %a "$file")"
 id=$(jq -r '.offer.id' <<<"$out")
@@ -232,8 +235,22 @@ reset
 dm predict seed "$tmp/demo.json" >/dev/null
 echo '{"initiativeQuietHours": "0-24"}' >"$tmp/cfg/nixbook-shell/desktop-mcp.json"
 out=$(dm predict observe '{"kind": "event", "event": "meeting_end", "title": "Daily standup"}')
-expect_eq "quiet hours: nothing offered" "quiet hours" "$(jq -r '.why' <<<"$out")"
+expect_eq "quiet hours: no learned step (Jira), only the meeting's built-in follow-up" "followup:meeting" \
+  "$(jq -r '.offer.action' <<<"$out")"
 expect_eq "quiet hours: still counted" "true" "$(jq -r '.recorded' <<<"$out")"
+dm predict feedback "$(jq -r '.offer.id' <<<"$out")" never_any >/dev/null
+out=$(dm predict observe '{"kind": "event", "event": "meeting_end", "title": "Daily standup"}')
+expect_eq "quiet hours: nothing else offered (the follow-up muted)" "null|followup:meeting: muted" \
+  "$(jq -r '"\(.offer)|\(.why)"' <<<"$out")"
+out=$(dm predict observe '{"kind": "event", "event": "download", "name": "report.pdf", "ext": "pdf", "path": "/tmp/dl/report.pdf", "lang": "en"}')
+expect_eq "quiet hours, a PDF just downloaded: its built-in follow-up still offered" "followup:summarize" \
+  "$(jq -r '.offer.action' <<<"$out")"
+expect_eq "it says what it is about (one offer per moment)" "/tmp/dl/report.pdf" "$(jq -r '.offer.target.path' <<<"$out")"
+expect_eq "and what taking it does" "Muse will read report.pdf and give you the key points" "$(jq -r '.offer.preview' <<<"$out")"
+reset
+dm predict observe "{\"kind\": \"event\", \"event\": \"download\", \"name\": \"old.pdf\", \"ext\": \"pdf\", \"path\": \"/tmp/dl/old.pdf\", \"time\": $(($(date +%s) - 300)), \"predict\": false}" >/dev/null
+out=$(dm predict offer '{"lang": "en"}')
+expect_eq "quiet hours, a download of 5 minutes ago: nothing (the user may be gone)" "quiet hours" "$(jq -r '.why' <<<"$out")"
 echo '{"initiativeQuietHours": "3-3"}' >"$tmp/cfg/nixbook-shell/desktop-mcp.json"
 
 # -- follow-ups, policies, privacy ------------------------------------------------
@@ -242,6 +259,9 @@ out=$(dm predict observe '{"kind": "event", "event": "pr_page", "repo": "didacti
 expect_eq "a pull request opened: the review follow-up from the start" "followup:review" "$(jq -r '.offer.action' <<<"$out")"
 expect_eq "it needs Muse (a model)" "true" "$(jq -r '.offer.model' <<<"$out")"
 expect_contains "its order for Muse" "$(jq -r '.offer.instruction' <<<"$out")" "pull request in didactiklabs/nixbook"
+expect_eq "what it is about" "didactiklabs/nixbook" "$(jq -r '.offer.target.repo' <<<"$out")"
+expect_eq "what taking it does: nothing posted" "Muse will read the pull request and review it — nothing is posted" \
+  "$(jq -r '.offer.preview' <<<"$out")"
 expect_contains "its explain line: a built-in offer that learns" "$(jq -r '.offer.explain' <<<"$out")" "it learns"
 f1=$(jq -r '.offer.id' <<<"$out")
 dm predict feedback "$f1" ignored >/dev/null

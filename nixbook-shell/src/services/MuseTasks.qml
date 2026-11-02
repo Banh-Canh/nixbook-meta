@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Io
@@ -158,7 +159,7 @@ Singleton {
         const d = String(t?.doing ?? "");
         return t?.activity === "typing" ? Translation.tr("Writing its answer")
             : t?.activity === "searching" ? (d === "WebFetch" ? Translation.tr("Reading a web page") : Translation.tr("Searching the web"))
-            : t?.activity === "tool" ? Translation.tr("Using %1").arg(d.replace(/_/g, " "))
+            : t?.activity === "tool" ? StepLabels.doing(d)
             : Translation.tr("Thinking");
     }
     // A model's short name from the provider's id: muse-spark-1.3 → Spark,

@@ -242,6 +242,8 @@ Scope {
         if (chat.fromAgent) Initiative.engaged();
         if (message.length === 0) return;
         chat.addMessage(message, "user");
+        // What it names, offered elsewhere (a file, a link): taken by this turn.
+        Offers.mentioned(message);
         requester.makeRequest();
     }
     // A message of the bubble's (QuickAi.agentTurn): on the bubble's command
@@ -649,8 +651,11 @@ Scope {
                     // The final answer, before its checks (meta-agent's
                     // `answer`): the bubble shows it as the answer and reads
                     // it out now; `verify` and the turn's end come after.
-                    if (result.answer !== undefined)
+                    if (result.answer !== undefined) {
                         chat.lastAnswer = String(requester.activeMessage.content ?? "").replace(/<think>[\s\S]*?(<\/think>|$)/g, "").trim();
+                        // An answer about what an offer is about: done by now.
+                        Offers.mentioned(chat.lastAnswer);
+                    }
                     if (result.finished) {
                         requester.markDone();
                     }

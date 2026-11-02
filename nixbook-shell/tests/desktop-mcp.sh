@@ -4764,6 +4764,12 @@ out=$(python3 "$mcp" journal add '{"source":"task","class":"close_window@firefox
 jid=$(jq -r .id <<<"$out")
 expect_eq "journal add: saved, task and session kept" "task t9 s1 false" "$(python3 "$mcp" journal list | jq -r --arg id "$jid" '.[] | select(.id==$id) | "\(.source) \(.task) \(.session) \(.canUndo)"')"
 expect_contains "journal undo: nothing to undo" "$(python3 "$mcp" journal undo "$jid" || true)" "can't be undone"
+out=$(python3 "$mcp" journal add '{"source":"agent","class":"set_theme","summary":"set theme (theme=ghibli)","tool":"set_theme","why":"make my desktop   cozier","whyFrom":"nope"}')
+expect_eq "journal add: why kept (spaces folded), an unknown whyFrom is a request" "make my desktop cozier request" \
+  "$(python3 "$mcp" journal list | jq -r --arg id "$(jq -r .id <<<"$out")" '.[] | select(.id==$id) | "\(.why) \(.whyFrom)"')"
+out=$(python3 "$mcp" journal add '{"source":"routine","summary":"x","why":"When I join a meeting, mute the music","whyFrom":"routine"}')
+expect_eq "journal add: a routine's why" "routine" "$(python3 "$mcp" journal list | jq -r --arg id "$(jq -r .id <<<"$out")" '.[] | select(.id==$id) | .whyFrom')"
+expect_eq "journal add: no why, none kept" "null" "$(python3 "$mcp" journal list | jq -r --arg id "$jid" '.[] | select(.id==$id) | .why')"
 out=$(python3 "$mcp" journal add '{"source":"agent","class":"type_text","summary":"Typed","tool":"type_text","undo":{"tool":"type_text","args":{"text":"x"}}}')
 expect_eq "journal add: an undo only through the reversible tools" false "$(python3 "$mcp" journal list | jq --arg id "$(jq -r .id <<<"$out")" '.[] | select(.id==$id) | .canUndo')"
 expect_eq "journal add: a bad source is the agent's" agent "$(

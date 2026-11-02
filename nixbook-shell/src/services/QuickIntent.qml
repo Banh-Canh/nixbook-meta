@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
@@ -16,8 +17,10 @@ import QtQuick
  * number, the next, the previous; the window moved to one), dark or light
  * mode, Do Not Disturb, night light, a screenshot, locking the screen, a
  * timer or a pomodoro, a saved window layout, a task added, the shell's
- * settings, the meeting companion started or stopped ("take notes"). In English, French, German and Vietnamese (`_english` turns the
- * three others into the English commands first).
+ * settings, the meeting companion started or stopped ("take notes"), a
+ * theme by its mood ("make my desktop calmer and cozier": ThemeMoods). In
+ * English, French, German and Vietnamese (`_english` turns the three others
+ * into the English commands first; the moods are read in each language).
  *
  * Strict patterns only: anything else, or anything unsure (an app it can't
  * name for sure, two windows of the app to close), goes to Muse as before.
@@ -275,6 +278,20 @@ Singleton {
             Quickshell.execDetached([Directories.wallpaperSwitchScriptPath, "--mode", mode, "--noswitch"]);
             return root._done(mode === "dark" ? Translation.tr("Dark mode on.") : Translation.tr("Light mode on."),
                 before === mode ? null : () => Quickshell.execDetached([Directories.wallpaperSwitchScriptPath, "--mode", before, "--noswitch"]));
+        }
+
+        // ── A mood for the desktop, as one of the themes ("make my desktop
+        // calmer and cozier" → Studio Ghibli; ThemeMoods), the theme's own
+        // variant kept. Not when Nix sets the theme (Muse says why); two
+        // moods, a negation, a question about themes: Muse's.
+        const mood = ThemeMoods.mood(root._clean(raw));
+        if (mood && Themes.theme(mood.theme)) {
+            if (NixManaged.isPinned("appearance.theme")) return null;
+            const before = Themes.current;
+            const name = Themes.theme(mood.theme).name;
+            if (mood.theme === before) return root._done(Translation.tr("%1 is already on.").arg(name));
+            Themes.setTheme(mood.theme);
+            return root._done(Translation.tr("%1 theme on.").arg(name), () => Themes.setTheme(before));
         }
 
         // ── Do Not Disturb ──

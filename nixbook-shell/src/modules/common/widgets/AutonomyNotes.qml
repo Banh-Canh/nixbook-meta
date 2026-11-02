@@ -1,6 +1,7 @@
 import qs
 import qs.services
 import qs.modules.common
+import qs.modules.common.functions
 import qs.modules.common.widgets
 import QtQuick
 import QtQuick.Layouts
@@ -11,8 +12,10 @@ import QtQuick.Layouts
  *   - a standing order it compiled (the standing_order tool): "When …, I'll
  *     …", what it still needs to know, and Turn on (the user's yes: `order
  *     accept`), Edit (Settings > Desktop agents > Routines), No;
- *   - what it did without asking, trusted to tell after: "Did: …" and Undo
- *     (the journal's);
+ *   - what it did without asking, trusted to tell after: "Did: …" in words
+ *     (StepLabels: "Did: Changed the wallpaper", never a path or a raw tool
+ *     name; those in its tooltip), Why? (the journal entry's reason: what the
+ *     user asked, the routine, the event) and Undo (the journal's);
  *   - a suggestion after three yeses in a row: "Stop asking before …?" —
  *     Yes raises that class to "tell" (`trust set`, the user's click),
  *     Not now leaves it.
@@ -31,23 +34,26 @@ ColumnLayout {
     // A command it ran is its own line (TerminalNotes: Ran `cmd` (exit N)).
     readonly property var told: (root.message?.told ?? []).filter(t => !(String(t.class ?? "").startsWith("terminal_run")
         && (root.message?.terminalRuns ?? []).length > 0))
-    // The same kind of step grouped ("Did: add to queue ×4 — A, B, C…"):
-    // one line each instead of one per step. {verb, items, details}.
+    // The same kind of step grouped ("Did: Added to the queue ×4 — A, B,
+    // C…"): one line each instead of one per step. {verb (the words), key,
+    // items, details (a human value of each: never a path or an id), raw
+    // (the steps as meta-agent wrote them: the tooltip)}.
     readonly property var toldGroups: {
         const groups = [];
         const by = {};
         for (const t of root.told) {
             const summary = String(t.summary ?? "");
-            const paren = summary.indexOf(" (");
-            const verb = paren > 0 ? summary.slice(0, paren) : summary;
-            // Its first argument's value ("query=K/DA MORE, …" → "K/DA MORE").
-            const what = paren > 0 ? summary.slice(paren + 2).replace(/\)$/, "").split(/, (?=[a-z_]+=)/)[0].replace(/^[a-z_]+=/, "") : "";
-            if (!(verb in by)) {
-                by[verb] = { verb: verb, items: [], details: [] };
-                groups.push(by[verb]);
+            const args = StepLabels.argsOf(summary);
+            const name = String(t.class ?? "") || summary.split(" (")[0];
+            const key = StepLabels.key(name, args);
+            const what = StepLabels.detail(args);
+            if (!(key in by)) {
+                by[key] = { verb: StepLabels.done(name, args), key: key, items: [], details: [], raw: [] };
+                groups.push(by[key]);
             }
-            by[verb].items.push(t);
-            if (what) by[verb].details.push(what);
+            by[key].items.push(t);
+            by[key].raw.push(summary || name);
+            if (what && !by[key].details.includes(what)) by[key].details.push(what);
         }
         return groups;
     }
@@ -205,26 +211,65 @@ ColumnLayout {
                 if (states.every(st => st === "done")) return "done";
                 return states.find(st => st.startsWith("error")) ?? (states.some(st => st === "done") ? "partly" : "");
             }
-            // "add to queue ×4 — K/DA VILLAIN, K/DA MORE…"
+            // "Added to the queue ×4 — K/DA VILLAIN, K/DA MORE…"
             readonly property string label: {
-                const head = did.count > 1 ? `${did.modelData.verb} ×${did.count}` : String(did.items[0].summary ?? did.modelData.verb);
-                if (did.count <= 1 || did.modelData.details.length === 0) return head;
+                const head = did.count > 1 ? `${did.modelData.verb} ×${did.count}` : did.modelData.verb;
+                if (did.modelData.details.length === 0) return head;
                 const list = did.modelData.details.join(", ");
                 return `${head} — ${list.length > 120 ? list.slice(0, 119) + "…" : list}`;
             }
+            // Why it did it (the journal entry's reason), shown on Why?.
+            readonly property string why: did.entry ? Autonomy.whyText(did.entry) : ""
+            property bool whyShown: false
             Layout.fillWidth: true
             spacing: 8
-            StyledText {
+            ColumnLayout {
                 Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                textFormat: Text.PlainText
-                text: did.undoState === "done" ? Translation.tr("Undone: %1").arg(did.label)
-                    : did.undoState.startsWith("error") ? `${Translation.tr("Did: %1").arg(did.label)} · ${did.undoState.replace(/^error: /, "")}`
-                    : Translation.tr("Did: %1").arg(did.label)
+                spacing: 2
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    textFormat: Text.PlainText
+                    text: did.undoState === "done" ? Translation.tr("Undone: %1").arg(did.label)
+                        : did.undoState.startsWith("error") ? `${Translation.tr("Did: %1").arg(did.label)} · ${did.undoState.replace(/^error: /, "")}`
+                        : Translation.tr("Did: %1").arg(did.label)
+                    font.family: root.fontFamily
+                    font.pixelSize: Appearance.font.pixelSize.smaller
+                    color: root.fg
+                    opacity: 0.8
+                    // The steps as they were (tool and arguments).
+                    HoverHandler { id: didHover }
+                    StyledToolTip {
+                        text: did.modelData.raw.join("\n")
+                        extraVisibleCondition: didHover.hovered
+                    }
+                }
+                StyledText {
+                    Layout.fillWidth: true
+                    visible: did.whyShown && did.why.length > 0
+                    wrapMode: Text.Wrap
+                    textFormat: Text.PlainText
+                    text: did.why
+                    font.family: root.fontFamily
+                    font.pixelSize: Appearance.font.pixelSize.smaller
+                    font.italic: true
+                    color: root.fg
+                    opacity: 0.65
+                }
+            }
+            StyledText {
+                visible: did.why.length > 0
+                text: did.whyShown ? Translation.tr("Hide why") : Translation.tr("Why?")
                 font.family: root.fontFamily
                 font.pixelSize: Appearance.font.pixelSize.smaller
-                color: root.fg
-                opacity: 0.8
+                font.underline: true
+                color: root.accent
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: did.whyShown = !did.whyShown
+                }
             }
             StyledText {
                 visible: Autonomy.journalOn && did.undoState === "" && did.items.some(t => t.undo !== false)

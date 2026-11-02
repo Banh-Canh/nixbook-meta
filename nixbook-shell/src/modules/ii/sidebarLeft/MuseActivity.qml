@@ -1,6 +1,7 @@
 import qs
 import qs.services
 import qs.modules.common
+import qs.modules.common.functions
 import qs.modules.common.widgets
 import QtQuick
 import QtQuick.Controls
@@ -14,9 +15,11 @@ import QtQuick.Layouts
  *     split up (plan and fan out) is a group: its plan (PlanCard: the
  *     merged answer at the top once there, each part's worker), then its
  *     workers' cards. A task clicked on the bar is outlined and scrolled to.
- *   - What Muse did (services/Autonomy.qml, the journal): by day, each with
- *     where it came from (a routine, a standing order, a task…) and Undo
- *     when it can be taken back.
+ *   - What Muse did (services/Autonomy.qml, the journal): by day, each in
+ *     words (StepLabels; the step as it was in its tooltip), with where it
+ *     came from (a routine, a standing order, a task…), Why? (what the user
+ *     asked, the routine, the event, the habit) and Undo when it can be
+ *     taken back.
  * `section`: "tasks" or "journal", scrolled to when asked for
  * (GlobalStates.museActivityRequested).
  */
@@ -155,9 +158,14 @@ Item {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                     textFormat: Text.PlainText
-                    text: `${modelData.status === "error" ? "✗" : modelData.status === "run" ? "…" : "✓"} ${String(modelData.tool ?? "").replace(/_/g, " ")}${modelData.summary ? " · " + modelData.summary : ""}`
+                    text: `${modelData.status === "error" ? "✗" : modelData.status === "run" ? "…" : "✓"} ${modelData.status === "run" ? StepLabels.doing(modelData.tool, StepLabels.argsOf(modelData.summary)) : StepLabels.done(modelData.tool, StepLabels.argsOf(modelData.summary))}`
                     font.pixelSize: Appearance.font.pixelSize.smaller
                     color: Appearance.colors.colSubtext
+                    HoverHandler { id: stepHover }
+                    StyledToolTip {
+                        text: `${String(modelData.tool ?? "")}${modelData.summary ? " · " + modelData.summary : ""}`
+                        extraVisibleCondition: stepHover.hovered
+                    }
                 }
             }
             // What it waits for: an OK, or an answer.
@@ -435,6 +443,10 @@ Item {
                             id: entry
                             required property var modelData
                             readonly property string undoState: Autonomy.undoState[entry.modelData.id] ?? ""
+                            readonly property string name: String(entry.modelData.class || entry.modelData.tool || "")
+                            readonly property string detail: StepLabels.detail(entry.modelData.args)
+                            readonly property string why: Autonomy.whyText(entry.modelData)
+                            property bool whyShown: false
                             Layout.fillWidth: true
                             spacing: 6
                             StyledText {
@@ -449,9 +461,27 @@ Item {
                                     Layout.fillWidth: true
                                     wrapMode: Text.Wrap
                                     textFormat: Text.PlainText
-                                    text: String(entry.modelData.summary ?? entry.modelData.class ?? "")
+                                    // In words ("Changed the wallpaper — Dune"); as it was in the tooltip.
+                                    text: entry.name.length > 0
+                                        ? `${StepLabels.done(entry.name, entry.modelData.args)}${entry.detail ? " — " + entry.detail : ""}`
+                                        : String(entry.modelData.summary ?? "")
                                     font.pixelSize: Appearance.font.pixelSize.small
                                     font.strikeout: entry.modelData.undone === true || entry.undoState === "done"
+                                    color: Appearance.colors.colOnLayer1
+                                    HoverHandler { id: entryHover }
+                                    StyledToolTip {
+                                        text: String(entry.modelData.summary ?? entry.name)
+                                        extraVisibleCondition: entryHover.hovered
+                                    }
+                                }
+                                StyledText {
+                                    Layout.fillWidth: true
+                                    visible: entry.whyShown && entry.why.length > 0
+                                    wrapMode: Text.Wrap
+                                    textFormat: Text.PlainText
+                                    text: entry.why
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                    font.italic: true
                                     color: Appearance.colors.colOnLayer1
                                 }
                                 StyledText {
@@ -464,6 +494,11 @@ Item {
                                     font.pixelSize: Appearance.font.pixelSize.smaller
                                     color: entry.undoState.startsWith("error") ? Appearance.colors.colError : Appearance.colors.colSubtext
                                 }
+                            }
+                            SmallButton {
+                                visible: entry.why.length > 0
+                                label: entry.whyShown ? Translation.tr("Hide why") : Translation.tr("Why?")
+                                onClicked: entry.whyShown = !entry.whyShown
                             }
                             SmallButton {
                                 visible: Autonomy.canUndo(entry.modelData) && entry.undoState !== "busy"

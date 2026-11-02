@@ -1956,6 +1956,20 @@ class Inbox:
             return self.approvals.pop(str(rid))
 
 
+def turn_why(text, hints):
+    """What the journal says a turn's steps were for: the shell's `why`
+    (Next up's habit, an offer said yes to, an event), else the request
+    itself, without the shell's own [notes], short."""
+    given = hints.get("why") if isinstance(hints.get("why"), str) else ""
+    src = given or re.sub(r"^\s*(\[[^\]\n]{0,400}\]\s*)+", "", str(text or ""))
+    said = re.sub(r"\s+", " ", src).strip()
+    if not said:
+        return None
+    frm = hints.get("whyFrom") if given and hints.get("whyFrom") in ("request", "routine", "event", "habit", "offer") \
+        else "request"
+    return {"text": said[:240], "from": frm}
+
+
 def user_line(d):
     """A stream-json input line's (content, nixbook hints), or None."""
     if d.get("type") != "user":
@@ -2362,6 +2376,11 @@ class Agent:
         entry = {"source": self.opts.journal_source, "class": step["class"], "summary": nixbook_ai.step_line(
             {"tool": step["bare"], "summary": step.get("summary"), "status": "ok"}), "tool": step["bare"],
             "args": short, "session": self.session_id}
+        # Why: the turn's request (masked like the summary; the journal
+        # unmasks both for the user's eyes), or what the shell said it was for.
+        why = getattr(self, "turn_why", None)
+        if why and why.get("text"):
+            entry["why"], entry["whyFrom"] = why["text"], why["from"]
         if self.opts.task:
             entry["task"] = self.opts.task
         if isinstance(undo, dict) and undo.get("tool"):
@@ -3057,6 +3076,7 @@ class Agent:
         if not as_blocks(content):
             content = "(empty message)"
         text = content_text(content)
+        self.turn_why = turn_why(text, hints)
         # The waiting tools this request plainly needs: offered now, not
         # after an open_tools__ round trip.
         for key in self.mcp.prefetch(text):
