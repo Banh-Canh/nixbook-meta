@@ -332,6 +332,8 @@ let
           museTask # nixbook-muse-task: background_task, tasks
           libarchive # bsdtar: `extract`, a download extracted from its bubble
           procps # pgrep: a watched process
+          cliphist # find_anything: the clipboard history
+          poppler-utils # pdftotext: find_anything reads PDFs' first pages
         ]
       )
     }:$PATH"
