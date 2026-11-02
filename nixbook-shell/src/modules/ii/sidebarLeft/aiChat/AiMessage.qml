@@ -542,8 +542,11 @@ Rectangle {
         AutonomyNotes {
             Layout.fillWidth: true
             visible: root.messageData?.role === "assistant" && ((root.messageData?.orders ?? []).length > 0
-                || (root.messageData?.told ?? []).length > 0 || (root.messageData?.trustSuggest ?? []).length > 0)
+                || (root.messageData?.told ?? []).length > 0 || (root.messageData?.trustSuggest ?? []).length > 0
+                || (root.messageData?.suggested ?? []).length > 0)
             message: root.messageData
+            // A held step taken ("Also: …?" → Yes): its order to this chat's session.
+            sendOrder: text => Ai.sendUserMessage(text)
             fg: root.persona ? "white" : Appearance.colors.colOnLayer1
             accent: Appearance.colors.colPrimary
             bg: Appearance.colors.colLayer1

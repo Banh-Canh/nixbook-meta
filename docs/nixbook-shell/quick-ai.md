@@ -69,7 +69,8 @@ What you say or type in the bubble is an order or a question:
 7. **Long orders can go on in the background**: while Muse works on a long
    order, **Do it in the background** under the bubble hands it to a
    [background task](./desktop-agents.md#background-tasks) and frees the
-   bubble. "From now on, when …" or "every evening at 6, …" sets up a
+   bubble. After 20 seconds without an answer the bubble says **This is
+   taking a while** and offers it for any order. "From now on, when …" or "every evening at 6, …" sets up a
    [standing order](./desktop-agents.md#standing-orders).
 
 **It is Muse in the side panel**, with the same brain, and so is Full AI
@@ -111,7 +112,13 @@ models**, both on by default):
   Most tools confirm their own effect, which is enough; otherwise one quick
   check on the small model (`ai.agent.verify`, `ai.routing.verify`). The answer
   shows first, then **… Checking it worked**, and **✓ Checked: done** or
-  **⚠ Couldn't confirm it worked** with why.
+  **⚠ Couldn't confirm it worked** with why. Nothing is checked when its
+  steps only looked (pages read, commands that only read) or when the answer
+  is what you asked for (a question, a review).
+- **It does only what you asked**: music or videos started, apps opened and
+  messages sent that your request doesn't ask for are held and offered under
+  the answer as **Also: …?** (Yes asks Muse to do it), and a request repeated
+  right after it acted is answered "already done" instead of done twice.
 - **👍 / 👎 under its answers** (`ai.agent.feedback`): 👍 tells it that was
   right (what it used counts up); 👎 asks **What did you mean?**, and the
   correction is remembered for similar requests from then on, with an offer to

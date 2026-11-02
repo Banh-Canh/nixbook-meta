@@ -18,7 +18,10 @@
 #     the request read first (--resolve), the result checked (--verify);
 #   - the trust ladder (--trust): ask (approval, recorded, a promotion
 #     suggested), tell (told, journaled with the tool's undo), silent, the
-#     --confirm floor; a session forked (--fork-session).
+#     --confirm floor; a session forked (--fork-session);
+#   - the scope guard (--scope-guard: a step nobody asked for held, offered),
+#     a request said again (the <note>), --verify skipping turns that only
+#     looked or whose answer is the deliverable.
 # Needs bash, python3 and jq. Run: bash tests/meta-agent.sh
 set -euo pipefail
 
@@ -808,6 +811,85 @@ expect_eq "verify: its verdict" "Opened. true" "$(jq -r '"\(.result) \(.verified
 rm "$tmp/cfg/nixbook-shell/config.json"
 out=$(echo "AGENTTEST:hello" | agent -p --output-format json --verify)
 expect_eq "verify: nothing to check when nothing acted" "null" "$(jq -c .verified <<<"$out")"
+# Steps that only looked (a command that only reads): nothing to check, no
+# "Couldn't confirm it worked".
+script looks '{"steps": [[{"type": "tool_use", "id": "lk1", "name": "Bash", "input": {"command": "ls -la && git log -1 2>/dev/null; true"}}],
+  [{"type": "text", "text": "Two files."}]], "system": {"You check whether": [{"type": "text", "text": "never asked"}]}}'
+: >"$tmp/requests.log"
+out=$(echo "AGENTTEST:looks the files here" | agent -p --output-format json --tools Bash --verify)
+expect_eq "verify: none for a turn that only looked" "null 0" \
+  "$(jq -c .verified <<<"$out") $(jq -c 'select(.body.system | tostring | contains("You check whether"))' "$tmp/requests.log" | wc -l | tr -d ' ')"
+# A request its answer delivers (review…): acting steps along the way aren't checked.
+script review '{"steps": [[{"type": "tool_use", "id": "rv1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "The PR looks fine."}]], "system": {"You check whether": [{"type": "text", "text": "never asked"}]}}'
+: >"$tmp/requests.log"
+out=$(echo "review PR 42 AGENTTEST:review" | agent -p --output-format json --mcp-config "$desk_config" --verify)
+expect_eq "verify: none for a request answered by its answer" "null 0" \
+  "$(jq -c .verified <<<"$out") $(jq -c 'select(.body.system | tostring | contains("You check whether"))' "$tmp/requests.log" | wc -l | tr -d ' ')"
+
+# -- The scope guard (--scope-guard) ------------------------------------------------------------------
+# A theme asked for; the model also opens YouTube Music: held, offered.
+script scope '[[{"type": "tool_use", "id": "sg1", "name": "mcp__desktop__launch_app", "input": {"app": "com.github.th-ch.youtube-music"}},
+  {"type": "tool_use", "id": "sg2", "name": "mcp__desktop__list_windows", "input": {}}],
+  [{"type": "text", "text": "A cute theme is on."}]]'
+: >"$tmp/requests.log"
+: >"$tmp/desk-calls.log"
+out=$(echo "AGENTTEST:scope Now something cute and playful" | agent -p --output-format stream-json --mcp-config "$desk_config" --scope-guard)
+expect_eq "scope: the step it wasn't asked for never ran, the rest did" "list_windows" "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ')"
+expect_eq "scope: offered instead" '{"type":"suggest","id":"sg1","tool":"launch_app","kind":"play","summary":"launch app (app=com.github.th-ch.youtube-music)"}' \
+  "$(jq -c 'select(.type == "suggest") | {type, id, tool, kind, summary}' <<<"$out")"
+order=$(jq -r 'select(.type == "suggest") | .order' <<<"$out")
+expect_contains "scope: with the order its Yes sends" "$order" "play it"
+held=$(requests scope | tail -n1 | jq -c '.messages[2].content[] | select(.tool_use_id == "sg1")')
+expect_eq "scope: the model told it was held, not as an error" "true null" \
+  "$(jq -c '.content | startswith("Held, not done")' <<<"$held") $(jq -c .is_error <<<"$held")"
+expect_eq "scope: the answer" "A cute theme is on." "$(jq -r 'select(.type == "result") | .result' <<<"$out")"
+expect_contains "scope: asked for in the system prompt" "$(requests scope | head -n1 | jq -c .system)" "Do only what the user asked"
+: >"$tmp/desk-calls.log"
+echo "AGENTTEST:scope Now something cute and playful" | agent -p --mcp-config "$desk_config" >/dev/null
+expect_eq "scope: without the flag, run" "launch_app list_windows" "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ')"
+: >"$tmp/desk-calls.log"
+echo "AGENTTEST:scope put on some music" | agent -p --mcp-config "$desk_config" --scope-guard >/dev/null
+expect_eq "scope: run when the request asks for it" "launch_app list_windows" "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ')"
+: >"$tmp/desk-calls.log"
+echo "AGENTTEST:scope $order" | agent -p --mcp-config "$desk_config" --scope-guard >/dev/null
+expect_eq "scope: the offer's order runs it" "launch_app list_windows" "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ')"
+# With --finish: the answer written beside the held step isn't shown (it may
+# say it was done); the model answers again.
+script scopefinish '[[{"type": "tool_use", "id": "sf1", "name": "mcp__desktop__launch_app", "input": {"app": "com.github.th-ch.youtube-music"}},
+  {"type": "tool_use", "id": "sf2", "name": "finish", "input": {"answer": "Theme and music on."}}],
+  [{"type": "text", "text": "A cute theme is on."}]]'
+out=$(echo "AGENTTEST:scopefinish make it cute" | agent -p --output-format json --mcp-config "$desk_config" --scope-guard --finish)
+expect_eq "scope: a finish beside a held step not shown" "A cute theme is on." "$(jq -r .result <<<"$out")"
+# A short "yes" to the model's own offer asks for it.
+script scopeyes '[[{"type": "text", "text": "Done. Want some music to go with it?"}],
+  [{"type": "tool_use", "id": "sy1", "name": "mcp__desktop__launch_app", "input": {"app": "com.github.th-ch.youtube-music"}}],
+  [{"type": "text", "text": "Playing."}]]'
+: >"$tmp/desk-calls.log"
+out=$(printf '%s\n%s\n' \
+  '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:scopeyes make it cute"}}' \
+  '{"type": "user", "message": {"role": "user", "content": "yes please"}}' |
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config" --scope-guard)
+expect_eq "scope: \"yes\" to its offer runs it" "launch_app 0" \
+  "$(jq -r .name "$tmp/desk-calls.log" | paste -sd' ') $(jq -c 'select(.type == "suggest")' <<<"$out" | wc -l | tr -d ' ')"
+
+# -- Said again: the second turn told -------------------------------------------------------------------
+script repeat '[[{"type": "tool_use", "id": "rp1", "name": "mcp__desktop__launch_app", "input": {"app": "firefox"}}],
+  [{"type": "text", "text": "Playing."}], [{"type": "text", "text": "It is already playing."}],
+  [{"type": "text", "text": "Next one."}]]'
+: >"$tmp/requests.log"
+out=$(printf '%s\n%s\n%s\n' \
+  '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:repeat play episode 3 of Frieren"}}' \
+  '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:repeat play episode 3 of frieren!"}}' \
+  '{"type": "user", "message": {"role": "user", "content": "AGENTTEST:repeat play episode 4 of Frieren"}}' |
+  agent -p --input-format stream-json --output-format stream-json --mcp-config "$desk_config")
+second=$(requests repeat | sed -n 3p | jq -r '.messages[-1].content | if type == "string" then . else map(.text // "") | join("") end')
+expect_contains "repeat: the same request again is told" "$second" "<note>Written by the computer"
+expect_contains "repeat: with what was done" "$second" "you did: launch app (app=firefox)"
+expect_contains "repeat: then the request" "$second" "AGENTTEST:repeat play episode 3 of frieren!"
+third=$(requests repeat | sed -n 4p | jq -r '.messages[-1].content | if type == "string" then . else map(.text // "") | join("") end')
+expect_lacks "repeat: another episode isn't" "$third" "<note>"
+expect_eq "repeat: the answers" "Playing.|It is already playing.|Next one." "$(jq -r 'select(.type == "result") | .result' <<<"$out" | paste -sd'|')"
 
 # -- Speed: kept-alive connections, tools started while the message streams ------------------------
 script keep '[[{"type": "tool_use", "id": "k1", "name": "mcp__desktop__list_windows", "input": {}}],

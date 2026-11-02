@@ -15,7 +15,11 @@ import QtQuick.Layouts
  *     (the journal's);
  *   - a suggestion after three yeses in a row: "Stop asking before …?" —
  *     Yes raises that class to "tell" (`trust set`, the user's click),
- *     Not now leaves it.
+ *     Not now leaves it;
+ *   - a step the request didn't ask for, held (meta-agent --scope-guard:
+ *     music started, an app opened, a message sent): "Also: …?" — Yes sends
+ *     its order to the same session (sendOrder: the bubble's, the side
+ *     panel's), No leaves it.
  * Colours from the place it is in (the bubble's theme, the side panel's).
  */
 ColumnLayout {
@@ -59,8 +63,19 @@ ColumnLayout {
         ? (root.message?.trustSuggest ?? []).filter(s => !Autonomy.trustAnswered[s.class]) : []
     readonly property var answeredSuggestions: (root.message?.trustSuggest ?? []).filter(s => !!Autonomy.trustAnswered[s.class]
         && Autonomy.trustAnswered[s.class] !== "no")
+    // Held steps ("Also: …?"): offered while there is somewhere to send
+    // the order; a Yes leaves "Asked: …", a No nothing.
+    property var sendOrder: null
+    readonly property var held: typeof root.sendOrder === "function"
+        ? (root.message?.suggested ?? []).filter(s => s.answered !== "no") : []
+    function answerHeld(s, yes) {
+        root.message.suggested = (root.message.suggested ?? []).map(x => x.id === s.id
+            ? Object.assign({}, x, { answered: yes ? "yes" : "no" }) : x);
+        if (yes && s.order) root.sendOrder(s.order);
+    }
 
     visible: root.orders.length > 0 || root.told.length > 0 || root.suggestions.length > 0 || root.answeredSuggestions.length > 0
+        || root.held.length > 0
     spacing: 6
 
     component Chip: Rectangle {
@@ -247,6 +262,39 @@ ColumnLayout {
                         next(ids.reverse());
                     }
                 }
+            }
+        }
+    }
+
+    // A step it held, not asked for: also do it?
+    Repeater {
+        model: root.held
+        delegate: Flow {
+            id: heldStep
+            required property var modelData
+            Layout.fillWidth: true
+            spacing: 6
+            // On one line: a chip doesn't wrap.
+            readonly property string what: heldStep.modelData.summary.length > 60
+                ? heldStep.modelData.summary.slice(0, 59) + "…" : heldStep.modelData.summary
+            Chip {
+                visible: heldStep.modelData.answered === ""
+                label: Translation.tr("Also: %1?").arg(heldStep.what)
+                main: true
+                onClicked: root.answerHeld(heldStep.modelData, true)
+            }
+            Chip {
+                visible: heldStep.modelData.answered === ""
+                label: Translation.tr("No")
+                onClicked: root.answerHeld(heldStep.modelData, false)
+            }
+            StyledText {
+                visible: heldStep.modelData.answered === "yes"
+                text: Translation.tr("Asked: %1").arg(heldStep.modelData.summary)
+                font.family: root.fontFamily
+                font.pixelSize: Appearance.font.pixelSize.smaller
+                color: root.fg
+                opacity: 0.8
             }
         }
     }

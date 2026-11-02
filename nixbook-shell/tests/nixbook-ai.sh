@@ -12,6 +12,9 @@
 #     commands or isn't there, (127, "") without either; mask/unmask;
 #   - is_risky, reads_only, build_report, action_class (commands: their
 #     kind, their risk, the kinds never promoted);
+#   - the scope guard (scope_kind, scope_implied, own_words), the calls that
+#     only look (only_looks, command_reads), the requests answered by their
+#     answer (asks_for_answer), a request said again (same_request);
 #   - nix-onboard's turn through it.
 # Needs bash, python3 and jq. Run: bash tests/nixbook-ai.sh
 set -euo pipefail
@@ -392,6 +395,67 @@ check("class: no app for the other tools", "tasks:add", ai.action_class("tasks",
 check("class: a window tool without one", "close_window", ai.action_class("close_window", {"id": 3}))
 check("class: odd characters folded", "set_theme:dark-mode", ai.action_class("set_theme", {"action": "Dark mode!"}))
 check("class: another server's tool, bare", "send_sms", ai.action_class("mcp__phone__send_sms", {"to": "x"}))
+# The scope guard: what a request has to ask for, and whether it does.
+cute = "Now something cute and playful"
+check("scope: a media app opened is playing", "play",
+      ai.scope_kind("mcp__desktop__launch_app", {"app": "com.github.th-ch.youtube-music"}))
+check("scope: another app opened", "launch", ai.scope_kind("mcp__desktop__launch_app", {"app": "firefox"}))
+check("scope: the player's IPC, a music server's play, a media control's next", ["play", "play", "play"],
+      [ai.scope_kind("mcp__desktop__shell_ipc", {"target": "mpris", "function": "playPause"}),
+       ai.scope_kind("mcp__youtube-music__play", {"videoId": "x"}),
+       ai.scope_kind("mcp__jellyfin__control", {"action": "next"})])
+check("scope: a message sent, a reply to a notification", ["send", "send"],
+      [ai.scope_kind("mcp__desktop__discord", {"action": "send", "content": "hi"}),
+       ai.scope_kind("mcp__desktop__notification_action", {"id": 3, "reply": "ok"})])
+check("scope: a theme, a task, a notification's button are none", [None, None, None],
+      [ai.scope_kind("mcp__desktop__set_theme", {"theme": "x"}), ai.scope_kind("mcp__desktop__tasks", {"action": "add"}),
+       ai.scope_kind("mcp__desktop__notification_action", {"id": 3, "action": "Mark as read"})])
+check("scope: \"playful\" asks for nothing to play", False,
+      ai.scope_implied("play", cute, "mcp__desktop__launch_app", {"app": "com.github.th-ch.youtube-music"}))
+check("scope: what asks for it (en, fr, de, vi)", [True, True, True, True, True],
+      [ai.scope_implied("play", "play some jazz"), ai.scope_implied("play", "mets de la musique"),
+       ai.scope_implied("play", "spiel die nächste Folge"), ai.scope_implied("play", "phát nhạc đi"),
+       ai.scope_implied("send", "réponds-lui que oui")])
+check("scope: an app opened when asked to, or named", [True, True, False],
+      [ai.scope_implied("launch", "open my browser", "launch_app", {"app": "firefox"}),
+       ai.scope_implied("launch", "is firefox still there", "launch_app", {"app": "org.mozilla.firefox"}),
+       ai.scope_implied("launch", "make it dark", "launch_app", {"app": "org.mozilla.firefox"})])
+check("scope: an app for what the request is about, never a media app by it", [True, False],
+      [ai.scope_implied("launch", "check my mail", "launch_app", {"app": "thunderbird"}),
+       ai.scope_implied("play", "show me something cute", "launch_app", {"app": "com.github.th-ch.youtube-music"})])
+check("scope: \"open YouTube Music\" opens the media app", True,
+      ai.scope_implied("play", "ouvre youtube music", "launch_app", {"app": "com.github.th-ch.youtube-music"}))
+check("scope: the follow-up order passes", True,
+      ai.scope_implied("play", "Yes, do that too (" + ai.SCOPE_ORDER["play"] + "): launch app (app=youtube-music)"))
+check("own words: after the shell's notes", "hello there",
+      ai.own_words("(Meanwhile x)\n\nThe user now says:\n\n[Current date & time: x; Focused app: y] hello there"
+                   "\n\n(Attached file: /x; read it with the Read tool.)"))
+# Only looking: nothing for --verify to check.
+check("looks: page navigation, not closing a tab", [True, True, False],
+      [ai.only_looks("mcp__desktop__page_go", {"action": "navigate", "url": "x"}),
+       ai.only_looks("mcp__desktop__browser_open", {"url": "x"}),
+       ai.only_looks("mcp__desktop__page_go", {"action": "close"})])
+check("looks: a page focused or scrolled, not clicked", [True, False],
+      [ai.only_looks("page_act", {"action": "scroll"}), ai.only_looks("page_act", {"action": "click", "name": "x"})])
+check("looks: a window focused", True, ai.only_looks("mcp__desktop__focus_window", {"id": 3}))
+reading = ["gh pr view 42", "gh pr diff 42 | head -100", "git log --oneline -5 && git diff main", "ls -la",
+           "grep -rn foo . 2>/dev/null", "cd /x && cat a b | wc -l", "curl -s https://example.org"]
+writing = ["cat a > b", "rm -rf x", "sed -i s/a/b/ f", "curl -X POST https://x", "git checkout pr", "gh pr merge 42",
+           "find . -delete", "npm install", "echo $(rm x)"]
+check("looks: commands that only read", [True] * len(reading), [ai.command_reads(c) for c in reading])
+check("looks: commands that change something", [False] * len(writing), [ai.command_reads(c) for c in writing])
+check("looks: Bash and terminal_run by their command", [True, False],
+      [ai.only_looks("Bash", {"command": "gh pr view 1"}), ai.only_looks("terminal_run", {"command": "make install"})])
+check("answer requests: questions and reviews, not changes",
+      [True, True, True, True, False, False, False],
+      [ai.asks_for_answer(q) for q in ["review PR 42", "What is on my calendar?", "résume cette page",
+                                       "Warum ist das rot?", "close firefox", "Summarize this page and send it to Julien",
+                                       "open firefox"]])
+# Said again.
+check("repeat: the same words", True, ai.same_request("Play episode 3 of Frieren", "play episode 3 of frieren!"))
+check("repeat: not another number, not \"again\"", [False, False, False],
+      [ai.same_request("play episode 3", "play episode 4"), ai.same_request("play it again", "play it again"),
+       ai.same_request("close firefox", "open my mail")])
 # Commands (terminal_run): risky by what they do, their kind by their head.
 risky_commands = [
     "rm -rf build", "rm -f notes.txt", "rm *.log", "find . -name '*.o' -delete", "find . -exec rm {} ;",

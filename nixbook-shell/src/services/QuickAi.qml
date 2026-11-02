@@ -128,8 +128,8 @@ Singleton {
         // (nixbook-muse-task), the bubble free again; split up into workers
         // at once when it has several parts.
         if (root.canBackground)
-            out.push(root.canSplit ? { label: Translation.tr("Split it up"), main: false, run: () => root.toFanOut() }
-                : { label: Translation.tr("Do it in the background"), main: false, run: () => root.toBackground() });
+            out.push(root.canSplit ? { label: Translation.tr("Split it up"), main: root.slow, run: () => root.toFanOut() }
+                : { label: Translation.tr("Do it in the background"), main: root.slow, run: () => root.toBackground() });
         if (root.busy || root.clarifying) return out;
         if (root.paused) {
             out.push({ label: Translation.tr("Allow desktop control and retry"), main: true, run: () => root.allowControl() });
@@ -148,9 +148,27 @@ Singleton {
         return out;
     }
 
-    // A long order: many words, or already a few steps in.
+    // A long order: many words, already a few steps in, or on for a while.
     readonly property bool canBackground: root.agentMode && root.busy && !root.pending && MuseTasks.canStart
-        && (String(root.convo.question ?? "").length >= 100 || root.steps.length >= 3)
+        && (String(root.convo.question ?? "").length >= 100 || root.steps.length >= 3 || root.slow)
+    // A bubble turn on for 20 s with no answer yet: "This is taking a while"
+    // in the bubble, and "Do it in the background" whatever the order's
+    // length. Gone once the answer is there (its checks may still run).
+    readonly property bool turnAnswered: {
+        if (!root.agentMode) return false;
+        const ids = root.agentChat.messageIDs;
+        const m = ids.length > 0 ? root.agentChat.messageByID[ids[ids.length - 1]] : null;
+        return m?.role === "assistant" && m?.answered === true;
+    }
+    property bool slowFired: false
+    readonly property bool slow: root.slowFired && root.agentMode && root.busy && !root.turnAnswered
+    Timer {
+        // Stopped while it waits for the user's OK (their time, not its).
+        interval: 20000
+        running: root.agentMode && root.busy && !root.pending && !root.turnAnswered
+        onTriggered: root.slowFired = true
+    }
+    onBusyChanged: if (!root.busy) root.slowFired = false
     function toBackground() {
         const chat = root.agentChat;
         const order = String(root.convo.question ?? "").trim();
