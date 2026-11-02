@@ -1545,6 +1545,53 @@ ContentPage {
             }
         }
 
+        // "While you were away" (services/AwaySummary.qml, nixbook-desktop-mcp away).
+        ContentSection {
+            icon: "waving_hand"
+            title: Translation.tr("While you were away")
+
+            StyledText {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Appearance.colors.colSubtext
+                text: Translation.tr("Back at the computer after a while, Muse shows one card in its bubble with what happened meanwhile: the notifications that matter, the messages waiting for an answer, the calendar's changes, the background tasks finished and the routines that ran, most urgent first. Each line has Open, and Reply via Muse for a message; Dismiss all clears those notifications. Ranked on this computer in plain code; with AI online, one small-model call (private details masked) puts it in order and says it in a sentence; with local AI only, the plain list. Never while Do Not Disturb, a meeting, a fullscreen window or the lock screen: it waits until you are free.")
+            }
+            GroupedList {
+                ConfigSwitch {
+                    configKey: "ai.away.enable"
+                    buttonIcon: "waving_hand"
+                    text: Translation.tr("Tell me what I missed when I come back")
+                    checked: Config.options.ai.away.enable
+                    onCheckedChanged: Config.options.ai.away.enable = checked
+                }
+            }
+            ConfigSpinBox {
+                configKey: "ai.away.minMinutes"
+                icon: "timer"
+                text: Translation.tr("Only after being away at least (minutes)")
+                value: Config.options.ai.away.minMinutes ?? 20
+                from: 5; to: 240; stepSize: 5
+                onValueChanged: Config.options.ai.away.minMinutes = value
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Appearance.colors.colSubtext
+                    font.pixelSize: Appearance.font.pixelSize.small
+                    text: AwaySummary.lastWhy.length > 0 ? Translation.tr("Last time: %1").arg(AwaySummary.lastWhy) : ""
+                }
+                SmallButton {
+                    materialIcon: "visibility"
+                    mainText: Translation.tr("Show the last hour now")
+                    enabled: AwaySummary.enabled && !AwaySummary.working
+                    onClicked: AwaySummary.summarize(Date.now() - 3600000, 60, null, true)
+                }
+            }
+        }
+
         // The meeting companion (services/Meeting.qml, nixbook-meeting).
         ContentSection {
             icon: "record_voice_over"

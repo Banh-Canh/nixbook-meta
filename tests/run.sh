@@ -129,6 +129,8 @@ cmd_shell() {
   bash nixbook-shell/tests/meeting.sh || failed=1
   section 'nixbook-shell "Next up" predictions (nixbook-desktop-mcp predict)'
   bash nixbook-shell/tests/predict.sh || failed=1
+  section 'nixbook-shell "While you were away" (nixbook-desktop-mcp away)'
+  bash nixbook-shell/tests/away.sh || failed=1
   section "nixbook-shell page code (Zen and the Electron apps)"
   bash nixbook-shell/tests/page.sh || failed=1
   section "jellyfin-mcp (customPkgs) against a fake Jellyfin"

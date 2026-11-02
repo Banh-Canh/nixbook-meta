@@ -171,8 +171,8 @@ Scope {
             out.push({ label: Translation.tr("No thanks"), main: false, run: () => Initiative.hush("dismissed") })
         }
         // A watch the user asked for, the journal's line, the meeting
-        // companion's: seen, nothing to silence.
-        if (it.id && (it.kind === "watch" || it.kind === "journal" || it.kind === "meeting"))
+        // companion's, the away card: seen, nothing to silence.
+        if (it.id && (it.kind === "watch" || it.kind === "journal" || it.kind === "meeting" || it.kind === "away"))
             out.push({ label: it.offer ? Translation.tr("Not now") : Translation.tr("OK"), main: out.length === 0,
                        run: () => Initiative.hush("later") })
         else if (it.id) {
@@ -544,6 +544,20 @@ Scope {
                         font.family: root.font
                         font.pixelSize: Appearance.font.pixelSize.normal
                         color: root.fg
+                    }
+
+                    // "While you were away" (AwaySummary.qml): the ranked lines
+                    // under the summary, each with Open / Reply via Muse.
+                    AwayCard {
+                        Layout.fillWidth: true
+                        visible: root.item?.kind === "away" && !root.conversing && !threadList.visible
+                        card: root.item?.kind === "away" ? (root.item?.away ?? null) : null
+                        onActed: (what, line) => Initiative.act({ do: "away", what: what, line: line }, root.item)
+                        fg: root.fg
+                        accent: root.accent
+                        bg: root.bg
+                        fontFamily: root.font
+                        square: root.square
                     }
 
                     // The conversation: Muse's words plain, the user's in a pill
@@ -1054,7 +1068,9 @@ Scope {
                 Timer {
                     id: unanswered
                     // What it just did for a command: a glance, then gone.
-                    interval: root.conversing ? 90000 : root.item?.kind === "quick" ? 5000 : root.item?.kind === "react" ? 15000 : 25000
+                    // The away card has lines to read: a minute.
+                    interval: root.conversing ? 90000 : root.item?.kind === "quick" ? 5000 : root.item?.kind === "react" ? 15000
+                        : root.item?.kind === "away" ? 60000 : 25000
                     running: root.item !== null && window.visible && !hover.hovered && !root.responding
                         && !Voice.listening && !Voice.transcribing
                         && !(Initiative.typing && (root.item?.kind !== "quick" || input.text.length > 0))

@@ -39,7 +39,10 @@ Singleton {
         order: ["add", "accept", "decline", "list"], triage: ["score"],
         // "Next up" (services/NextUp.qml): what happened counted, and the
         // step to offer, on every focus change.
-        predict: ["observe", "offer", "feedback", "explain", "status", "show", "unmute"]
+        predict: ["observe", "offer", "feedback", "explain", "status", "show", "unmute"],
+        // "While you were away" (services/AwaySummary.qml): the card's lines
+        // ranked, at most one small-model call (on a thread of its own).
+        away: ["summary"]
     })
 
     function takes(argv) {
