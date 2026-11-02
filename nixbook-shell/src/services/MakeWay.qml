@@ -79,6 +79,8 @@ Singleton {
         if (Meeting.shown) out.push("meetingCaptions")
         // "Next up"'s chip: click-through but the pill, gone from screenshots.
         if (NextUp.offer !== null) out.push("nextUp")
+        // Teach mode's card (watching, or the recipe to approve).
+        if (TeachMode.phase !== "idle") out.push("teachMode")
         return out
     }
     onOverlaysChanged: overlaysWrite.restart()

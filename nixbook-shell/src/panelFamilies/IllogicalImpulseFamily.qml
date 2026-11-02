@@ -31,6 +31,7 @@ import qs.modules.ii.sidebarRight
 import qs.modules.ii.smartClipboard
 import qs.modules.ii.splash
 import qs.modules.ii.tasks
+import qs.modules.ii.teach
 import qs.modules.ii.notesApp
 import qs.modules.ii.contactsApp
 import qs.modules.ii.accounts
@@ -87,6 +88,8 @@ Scope {
     PanelLoader { component: AgentCursorOverlay {} }
     // "Next up": one chip beside the desktop mascot, mapped only while offering.
     PanelLoader { component: NextUpChip {} }
+    // Teach mode ("watch me once"): its bar while watching, then the recipe to approve.
+    PanelLoader { component: TeachPanel {} }
     // Loading screen while the Preloader builds every popup (last, so it is
     // stacked above the other overlay surfaces mapped during boot).
     PanelLoader { component: BootSplash {} }

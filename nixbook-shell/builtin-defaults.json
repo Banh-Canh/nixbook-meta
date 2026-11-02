@@ -187,6 +187,10 @@
       "enable": false,
       "afterMinutes": 5
     },
+    "teach": {
+      "enable": true,
+      "maxMinutes": 30
+    },
     "terminal": {
       "read": true,
       "suggest": true,

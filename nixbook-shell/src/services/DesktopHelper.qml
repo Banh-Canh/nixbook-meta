@@ -44,7 +44,10 @@ Singleton {
         find: null,
         // "While you were away" (services/AwaySummary.qml): the card's lines
         // ranked, at most one small-model call (on a thread of its own).
-        away: ["summary"]
+        away: ["summary"],
+        // Teach mode (services/TeachMode.qml): each window in front while
+        // it records.
+        teach: ["event", "status"]
     })
 
     function takes(argv) {

@@ -195,6 +195,8 @@ it can be undone, and Muse hears of it with your next message.
 | Timers             | timer 10 min, pomodoro                                                      |
 | Layouts and others | work layout (a saved layout), task: buy milk, settings                      |
 | Films and episodes | play Edgerunners season 1 episode 2, watch Dune (Jellyfin)                  |
+| Projects           | work on the hackathon, pause the hackathon (a saved project)                |
+| Teach mode         | watch me, then done (or never mind)                                         |
 
 Starting a conversation, the short forms work too ("pause", "next", "louder",
 "lock"). In a conversation, only commands that name what they act on go this way:

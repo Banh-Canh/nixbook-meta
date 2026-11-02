@@ -137,6 +137,8 @@ cmd_shell() {
   bash nixbook-shell/tests/away.sh || failed=1
   section "nixbook-shell daily brief, reply drafts, phone handoff"
   bash nixbook-shell/tests/brief.sh || failed=1
+  section "nixbook-shell project contexts and teach mode (nixbook-desktop-mcp project, teach)"
+  bash nixbook-shell/tests/projects.sh || failed=1
   section "nixbook-shell page code (Zen and the Electron apps)"
   bash nixbook-shell/tests/page.sh || failed=1
   section "nixbook-shell Actual Budget adapter (the budget tool, read only)"
