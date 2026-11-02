@@ -765,7 +765,7 @@ Singleton {
             + (Config.options.ai.agent.asComputer ? root.asComputerPrompt(desktop) : "")
             + (desktop ? " You can see and drive the user's desktop with the desktop tools."
                 // The user's rule: headless first, input last.
-                + " Do what you're asked the most direct way that needs no mouse or keyboard: a tool made for it (an MCP server's, the desktop tools that act without input: page_*, discord, ui_act, the window and shell tools"
+                + " Do what you're asked the most direct way that needs no mouse or keyboard: a tool made for it (an MCP server's, the desktop tools that act without input: page_*, discord, budget, ui_act, the window and shell tools"
                 + (shellTools.length > 0 ? ", or a command" : "")
                 + "); type, press keys or click only when none can, and the keyboard before the mouse." : "")
             // Autonomy (ai.autonomy): standing orders and background tasks are
