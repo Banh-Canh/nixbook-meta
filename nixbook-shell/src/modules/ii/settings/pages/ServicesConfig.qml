@@ -407,7 +407,18 @@ ContentPage {
                                 Config.options.search.prefix.ai = value;
                             }
                         }
-                        Item { Layout.fillWidth: true }
+                        ConfigTextArea {
+                            configKey: "search.prefix.find";
+                            enabled: !nixManaged;
+                            Layout.fillWidth: true
+                            buttonIcon: "manage_search"
+                            fieldWidth: 100
+                            text: Translation.tr("Find it")
+                            value: Config.options.search.prefix.find
+                            onValueChanged: {
+                                Config.options.search.prefix.find = value;
+                            }
+                        }
                     }
                 }
             }
