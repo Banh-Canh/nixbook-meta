@@ -483,7 +483,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 80 tools" 80 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 82 tools" 82 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -3885,7 +3885,7 @@ out=$(call focus_window '{"id":1}')
 expect_eq "resume" "focused window 1" "$(head -n 1 <<<"$out")"
 
 echo '{"tools":["observe"],"actionsPerMinute":2}' >"$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
-expect_eq "config: disabled groups not listed" 9 "$(python3 "$mcp" tools | jq length)"
+expect_eq "config: disabled groups not listed" 10 "$(python3 "$mcp" tools | jq length)"
 out=$(call type_text '{"text":"x"}')
 expect_contains "config: disabled tool not callable" "$out" "unknown or disabled tool"
 echo '{"actionsPerMinute":2}' >"$XDG_CONFIG_HOME/nixbook-shell/desktop-mcp.json"
