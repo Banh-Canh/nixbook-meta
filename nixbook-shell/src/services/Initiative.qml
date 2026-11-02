@@ -658,6 +658,19 @@ Singleton {
             Meeting.act(a)
             return
         }
+        // The away card's (AwaySummary.qml): Open and Reply act on one of its
+        // lines (AwayCard.qml), the card stays for the others; Dismiss all
+        // clears the notifications it lists and closes it.
+        if (a.do === "away") {
+            if (a.what === "open") AwaySummary.open(a.line)
+            else if (a.what === "reply") AwaySummary.reply(a.line)
+            else if (a.what === "dismissAll") {
+                AwaySummary.dismissAll(item.away)
+                root._taken(item)
+                if (root.speaking === item) root.speaking = null
+            }
+            return
+        }
         if (a.do === "ask") {
             if (item !== root.speaking) root.open(item)
             root.reply(a.text, a.attach ?? "")
@@ -876,6 +889,17 @@ Singleton {
         const item = Object.assign({ id: Qt.md5(`meeting|${w.text}|${t}`).slice(0, 12), level: "notify", title: "Muse",
                                      time: t / 1000, expires: t / 1000 + (w.offer ? 15 * 60 : 6 * 3600) }, w)
         item.text = String(item.text ?? "").slice(0, 4000)
+        root._local(item)
+        root._say(item)
+    }
+    // "While you were away" (AwaySummary.qml): its one card, made here like
+    // the meeting companion's words, whether or not the initiative is on
+    // (ai.away has its own switch). `w.away`: the ranked lines (AwayCard.qml).
+    function awayCard(w) {
+        const t = Date.now()
+        const item = Object.assign({ id: Qt.md5(`away|${w.text}|${t}`).slice(0, 12), kind: "away", level: "notify",
+                                     title: "Muse", time: t / 1000, expires: t / 1000 + 2 * 3600 }, w)
+        item.text = String(item.text ?? "").slice(0, 1000)
         root._local(item)
         root._say(item)
     }

@@ -162,6 +162,10 @@
       "threshold": 0.5,
       "minCount": 4
     },
+    "away": {
+      "enable": true,
+      "minMinutes": 20
+    },
     "terminal": {
       "read": true,
       "suggest": true,

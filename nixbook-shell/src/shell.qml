@@ -69,6 +69,8 @@ ShellRoot {
         Meeting.load()
         // "Next up": its IPC target (the accept key) from the start.
         NextUp.load()
+        // "While you were away": watching for the user leaving from the start.
+        AwaySummary.load()
     }
     
     PanelFamilyLoader {

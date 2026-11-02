@@ -655,6 +655,15 @@ Singleton {
                     property real threshold: 0.5
                     property int minCount: 4
                 }
+                // "While you were away" (services/AwaySummary.qml): back after at
+                // least `minMinutes`, one card in Muse's bubble with what
+                // happened meanwhile (notifications that matter, messages to
+                // answer, calendar changes, background tasks, routines), ranked
+                // in plain code, said by one small-model call (policies.ai 1).
+                property JsonObject away: JsonObject {
+                    property bool enable: true
+                    property int minMinutes: 20
+                }
                 // Muse in the terminal and the editor (nixbook-desktop-mcp's
                 // `terminal` tools, kitty's remote control and nvim's server):
                 // `read`, the kitty windows and what they show (the last

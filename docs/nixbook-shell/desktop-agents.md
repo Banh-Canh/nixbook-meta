@@ -567,6 +567,29 @@ A seed file gives labels and transitions (`from` a cue, `to` a step, `count`, th
 }
 ```
 
+### While you were away
+
+Back at the computer after a break (at least **20 minutes** with the screen locked or off), Muse shows **one compact card** in its bubble with what you missed, most urgent first:
+
+- **notifications that matter**, still in the notification centre; a conversation's messages on one line ("Vesktop · Lan (3)");
+- **messages waiting for an answer** (the app offers a reply, or it is one of your _Keep on screen_ chat apps);
+- **calendar changes**: an event new, moved or cancelled in the next three days, against the calendar as it was when you left;
+- **background tasks** finished, failed or waiting for you;
+- **routines** that ran.
+
+Each line is marked **NOW** (critical, "urgent", a meeting within 30 minutes, a task waiting for you), **SOON** (someone who matters or a message to answer, a change in the next three hours, a task done) or nothing, and has **Open** (the message's own action, else its app's window; the event in the Calendar; the task in the Muse tab; a routine in What Muse did) and, for a message, **Reply via Muse**: an order to Muse in the bubble, which suggests a reply and sends it through the notification only once you say so. **Dismiss all** clears the notifications the card lists from the centre (not counted as you turning them down); **OK** closes it. Left alone a minute, it goes to the bar's bubble.
+
+It is ranked on this computer in plain code (`nixbook-desktop-mcp away summary`, on the shell's helper), as [Kiroshi](./quick-ai.md) ranks its scan: noise left out with the [instant triage's](#instant-triage) rules (one-time codes and bank messages, low urgency, the shell's own, what you muted or always dismiss), then urgency × value, six lines at most ("+N more"). With AI online (`policies.ai` 1, desktop control not paused) **one** small-model call puts the lines in order and sums them up in a sentence, private details masked like everything sent (and in the record of what was sent, as "while you were away"); with local AI only (2), the plain list; with AI off (0), nothing.
+
+Never while you are busy: Do Not Disturb, a meeting, a fullscreen window, the lock screen, Full AI mode or an agent driving the desktop. It waits until you are free (checked every minute, at most 30 minutes, then lets it go).
+
+**Settings → Desktop agents → While you were away**: the switch (`ai.away.enable`, on) and **Only after being away at least** (`ai.away.minMinutes`, 20); **Show the last hour now** shows a card at once. From a terminal (agents can't call it: `away` is in desktop-mcp's `shellIpcDenyTargets`):
+
+```sh
+nixbook-shell ipc call away show 60   # the card for the last hour, now
+nixbook-shell ipc call away status    # waiting or not, the last card and why
+```
+
 ## Fixes it makes itself
 
 On machines that have it (totoro), tell an agent something of nixbook is broken ("report this") and, with **Fixes it makes itself** on, its `report_problem` tool files it for the fixer. The fixer makes a small fix in a confined `nixbook-meta-agent` session (Muse), checks it and opens a pull request you merge. Ask for something new instead ("I wish the bar showed…") and, with **Features it builds** on, its `request_feature` tool files it as a feature request: built the same way but bigger, never merged on its own. A fix found too big becomes a feature request by itself, and the agent may propose a fix or feature from what it saw get in your way. Ask "did you file it?" or "how's my feature going?" and its read-only `list_requests` tool shows what was filed: when, by whom (you or the fixer itself), and whether it is queued, building, a pull request (its link and checks), merged, dropped or too big. Say "build it now" (or "fix it now") and it starts at once, as **Build now** in Settings. See [Fixes it makes itself](./self-improve).

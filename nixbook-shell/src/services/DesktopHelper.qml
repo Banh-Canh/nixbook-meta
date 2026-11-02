@@ -41,7 +41,10 @@ Singleton {
         // step to offer, on every focus change.
         predict: ["observe", "offer", "feedback", "explain", "status", "show", "unmute"],
         // The launcher's find prefix (services/FindAnything.qml).
-        find: null
+        find: null,
+        // "While you were away" (services/AwaySummary.qml): the card's lines
+        // ranked, at most one small-model call (on a thread of its own).
+        away: ["summary"]
     })
 
     function takes(argv) {
