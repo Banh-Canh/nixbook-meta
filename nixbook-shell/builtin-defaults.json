@@ -162,6 +162,10 @@
       "threshold": 0.5,
       "minCount": 4
     },
+    "teach": {
+      "enable": true,
+      "maxMinutes": 30
+    },
     "terminal": {
       "read": true,
       "suggest": true,

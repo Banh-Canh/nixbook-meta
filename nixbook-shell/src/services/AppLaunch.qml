@@ -110,10 +110,13 @@ Singleton {
         }
     }
 
+    // An app started from the shell (teach mode records it).
+    signal entryLaunched(string id, string name)
     // DesktopEntry (or DesktopAction, which has no workingDirectory/runInTerminal).
     function launchEntry(entry, parent = null) {
         if (!entry)
             return;
+        root.entryLaunched(String(entry.id ?? parent?.id ?? ""), String(entry.name ?? parent?.name ?? ""));
         const argv = entry.command;
         if (!argv || argv.length === 0) {
             entry.execute();

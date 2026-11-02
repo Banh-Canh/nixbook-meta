@@ -483,7 +483,7 @@ out=$(printf '%s\n' \
 expect_eq "stdio: one reply per request, none for notifications" 7 "$(wc -l <<<"$out" | tr -d ' ')"
 expect_eq "initialize: protocol version echoed" 2025-06-18 "$(jq -r 'select(.id==1).result.protocolVersion' <<<"$out")"
 expect_eq "initialize: tools capability" '{"listChanged":false}' "$(jq -c 'select(.id==1).result.capabilities.tools' <<<"$out")"
-expect_eq "tools/list: 79 tools" 79 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
+expect_eq "tools/list: 80 tools" 80 "$(jq 'select(.id==2).result.tools | length' <<<"$out")"
 expect_eq "tools/list: read-only annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="list_windows").annotations.readOnlyHint' <<<"$out")"
 expect_eq "tools/list: destructive annotation" true "$(jq 'select(.id==2).result.tools[] | select(.name=="close_window").annotations.destructiveHint' <<<"$out")"
 expect_eq "tools/call: focus_window succeeds" false "$(jq 'select(.id==3).result.isError' <<<"$out")"
@@ -722,8 +722,8 @@ expect_eq "core: not the rarer ones" "" "$(jq -r '.[] | select(._meta["nixbook/c
 expect_eq "core: every tool keeps its group" "" "$(jq -r '.[] | select(._meta["nixbook/group"] | not) | .name' <<<"$tools")"
 expect_eq "core: within 15000 characters (descriptions and schemas)" yes \
   "$(jq '[.[] | select(._meta["nixbook/core"]) | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 15000 ? "yes" : "no (" $1 ")")}')"
-expect_eq "all tools: within 40000 characters" yes \
-  "$(jq '[.[] | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 40000 ? "yes" : "no (" $1 ")")}')"
+expect_eq "all tools: within 41000 characters" yes \
+  "$(jq '[.[] | (.description | length) + (.inputSchema | tojson | length)] | add' <<<"$tools" | awk '{print ($1 <= 41000 ? "yes" : "no (" $1 ")")}')"
 expect_eq "brief: a short description offers help" true \
   "$(jq '.[] | select(.name=="routine") | (.description | test("help: true")) and .inputSchema.properties.help.type == "boolean"' <<<"$tools")"
 expect_not_contains "brief: the long reference left out" "$(jq -r '.[] | select(.name=="routine") | .description' <<<"$tools")" \

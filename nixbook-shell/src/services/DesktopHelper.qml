@@ -39,7 +39,10 @@ Singleton {
         order: ["add", "accept", "decline", "list"], triage: ["score"],
         // "Next up" (services/NextUp.qml): what happened counted, and the
         // step to offer, on every focus change.
-        predict: ["observe", "offer", "feedback", "explain", "status", "show", "unmute"]
+        predict: ["observe", "offer", "feedback", "explain", "status", "show", "unmute"],
+        // Teach mode (services/TeachMode.qml): each window in front while
+        // it records.
+        teach: ["event", "status"]
     })
 
     function takes(argv) {

@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 
 import qs
 import qs.modules.common
+import qs.modules.common.functions
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
@@ -15,7 +16,9 @@ import QtQuick
  * brightness, an app (open, close, switch to it), a workspace (one by its
  * number, the next, the previous; the window moved to one), dark or light
  * mode, Do Not Disturb, night light, a screenshot, locking the screen, a
- * timer or a pomodoro, a saved window layout, a task added, the shell's
+ * timer or a pomodoro, a saved window layout, a saved project opened or
+ * paused ("work on the hackathon", "pause hackathon"), teach mode ("watch
+ * me", then "done": project_intent.js), a task added, the shell's
  * settings, the meeting companion started or stopped ("take notes"). In English, French, German and Vietnamese (`_english` turns the
  * three others into the English commands first).
  *
@@ -194,6 +197,33 @@ Singleton {
         const raw = String(text ?? "").trim();
         // Short and on one line: a command, not a question or a story.
         if (raw.length === 0 || raw.length > 80 || raw.includes("\n")) return null;
+
+        // ── Teach mode: "watch me", then "done" (project_intent.js) ──
+        const teach = ProjectIntent.teachIntent(raw, TeachMode.recording);
+        if (teach === "start") {
+            if (!TeachMode.enabled) return root._done(Translation.tr("Teach mode is off (Settings > Desktop agents > Teach Muse)."));
+            TeachMode.start();
+            return root._done(Translation.tr("Watching: do the task once, then say “done”."), () => TeachMode.cancel());
+        }
+        if (teach === "stop") {
+            TeachMode.stop();
+            return root._done(Translation.tr("Got it: writing down what you did, check it on the card."));
+        }
+        if (teach === "cancel") {
+            TeachMode.cancel();
+            return root._done(Translation.tr("Stopped watching: nothing kept."));
+        }
+        // ── A saved project, by its name: "work on X", "pause X" ──
+        const project = ProjectIntent.projectIntent(raw, Projects.names());
+        if (project?.action === "open") {
+            Projects.open(project.name);
+            return root._done(Translation.tr("Opening the %1 project.").arg(project.name), () => Projects.undoOpen());
+        }
+        if (project?.action === "pause") {
+            Projects.pause(project.name);
+            return root._done(Translation.tr("Pausing %1: saved as it is.").arg(project.name));
+        }
+
         const t = root._english(root._clean(raw));
         if (t.length === 0) return null;
         // In a conversation, nothing pointing back at it.

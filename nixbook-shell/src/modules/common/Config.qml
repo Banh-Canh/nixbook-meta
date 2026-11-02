@@ -655,6 +655,13 @@ Singleton {
                     property real threshold: 0.5
                     property int minCount: 4
                 }
+                // Teach mode, "watch me once" (services/TeachMode.qml): the
+                // user shows Muse a task and it becomes a recipe; it stops
+                // watching by itself after `maxMinutes`.
+                property JsonObject teach: JsonObject {
+                    property bool enable: true
+                    property int maxMinutes: 30
+                }
                 // Muse in the terminal and the editor (nixbook-desktop-mcp's
                 // `terminal` tools, kitty's remote control and nvim's server):
                 // `read`, the kitty windows and what they show (the last
