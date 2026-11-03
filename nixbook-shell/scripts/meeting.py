@@ -223,8 +223,8 @@ NOTES_SYSTEM = ("You keep the running notes of a call the user is in, while it h
                 "and what was said since. " + WHO + " Give the whole updated notes: topics (short phrases, in the "
                 "order discussed), decisions (what was agreed, a line each), actions (what someone will do: what, "
                 "owner — \"You\", a name heard, or \"\" — and due when said), questions (left open). Keep the "
-                "earlier items unless the call changed them, merge duplicates, at most 12 a list, short lines, in "
-                "the call's language. " + PRIVACY)
+                "earlier items unless the call changed them, merge duplicates, at most 12 a list, short lines. "
+                + PRIVACY)
 SUMMARY_SCHEMA = {"type": "object", "required": ["title", "summary", "decisions", "actions", "followup"],
                   "properties": {
                       "title": {"type": "string"}, "summary": {"type": "string"}, "decisions": ITEMS,
@@ -235,13 +235,27 @@ SUMMARY_SYSTEM = ("The call is over. Write its record for the user, from its tra
                   "taken during it. " + WHO + " Give: title (8 words at most), summary (2 to 4 sentences), "
                   "decisions, actions (what, owner, due when said), questions left open, and followup: a short, "
                   "friendly message the user could send the others afterwards (subject and body: thanks, the "
-                  "decisions, the action items with their owners), not signed. In the call's language. Only what "
+                  "decisions, the action items with their owners), not signed. Only what "
                   "was said: nothing made up. " + PRIVACY)
 
 
 def clock(t):
     t = int(t or 0)
     return f"{t // 3600}:{t % 3600 // 60:02d}:{t % 60:02d}" if t >= 3600 else f"{t // 60:02d}:{t % 60:02d}"
+
+
+LANG_NAMES = {"en": "English", "fr": "French", "de": "German", "vi": "Vietnamese", "es": "Spanish", "it": "Italian",
+              "pt": "Portuguese", "nl": "Dutch", "ja": "Japanese", "zh": "Chinese", "ko": "Korean"}
+
+
+def in_language(lang):
+    """The notes' and the record's language: the user's (they read them, and
+    may not speak the call's other languages); a call in French and English
+    had its record written in French for an English user."""
+    code = str(lang or "").split(",")[0].strip().lower()[:2]
+    name = LANG_NAMES.get(code)
+    return (f" Write it in {name}, the user's language, whatever languages are spoken in the call (names, "
+            f"products and quoted terms as said).") if name else " Write it in the call's main language."
 
 
 def transcript_text(lines, start=0, end=None):
@@ -292,7 +306,8 @@ def write_record(meeting, cfg, notes_now=None):
     prompt = (f"Call: {meeting.get('title') or 'untitled'} ({clock(lines[-1].get('t'))} long)\n\n"
               f"Running notes:\n{json.dumps(notes, ensure_ascii=False)}\n\nTranscript:\n{text}")
     try:
-        got = ask("meeting record", SUMMARY_SYSTEM, prompt, SUMMARY_SCHEMA, cfg["model"], False, effort="low")
+        got = ask("meeting record", SUMMARY_SYSTEM + in_language(meeting.get("lang")), prompt, SUMMARY_SCHEMA,
+                  cfg["model"], False, effort="low")
     except nixbook_ai.AIError as e:
         return {"error": str(e)}
     got = got if isinstance(got, dict) else {}
@@ -515,7 +530,8 @@ class Meeting:
             return False
         prompt = (f"Call: {self.data.get('title') or 'untitled'}\n\nNotes so far:\n"
                   f"{json.dumps(notes or {}, ensure_ascii=False)}\n\nSaid since:\n{chunk}")
-        got = ask("meeting notes", NOTES_SYSTEM, prompt, NOTES_SCHEMA, "small", self.cfg["fast"])
+        got = ask("meeting notes", NOTES_SYSTEM + in_language(self.data.get("lang")), prompt, NOTES_SCHEMA, "small",
+                  self.cfg["fast"])
         notes = clean_notes(got)
         with self.lock:
             self.data["notes"] = notes
