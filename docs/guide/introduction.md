@@ -65,9 +65,7 @@ Provisioning a brand-new laptop is as simple as choosing a profile and running a
 
 ## Screenshots
 
-Niri with the desktop shell:
-
-![Niri configuration](https://raw.githubusercontent.com/didactiklabs/nixbook/main/assets/images/screenshot.png)
+The DAI demo, Muse on the desktop: [watch it on YouTube](https://www.youtube.com/watch?v=mI9ZiEvd1l4).
 
 Headless Sunshine/Moonlight remote desktop:
 
