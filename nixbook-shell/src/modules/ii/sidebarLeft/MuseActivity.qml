@@ -243,6 +243,11 @@ Item {
                     onClicked: MuseTasks.approve(task.modelData, true)
                 }
                 SmallButton {
+                    visible: task.modelData.status === "waiting" && !!task.modelData.approval?.class && Autonomy.trust
+                    label: Translation.tr("Always")
+                    onClicked: MuseTasks.approve(task.modelData, true, true)
+                }
+                SmallButton {
                     visible: task.modelData.status === "waiting" && !!task.modelData.approval
                     label: Translation.tr("No")
                     onClicked: MuseTasks.approve(task.modelData, false)

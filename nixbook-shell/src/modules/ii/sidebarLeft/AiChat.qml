@@ -619,6 +619,15 @@ Inline w/ backslash and round brackets \\(e^{i\\pi} + 1 = 0\\)
                         buttonText: Translation.tr("Allow")
                         onClicked: Ai.current?.approve(true)
                     }
+                    // Never asked again for this kind (done, then said).
+                    DialogButton {
+                        visible: !!approvalBar.approval?.class && Autonomy.trust
+                        buttonText: Translation.tr("Always")
+                        onClicked: Ai.current?.approve(true, true)
+                        StyledToolTip {
+                            text: Translation.tr("Allow it and never ask again for this kind of step: Muse does it, then tells you (Settings > Desktop agents > Autonomy to change it back)")
+                        }
+                    }
                     DialogButton {
                         buttonText: Translation.tr("No")
                         onClicked: Ai.current?.approve(false)

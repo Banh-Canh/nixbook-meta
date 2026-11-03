@@ -339,7 +339,7 @@ QtObject {
         } else if (ev.type === "approval_request") {
             // A risky step waiting for the user's OK (--confirm).
             out.approval = { id: String(ev.id ?? ""), tool: toolName(ev.tool), input: ev.input ?? {},
-                             summary: brief(ev.summary || ev.input || "", 120) };
+                             summary: brief(ev.summary || ev.input || "", 120), class: String(ev.class ?? "") };
             setStep(String(ev.id ?? ""), { tool: toolName(ev.tool), summary: brief(ev.summary || ev.input || "", 80), status: "run" });
         } else if (ev.type === "approval_expired") {
             // Unanswered in time: not done, its Allow / No taken away.

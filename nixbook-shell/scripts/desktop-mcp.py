@@ -7380,7 +7380,9 @@ def routine_judge(cfg, r, event, now):
     key = fold(" | ".join(item.values()))[:300]
     if not key.strip():
         return False, "nothing to judge (no track or title)"
-    if when.get("words") and when["words"] in key:
+    words = fold(when.get("words") or "")
+    # Spaces don't count: "persona 5" is on "PERSONA5 ORIGINAL SOUNDTRACK".
+    if words and (words in key or words.replace(" ", "") in key.replace(" ", "")):
         return True, "its words"
     topic = lambda x: hashlib.sha1(fold(x["when"]["about"]).encode()).hexdigest()[:12]
     mine = topic(r)
@@ -21443,7 +21445,9 @@ def args_gist(args, limit=80):
 # undone since, and the user is offered to stop being asked (they decide:
 # `trust set`, their click); a no or an Undo brings it a step down
 # (silent → tell → ask) and starts the count over. What sends, pays,
-# deletes, merges or touches credentials never goes past ask.
+# deletes, merges or touches credentials is never offered past ask; the
+# user may still raise it themselves ("Always" on its Allow / No, or
+# Settings), to tell at most: done, then said, each time.
 TRUST_LEVELS = ("ask", "tell", "silent")
 TRUST_STREAK = 3
 TRUST_STREAK_DAYS = 30
@@ -21526,7 +21530,7 @@ def trust_state(cls, e, risky=None, now=None):
     level = e.get("level") if e.get("level") in TRUST_LEVELS else default
     if e.get("level") in TRUST_LEVELS:
         why = e.get("why") or why
-    if never_promote(cls) and level != "ask":  # whatever the file says
+    if never_promote(cls) and level != "ask" and not (e.get("userSet") and level == "tell"):  # whatever the file says
         level, why = "ask", "never done without asking (it sends, pays, deletes, merges or touches credentials)"
     ceiling = TRUST_CEILING.get(local_bare(class_parts(cls)[0]))
     if ceiling and TRUST_LEVELS.index(level) > TRUST_LEVELS.index(ceiling):
@@ -21588,9 +21592,10 @@ def trust_record(cls, outcome, now=None):
 
 def trust_max(cls):
     """The highest level `trust set` accepts for this class (Settings offers
-    only the levels up to it)."""
+    only the levels up to it): tell for what sends, pays, deletes… and for
+    commands, each still said."""
     if never_promote(cls):
-        return "ask"
+        return "tell"
     return TRUST_CEILING.get(local_bare(class_parts(cls)[0])) or "silent"
 
 
@@ -21599,8 +21604,8 @@ def trust_set(cls, level):
     cls = trust_class(cls)
     if level not in TRUST_LEVELS:
         raise ToolError("trust set: ask, tell or silent")
-    if level != "ask" and never_promote(cls):
-        raise ToolError(f"refused: {cls} sends, pays, deletes, merges or touches credentials: it is always asked")
+    if level == "silent" and never_promote(cls):
+        raise ToolError(f"refused: {cls} sends, pays, deletes, merges or touches credentials: at most told after")
     ceiling = TRUST_CEILING.get(local_bare(class_parts(cls)[0]))
     if ceiling and TRUST_LEVELS.index(level) > TRUST_LEVELS.index(ceiling):
         raise ToolError(f"refused: {cls} is at most {ceiling} (each command run is said)")

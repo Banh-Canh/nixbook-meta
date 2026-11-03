@@ -1341,7 +1341,7 @@ ContentPage {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Appearance.colors.colSubtext
-                text: Translation.tr("Muse can do more on its own, always with you in charge. Standing orders: say \"from now on, when I join a meeting, mute the music\" or \"every evening at 6, a digest of my Slack mentions\": it proposes a routine, on only when you click Turn on. Trust: each kind of action is asked about first, done and told after (with Undo), or done silently; after three yeses in a row it offers to stop asking, and only you raise a kind, below. Sending, paying, deleting and passwords always ask. Journal: everything it did without your OK on that very step, 30 days, with Undo (the side panel's Muse tab). Background tasks: long tasks go on while you do something else (the side panel's Muse tab, the bar). Split it up: an order of several parts (\"find three restaurants, draft an invitation and block my Friday evening\") is planned by Muse Wonder and done by up to four workers at once, each a little figure on the bar, their results merged into one answer.")
+                text: Translation.tr("Muse can do more on its own, always with you in charge. Standing orders: say \"from now on, when I join a meeting, mute the music\" or \"every evening at 6, a digest of my Slack mentions\": it proposes a routine, on only when you click Turn on. Trust: each kind of action is asked about first, done and told after (with Undo), or done silently; after three yeses in a row it offers to stop asking, and only you raise a kind, below. Sending, paying, deleting and passwords are never offered: only your \"Always\" on their Allow / No (or Tell after here) stops the asking, and each is still told after. Journal: everything it did without your OK on that very step, 30 days, with Undo (the side panel's Muse tab). Background tasks: long tasks go on while you do something else (the side panel's Muse tab, the bar). Split it up: an order of several parts (\"find three restaurants, draft an invitation and block my Friday evening\") is planned by Muse Wonder and done by up to four workers at once, each a little figure on the bar, their results merged into one answer.")
             }
             GroupedList {
                 ConfigSwitch {
@@ -1450,16 +1450,16 @@ ContentPage {
                                 color: trustRow.error ? Appearance.colors.colError : Appearance.colors.colSubtext
                                 text: trustRow.error || [trustRow.modelData.streak ? Translation.tr("%1 yeses in a row").arg(trustRow.modelData.streak) : "",
                                     trustRow.modelData.last ? page.ago(trustRow.modelData.last) : "",
-                                    trustRow.maxLevel === 0 ? Translation.tr("always asks: it sends, pays, deletes, merges or touches passwords")
-                                        : trustRow.maxLevel === 1 ? Translation.tr("at most told after: each command run is said") : ""]
+                                    trustRow.maxLevel === 1 ? (trustRow.modelData.neverPromote
+                                        ? Translation.tr("never offered to stop asking (it sends, pays, deletes, merges or touches passwords); at most told after")
+                                        : Translation.tr("at most told after: each command run is said")) : ""]
                                     .filter(x => x).join(" · ")
                             }
                         }
                         // The highest level `trust set` takes for it: what
-                        // sends, pays, deletes… is only ever asked, a command
-                        // at most told.
+                        // sends, pays, deletes… and a command at most told.
                         readonly property int maxLevel: Math.max(0, ["ask", "tell", "silent"].indexOf(trustRow.modelData.maxLevel
-                            ?? (trustRow.modelData.locked || trustRow.modelData.promotable === false ? "ask" : "silent")))
+                            ?? (trustRow.modelData.locked || trustRow.modelData.promotable === false ? "tell" : "silent")))
                         Repeater {
                             model: [
                                 { level: "ask", label: Translation.tr("Ask"), icon: "front_hand" },

@@ -307,9 +307,14 @@ Singleton {
         return /^[\w-]{1,64}$/.test(String(id ?? ""))
     }
     // The user's answers: a step allowed or not, a reply to its question.
-    function approve(task, allow) {
+    // remember: "Always", the step's kind never asked again (set first).
+    function approve(task, allow, remember) {
         if (!root._valid(task?.id) || !task.approval?.id) return
-        Quickshell.execDetached([root.command, "approve", task.id, String(task.approval.id), allow ? "yes" : "no"])
+        const argv = [root.command, "approve", task.id, String(task.approval.id), allow ? "yes" : "no"]
+        if (allow && remember === true && task.approval.class)
+            Autonomy.setTrust(task.approval.class, "tell", () => Quickshell.execDetached(argv))
+        else
+            Quickshell.execDetached(argv)
     }
     function answer(task, text) {
         const t = String(text ?? "").trim()

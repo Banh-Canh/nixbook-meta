@@ -124,6 +124,10 @@ Singleton {
             // A command: shown whole above the chips (TerminalNotes).
             const label = TerminalAccess.runApproval(root.pending) ? Translation.tr("Allow: run it") : Translation.tr("Allow: %1").arg(what);
             out.push({ label: label, main: true, run: () => root.approve(true) });
+            // Never asked again for this kind (done, then said): the user's
+            // click only, with the trust ladder on (the step has a class).
+            if (root.canRemember)
+                out.push({ label: Translation.tr("Always"), main: false, run: () => root.approve(true, true) });
             out.push({ label: Translation.tr("No"), main: false, run: () => root.approve(false) });
             return out;
         }
@@ -704,14 +708,16 @@ Singleton {
         if (root.agentMode && root.agentChat.responding) root.agentChat.stopResponse();
     }
 
-    // The step waiting for an OK: done or not.
-    function approve(yes) {
+    // The step waiting for an OK: done or not; remember: "Always" (its
+    // kind never asked again).
+    readonly property bool canRemember: !root.shotPending && !!root.pending?.class && Autonomy.trust
+    function approve(yes, remember) {
         if (root.shotPending) {
             root.shotPending = null;
             if (proc.running) proc.write(yes ? "yes\n" : "no\n");
             return;
         }
-        if (root.agentMode && root.agentChat.approval) root.agentChat.approve(yes === true);
+        if (root.agentMode && root.agentChat.approval) root.agentChat.approve(yes === true, remember === true);
     }
     // Desktop control was paused (Mod+Shift+Escape, the bar's robot): allowed
     // again, the order asked again.

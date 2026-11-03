@@ -265,13 +265,20 @@ Scope {
         requester.makeRequest();
     }
     // The step waiting for an OK: done (allow) or not; a line on the
-    // agent's stdin, which goes on with the turn.
-    function approve(allow) {
+    // agent's stdin, which goes on with the turn. remember: the user's
+    // "Always" — its kind (a.class) is set to `tell` first (never asked
+    // again, done then said), so the agent, which reads the level again
+    // once the answer is recorded, doesn't ask for the next one either.
+    function approve(allow, remember) {
         const a = chat.approval;
         if (!a) return;
         chat.approval = null;
-        if (requester.running && requester.turnActive)
-            requester.write(JSON.stringify({ type: "approval", id: a.id, allow: allow === true }) + "\n");
+        const send = () => {
+            if (requester.running && requester.turnActive)
+                requester.write(JSON.stringify({ type: "approval", id: a.id, allow: allow === true }) + "\n");
+        };
+        if (allow === true && remember === true && a.class) Autonomy.setTrust(a.class, "tell", () => send());
+        else send();
     }
 
     function regenerate(messageIndex) {
