@@ -105,6 +105,8 @@ Singleton {
         root.partialYou = ""
         root.notes = null
         root.summary = null
+        // The last call's title, else the header says it for this one.
+        root.summaryTitle = ""
         root.error = ""
         root.status = Translation.tr("Connecting…")
         root.meetingId = ""

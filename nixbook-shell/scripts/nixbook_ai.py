@@ -902,6 +902,19 @@ def call(system, messages, *, model="small", effort=None, tools=None, tool_choic
             raise AIError(f"API error: HTTP {e.code}: {detail[:400]}")
 
 
+# Asked for the JSON as text: an object that follows the schema. "The JSON
+# object alone: <schema>" had Muse Spark answer with the schema itself
+# ({"type": "object", "required": …}), every time on the chat endpoint.
+JSON_TEXT_ASK = ("\n\nAnswer with one JSON object that follows this JSON Schema: the data itself (your answer), "
+                 "not the schema, and nothing else around it. The schema: ")
+
+
+def _echoes_schema(value, schema):
+    """True when a reply is the schema given back, not an answer to it."""
+    return (isinstance(value, dict) and "properties" in value and value.get("type") == "object"
+            and not any(k in value for k in (schema.get("required") or []) if k not in ("type", "properties")))
+
+
 def _structured(msg, schema, wrapped):
     """(value, None), or (None, why): the structured answer of a reply, by
     the tool or as JSON in its text."""
@@ -910,6 +923,8 @@ def _structured(msg, schema, wrapped):
     value = call_.get("input") if call_ is not None else json_in(text_of(msg))
     if not isinstance(value, dict):
         return None, "no answer"
+    if _echoes_schema(value, {"required": ["value"]} if wrapped else schema):
+        return None, "missing: the answer itself (that was the schema)"
     if wrapped:
         if "value" not in value:
             return None, "the answer goes in `value`"
@@ -949,22 +964,21 @@ def answer(system, prompt_or_messages, *, model="small", effort=None, schema=Non
         provider = p
         model_id = p.model(model)
         if model_id and _fast_known(p, model_id) is not False:
-            msg = _fast(p, model_id, base + "\n\nAnswer with the JSON object alone, nothing else: "
-                        + json.dumps(input_schema, ensure_ascii=False), messages, max_tokens, timeout)
+            msg = _fast(p, model_id, base + JSON_TEXT_ASK + json.dumps(input_schema, ensure_ascii=False), messages,
+                        max_tokens, timeout)
             if msg is not None:
                 value, why = _structured(msg, schema, wrapped)
                 if why is None:
                     return value
     choices = ([{"type": "auto"}] if effort in EFFORTS else []) + [{"type": "tool", "name": STRUCTURED},
                                                                     {"type": "any"}, None]
-    told = False
+    told = told_text = False
     i = 0
     convo = list(messages)
     while i < len(choices):
         choice = choices[i]
         sys_text = base + ("\n\nAnswer by calling the `structured_output` tool, once, with the JSON it asks for."
-                           if choice is not None else "\n\nAnswer with the JSON object alone, nothing else: "
-                           + json.dumps(input_schema, ensure_ascii=False))
+                           if choice is not None else JSON_TEXT_ASK + json.dumps(input_schema, ensure_ascii=False))
         try:
             msg = call(sys_text, convo if choice is not None else messages, model=model, effort=effort if choice and choice["type"] == "auto" else None,
                        tools=[tool] if choice is not None else None, tool_choice=choice, max_tokens=max_tokens,
@@ -977,6 +991,14 @@ def answer(system, prompt_or_messages, *, model="small", effort=None, schema=Non
         value, why = _structured(msg, schema, wrapped)
         if why is None:
             return value
+        if not told_text and choice is None:
+            # The JSON as text, the last way: once more, told what was wrong
+            # (a key missing, the schema given back, only thinking, no text).
+            told_text = True
+            convo = messages + [{"role": "assistant", "content": text_of(msg) or "…"},
+                                {"role": "user", "content": why + ". Answer again: the JSON object itself, complete."}]
+            messages = convo
+            continue
         if why.startswith("missing") and not told and choice is not None:
             # Once: what is wrong, the same way asked again.
             told = True
