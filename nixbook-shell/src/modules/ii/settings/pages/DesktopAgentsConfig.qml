@@ -1362,8 +1362,15 @@ ContentPage {
                             StyledText {
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
-                                text: String(trustRow.modelData.class).replace(/_/g, " ")
+                                // "discord: send", "close window in firefox";
+                                // the class itself on hover.
+                                text: String(trustRow.modelData.summary || String(trustRow.modelData.class).replace(/_/g, " "))
                                 color: Appearance.colors.colOnLayer1
+                                HoverHandler { id: trustClassHover }
+                                StyledToolTip {
+                                    extraVisibleCondition: trustClassHover.hovered
+                                    text: String(trustRow.modelData.class)
+                                }
                             }
                             StyledText {
                                 Layout.fillWidth: true
@@ -1372,10 +1379,16 @@ ContentPage {
                                 color: trustRow.error ? Appearance.colors.colError : Appearance.colors.colSubtext
                                 text: trustRow.error || [trustRow.modelData.streak ? Translation.tr("%1 yeses in a row").arg(trustRow.modelData.streak) : "",
                                     trustRow.modelData.last ? page.ago(trustRow.modelData.last) : "",
-                                    trustRow.modelData.locked || trustRow.modelData.promotable === false ? Translation.tr("always asks") : ""]
+                                    trustRow.maxLevel === 0 ? Translation.tr("always asks: it sends, pays, deletes, merges or touches passwords")
+                                        : trustRow.maxLevel === 1 ? Translation.tr("at most told after: each command run is said") : ""]
                                     .filter(x => x).join(" · ")
                             }
                         }
+                        // The highest level `trust set` takes for it: what
+                        // sends, pays, deletes… is only ever asked, a command
+                        // at most told.
+                        readonly property int maxLevel: Math.max(0, ["ask", "tell", "silent"].indexOf(trustRow.modelData.maxLevel
+                            ?? (trustRow.modelData.locked || trustRow.modelData.promotable === false ? "ask" : "silent")))
                         Repeater {
                             model: [
                                 { level: "ask", label: Translation.tr("Ask"), icon: "front_hand" },
@@ -1384,11 +1397,14 @@ ContentPage {
                             ]
                             delegate: SmallButton {
                                 required property var modelData
+                                required property int index
                                 materialIcon: modelData.icon
                                 mainText: modelData.label
+                                enabled: index <= trustRow.maxLevel
+                                opacity: enabled ? 1 : 0.4
                                 toggled: trustRow.modelData.level === modelData.level
                                 onClicked: Autonomy.setTrust(trustRow.modelData.class, modelData.level, (ok, why) => {
-                                    trustRow.error = ok ? "" : (why || Translation.tr("Refused: this kind always asks"))
+                                    trustRow.error = ok ? "" : (why ? Translation.tr("Refused: %1").arg(why) : Translation.tr("Refused: this kind always asks"))
                                 })
                             }
                         }

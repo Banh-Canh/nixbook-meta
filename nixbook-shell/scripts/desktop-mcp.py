@@ -21586,6 +21586,14 @@ def trust_record(cls, outcome, now=None):
     return {"class": cls, "level": level, "suggestPromote": suggest, "streak": len(allows)}
 
 
+def trust_max(cls):
+    """The highest level `trust set` accepts for this class (Settings offers
+    only the levels up to it)."""
+    if never_promote(cls):
+        return "ask"
+    return TRUST_CEILING.get(local_bare(class_parts(cls)[0])) or "silent"
+
+
 def trust_set(cls, level):
     """The user's choice (Settings, a "Stop asking" chip): never an agent's."""
     cls = trust_class(cls)
@@ -21613,7 +21621,7 @@ def trust_list():
         out.append({"class": cls, "level": level, "default": trust_default(cls)[0], "why": why, "streak": len(allows),
                     "last": e.get("last"), "userSet": user, "neverPromote": never_promote(cls),
                     "locked": never_promote(cls), "promotable": not never_promote(cls),
-                    "suggestPromote": suggest, "summary": class_words(cls)})
+                    "maxLevel": trust_max(cls), "suggestPromote": suggest, "summary": class_words(cls)})
     return sorted(out, key=lambda x: -(x["last"] or 0))
 
 

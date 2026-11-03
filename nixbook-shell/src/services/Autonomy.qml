@@ -102,11 +102,16 @@ Singleton {
             return
         }
         DesktopHelper.run(["trust", "set", String(cls), level], "", (code, out) => {
-            const r = root._json(code, out)
+            // A refusal is JSON too ({"error": …}, exit 1): read it whatever
+            // the code, so the row says why instead of the raw line.
+            let r = null
+            try {
+                r = JSON.parse(out)
+            } catch (e) {}
             const ok = code === 0 && !(r?.error)
             root.trustAnswered = Object.assign({}, root.trustAnswered, { [cls]: ok ? level : "error" })
             root.refreshTrust()
-            if (done) done(ok, String(r?.error ?? (ok ? "" : out)).trim())
+            if (done) done(ok, ok ? "" : String(r?.error ?? "").replace(/^refused:\s*/i, "").trim())
         })
     }
     // The "Stop asking before …?" chips answered, by class: the level set,
