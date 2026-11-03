@@ -656,10 +656,15 @@ SCAN_INTRO = (
     "screen (nixbook: NixOS, the niri compositor). What they are doing is below."
 )
 # Pass 1, fast: what is on screen and what matters (the overlay shows it at once).
+# The box in pixels of the image, its size and both axes said: "in pixels of
+# the image" alone, Muse Spark gave y on another scale now and then (a
+# median 29 px off on a staged desk, 47 px on some runs, boxes a row too
+# low); said this way, 18 px (7 runs of each wording, the same screenshot).
 SCAN_FAST = (
     "Label the 3 to 8 things on the screen that matter (an error, a message waiting for an answer, a meeting "
     "coming, a form, the work in the main window, a notification…), most important first. For each: label (2-5 "
-    "words), kind ({kinds}), box [x, y, width, height] in pixels of the image, tight around it, urgency (now: "
+    "words), kind ({kinds}), box [x, y, width, height] in pixels of this {w}x{h} image (x from its left edge, 0 to "
+    "{w}; y from its top edge, 0 to {h}), tight around it, urgency (now: "
     "needs them now, soon, later, noise: can be dismissed or ignored), gist (one line, at most 14 words, the "
     "key fact). Then routine = the indexes (from 0) of the items an assistant could take entirely off their "
     "hands without their judgment AND where that saves real effort: several routine notifications to clear at "
@@ -1152,7 +1157,7 @@ def scan(req, started, p):
     shared = mask(SCAN_INTRO.format(w=w, h=h) + "\n\n" + context_text)
     system = SYSTEM.format(lang=lang) + "\n\n" + PRIVACY
     model = p.model(model_alias(req))
-    fast = SCAN_FAST.format(kinds="|".join(sorted(SCAN_KINDS)), lang=lang)
+    fast = SCAN_FAST.format(kinds="|".join(sorted(SCAN_KINDS)), lang=lang, w=w, h=h)
     emit("start", provider=p.label, model=model, contextMs=ms())
     nixbook_ai.sent_note("Kiroshi scan (screen)", f"{p.label.lower()}:{model}", shared + "\n\n" + fast)
     with open(image, "rb") as f:
