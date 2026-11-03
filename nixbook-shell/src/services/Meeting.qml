@@ -198,7 +198,7 @@ Singleton {
                 .filter(x => x).join("\n\n")
             // Sending is Muse's, through its usual approval (a risky step):
             // nothing goes out from here.
-            Initiative.meetingWord({ kind: "meeting", text: draft || Translation.tr("No follow-up was drafted."),
+            Initiative.meetingWord({ kind: "meeting", now: true, text: draft || Translation.tr("No follow-up was drafted."),
                 actions: draft ? [{ label: Translation.tr("Copy"), do: "meeting", what: "copy", draft: draft },
                     { label: Translation.tr("Send it with Muse"), do: "ask",
                       text: `Send this follow-up of the call "${root.summaryTitle}" to the people who were on it (ask me who and where if you can't tell). Show it to me before it goes:\n\n${draft}` }] : [] })

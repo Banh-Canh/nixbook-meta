@@ -932,7 +932,11 @@ Singleton {
         // The call's record: Next up's "write the follow-up" is the same moment.
         if (w.meetingTitle) Offers.claim("initiative", item.id, OfferCues.fromMeeting(w.meetingTitle))
         root._local(item)
-        root._say(item)
+        // A button of the bubble's own card made it (Draft follow-up): shown
+        // at once. The click gave the field the keys, so _say saw the user
+        // typing and only queued it, and the draft never showed.
+        if (w.now) root._notify(item)
+        else root._say(item)
     }
     // "While you were away" (AwaySummary.qml): its one card, made here like
     // the meeting companion's words, whether or not the initiative is on
