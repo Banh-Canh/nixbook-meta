@@ -23,6 +23,19 @@ ContentPage {
         DesktopControl.refreshHabits();
     }
 
+    // The page's tabs: each top-level section says which it is in
+    // (`tab`), and only the open tab's are shown.
+    readonly property var tabs: [
+        { id: "basics", name: Translation.tr("Basics"), icon: "tune" },
+        { id: "talk", name: Translation.tr("Talk"), icon: "record_voice_over" },
+        { id: "own", name: Translation.tr("On its own"), icon: "auto_awesome" },
+        { id: "day", name: Translation.tr("Your day"), icon: "today" },
+        { id: "memory", name: Translation.tr("Memory"), icon: "psychology" },
+        { id: "improve", name: Translation.tr("Improve"), icon: "build" }
+    ]
+    property string tab: "basics"
+    onTabChanged: page.contentY = 0
+
     function goTo(term) {
         const t = term.toLowerCase().trim()
 
@@ -42,9 +55,32 @@ ContentPage {
         }
 
         let target = findTarget(mainLayout)
-        if (target) {
-            let pos = target.mapToItem(mainLayout, 0, 0)
-            page.contentY = Math.max(0, pos.y - 0)
+        if (!target) return
+        // Open its section's tab first (hidden sections are still there).
+        let section = target
+        while (section && section.parent !== mainLayout) section = section.parent
+        if (section && typeof section.tab === "string" && section.tab !== page.tab) page.tab = section.tab
+        goToTimer.target = target
+        goToTimer.restart()
+    }
+    // Once the tab's sections are laid out: aimed again over a few frames,
+    // the page's height settles after the switch.
+    Timer {
+        id: goToTimer
+        property Item target: null
+        property int runs: 0
+        interval: 80
+        repeat: true
+        onRunningChanged: if (running) runs = 0
+        onTriggered: {
+            if (target) {
+                const pos = target.mapToItem(mainLayout, 0, 0)
+                page.contentY = Math.max(0, Math.min(pos.y, page.contentHeight - page.height))
+            }
+            if (++runs >= 4) {
+                stop()
+                target = null
+            }
         }
     }
 
@@ -69,9 +105,28 @@ ContentPage {
         Layout.fillHeight: true
         spacing: 20
 
+        // The tabs (a switch resets the page to the top).
+        Flow {
+            id: tabBar
+            Layout.fillWidth: true
+            spacing: 6
+            Repeater {
+                model: page.tabs
+                delegate: SmallButton {
+                    required property var modelData
+                    materialIcon: modelData.icon
+                    mainText: modelData.name
+                    toggled: page.tab === modelData.id
+                    onClicked: page.tab = modelData.id
+                }
+            }
+        }
+
         // policies.ai, the one switch for all of it (also Settings > Panels:
         // No, Yes, Local).
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             icon: "neurology"
             title: Translation.tr("AI features")
 
@@ -104,6 +159,8 @@ ContentPage {
         // seconds in Muse's speech bubble: typed, said, from the screenshot
         // app, the launcher, notifications.
         ContentSection {
+            readonly property string tab: "talk"
+            shown: page.tab === tab
             icon: "bolt"
             title: Translation.tr("Talk to your desktop")
 
@@ -375,6 +432,8 @@ ContentPage {
         // Muse on the desktop (services/MascotState.qml): the mascot in a
         // corner, its plain-code reactions and its rare quips.
         ContentSection {
+            readonly property string tab: "talk"
+            shown: page.tab === tab
             icon: "smart_toy"
             title: Translation.tr("Muse on the desktop")
 
@@ -459,6 +518,8 @@ ContentPage {
         // The smart clipboard (services/SmartClipboard.qml): what was copied
         // read in plain code, its action offered by the mascot.
         ContentSection {
+            readonly property string tab: "talk"
+            shown: page.tab === tab
             icon: "content_paste_go"
             title: Translation.tr("Smart clipboard")
 
@@ -587,6 +648,8 @@ ContentPage {
         // Accuracy (meta-agent --resolve / --verify, the 👍 / 👎 of
         // services/AnswerFeedback.qml) and which model does what (ai.routing).
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             icon: "verified"
             title: Translation.tr("Accuracy and models")
 
@@ -730,6 +793,8 @@ ContentPage {
         // The privacy mask (desktop-mcp.py, "Privacy mask"): what models read
         // has placeholders, swapped back on this computer.
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             icon: "visibility_off"
             title: Translation.tr("Private details")
 
@@ -855,6 +920,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "own"
+            shown: page.tab === tab
             icon: "chat_bubble"
             title: Translation.tr("Talks to you on its own")
 
@@ -1156,6 +1223,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "own"
+            shown: page.tab === tab
             icon: "bolt"
             title: Translation.tr("Routines")
 
@@ -1262,6 +1331,8 @@ ContentPage {
         // trust ladder (the only place a class is raised: `trust set`), the
         // journal, background tasks.
         ContentSection {
+            readonly property string tab: "own"
+            shown: page.tab === tab
             icon: "verified_user"
             title: Translation.tr("Autonomy")
             Component.onCompleted: Autonomy.refreshTrust()
@@ -1416,6 +1487,8 @@ ContentPage {
         // Terminal & coding (ai.terminal, services/TerminalAccess.qml; the
         // desktop MCP server's `terminal` tools over kitty's and nvim's sockets).
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             icon: "terminal"
             title: Translation.tr("Terminal & coding")
 
@@ -1481,6 +1554,8 @@ ContentPage {
 
         // Reactivity (services/Reactor.qml, services/ContextTriggers.qml).
         ContentSection {
+            readonly property string tab: "own"
+            shown: page.tab === tab
             icon: "bolt"
             title: Translation.tr("Reactivity")
 
@@ -1563,6 +1638,8 @@ ContentPage {
 
         // "Next up" (services/NextUp.qml, nixbook-desktop-mcp predict).
         ContentSection {
+            readonly property string tab: "own"
+            shown: page.tab === tab
             icon: "magic_button"
             title: Translation.tr("Next up")
 
@@ -1617,6 +1694,8 @@ ContentPage {
 
         // "While you were away" (services/AwaySummary.qml, nixbook-desktop-mcp away).
         ContentSection {
+            readonly property string tab: "day"
+            shown: page.tab === tab
             icon: "waving_hand"
             title: Translation.tr("While you were away")
 
@@ -1664,6 +1743,8 @@ ContentPage {
 
         // Teach mode, "watch me once" (services/TeachMode.qml, nixbook-desktop-mcp teach).
         ContentSection {
+            readonly property string tab: "own"
+            shown: page.tab === tab
             icon: "school"
             title: Translation.tr("Teach Muse")
 
@@ -1712,6 +1793,8 @@ ContentPage {
 
         // The meeting companion (services/Meeting.qml, nixbook-meeting).
         ContentSection {
+            readonly property string tab: "talk"
+            shown: page.tab === tab
             icon: "record_voice_over"
             title: Translation.tr("Meeting companion")
 
@@ -1805,6 +1888,8 @@ ContentPage {
         // The daily brief (services/DailyBrief.qml), the reply batch
         // (services/ReplyBatch.qml), the phone handoff (services/PhoneHandoff.qml).
         ContentSection {
+            readonly property string tab: "day"
+            shown: page.tab === tab
             icon: "wb_twilight"
             title: Translation.tr("Daily brief")
 
@@ -1877,6 +1962,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "day"
+            shown: page.tab === tab
             icon: "quickreply"
             title: Translation.tr("Reply drafts")
 
@@ -1943,6 +2030,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "day"
+            shown: page.tab === tab
             icon: "phone_forwarded"
             title: Translation.tr("Phone handoff")
 
@@ -1991,6 +2080,8 @@ ContentPage {
         // services/SelfImprove.qml, nixbook-improve: only where Nix made it
         // available (programs.nixbook-shell.selfImprove.enable).
         ContentSection {
+            readonly property string tab: "improve"
+            shown: page.tab === tab
             visible: SelfImprove.available
             icon: "build"
             title: Translation.tr("Fixes it makes itself")
@@ -2370,6 +2461,8 @@ ContentPage {
         // the same nixbook-improve, token and model; other rules (bigger, new
         // files), never merged on its own.
         ContentSection {
+            readonly property string tab: "improve"
+            shown: page.tab === tab
             visible: SelfImprove.available
             icon: "lightbulb"
             title: Translation.tr("Features it builds")
@@ -2498,6 +2591,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             icon: "smart_toy"
             title: Translation.tr("Desktop control")
             shape: MaterialShape.Shape.Pentagon
@@ -2594,6 +2689,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             id: agentSection
             icon: "neurology"
             title: Translation.tr("Muse in the side panel")
@@ -3733,6 +3830,8 @@ ContentPage {
 
         // EqualizerAutoService's agent mode.
         ContentSection {
+            readonly property string tab: "basics"
+            shown: page.tab === tab
             icon: "graphic_eq"
             title: Translation.tr("Equalizer agent")
             shape: MaterialShape.Shape.Burst
@@ -3765,6 +3864,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "memory"
+            shown: page.tab === tab
             icon: "psychology"
             title: Translation.tr("Desktop memory")
             shape: MaterialShape.Shape.Cookie4Sided
@@ -3964,6 +4065,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "memory"
+            shown: page.tab === tab
             icon: "insights"
             title: Translation.tr("Usage habits")
             shape: MaterialShape.Shape.Cookie4Sided
@@ -4062,6 +4165,8 @@ ContentPage {
         }
 
         ContentSection {
+            readonly property string tab: "memory"
+            shown: page.tab === tab
             icon: "person_book"
             title: Translation.tr("About you")
             shape: MaterialShape.Shape.Cookie4Sided

@@ -4,6 +4,8 @@
 
 Every agent the shell starts itself (the side panel, the speech bubble, the memory passes, routines, the fixer, the equalizer agent) is Muse, on Meta's Model API, run by nixbook's own agent `nixbook-meta-agent` through the model provider (**Settings → Desktop agents → Model provider**). The claude.ai connectors, the Claude usage bar widget and signing in with a Claude account are gone on purpose in this fork.
 
+Settings → **Desktop agents** is split into tabs: **Basics** (AI features, Muse in the side panel, accuracy and models, private details, desktop control, terminal & coding, the equalizer agent), **Talk** (talk to your desktop, Muse on the desktop, smart clipboard, meeting companion), **On its own** (talks to you on its own, routines, autonomy, reactivity, next up, teach Muse), **Your day** (while you were away, daily brief, reply drafts, phone handoff), **Memory** (desktop memory, usage habits, about you) and **Improve** (fixes it makes itself, features it builds). A link or a search to one of these sections opens its tab; `nixbook-shell ipc call settings openPage "Desktop agents:Autonomy"` does it from a script.
+
 ```bash
 claude mcp add desktop -- nixbook-desktop-mcp     # Claude Code
 # OpenCode, Codex…: a local (stdio) server running `nixbook-desktop-mcp`
