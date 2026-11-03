@@ -327,6 +327,71 @@ function findTime(s) {
     return null
 }
 
+// Time zones said after a time ("9:00 PM ET", "15:00 CET", "3pm (PT)",
+// "10h UTC+7"): fixed offsets in minutes east of UTC, or a rule with its
+// standard offset (us: second Sunday of March to first Sunday of November,
+// 2:00 local; eu: last Sunday of March to last Sunday of October, 1:00 UTC).
+// Abbreviations only in capitals: "et" is French for "and".
+var ZONES = {
+    ET: { std: -300, rule: "us" }, EST: { fixed: -300 }, EDT: { fixed: -240 },
+    CT: { std: -360, rule: "us" }, CST: { fixed: -360 }, CDT: { fixed: -300 },
+    MT: { std: -420, rule: "us" }, MST: { fixed: -420 }, MDT: { fixed: -360 },
+    PT: { std: -480, rule: "us" }, PST: { fixed: -480 }, PDT: { fixed: -420 },
+    AKST: { fixed: -540 }, AKDT: { fixed: -480 }, HST: { fixed: -600 },
+    UTC: { fixed: 0 }, GMT: { fixed: 0 }, BST: { fixed: 60 },
+    WET: { std: 0, rule: "eu" }, WEST: { fixed: 60 },
+    CET: { std: 60, rule: "eu" }, CEST: { fixed: 120 },
+    EET: { std: 120, rule: "eu" }, EEST: { fixed: 180 },
+    IST: { fixed: 330 }, ICT: { fixed: 420 }, SGT: { fixed: 480 }, HKT: { fixed: 480 },
+    JST: { fixed: 540 }, KST: { fixed: 540 }, AEST: { fixed: 600 }, AEDT: { fixed: 660 },
+    NZST: { fixed: 720 }, NZDT: { fixed: 780 }
+}
+var ZONE_NAMES = { eastern: "ET", central: "CT", mountain: "MT", pacific: "PT" }
+var ZONE_RE = new RegExp("^\\s*[(,]?\\s*(?:(UTC|GMT)\\s*([+\\-−])\\s*(\\d{1,2})(?::?(\\d{2}))?|("
+    + Object.keys(ZONES).sort(function (a, b) { return b.length - a.length }).join("|")
+    + ")(?![A-Za-z])|(?:(eastern|central|mountain|pacific)(?:\\s+(standard|daylight))?\\s+time))\\)?", "i")
+// The zone right after a time: {label, offset(y, mo, d, h, m) → minutes, end} or null.
+function zoneAfter(s, pos) {
+    var c = ZONE_RE.exec(s.slice(pos))
+    if (!c) return null
+    var z, label
+    if (c[1]) {
+        if (c[1] !== c[1].toUpperCase()) return null
+        var off = (Number(c[3]) * 60 + Number(c[4] || 0)) * (c[2] === "+" ? 1 : -1)
+        if (Math.abs(off) > 14 * 60) return null
+        z = { fixed: off }; label = c[0].replace(/^[\s(,]+|\)$/g, "").trim()
+    } else if (c[5]) {
+        if (c[5] !== c[5].toUpperCase()) return null
+        z = ZONES[c[5]]; label = c[5]
+    } else {
+        label = ZONE_NAMES[c[6].toLowerCase()]
+        var std = ZONES[label].std
+        z = c[7] ? { fixed: std + (c[7].toLowerCase() === "daylight" ? 60 : 0) } : ZONES[label]
+        label = c[0].replace(/^[\s(,]+|\)$/g, "").trim()
+    }
+    return { label: label, end: pos + c[0].length, offset: function (y, mo, d, h, m) { return zoneOffset(z, y, mo, d, h, m) } }
+}
+function sundayOf(y, mo, n) {
+    // n-th Sunday (1-based) of the month, or the last one for n = -1: the day.
+    if (n > 0) {
+        var first = new Date(Date.UTC(y, mo, 1)).getUTCDay()
+        return 1 + (7 - first) % 7 + (n - 1) * 7
+    }
+    var lastDay = new Date(Date.UTC(y, mo + 1, 0))
+    return lastDay.getUTCDate() - lastDay.getUTCDay()
+}
+function zoneOffset(z, y, mo, d, h, m) {
+    if (z.fixed !== undefined) return z.fixed
+    var wall = Date.UTC(y, mo, d, h, m)
+    if (z.rule === "us") {
+        var a = Date.UTC(y, 2, sundayOf(y, 2, 2), 2), b = Date.UTC(y, 10, sundayOf(y, 10, 1), 2)
+        return z.std + (wall >= a && wall < b ? 60 : 0)
+    }
+    var utc = wall - z.std * 60000
+    var s0 = Date.UTC(y, 2, sundayOf(y, 2, -1), 1), s1 = Date.UTC(y, 9, sundayOf(y, 9, -1), 1)
+    return z.std + (utc >= s0 && utc < s1 ? 60 : 0)
+}
+
 // The day said in `s`: {y, mo, d, start, end} or null. `now` a Date.
 function findDay(s, now, lang) {
     var low = s.toLowerCase()
@@ -437,8 +502,16 @@ function dateKind(t, now, lang) {
     if (!day) return null
     var h = time ? time.h : (day.evening ? 20 : 0), m = time ? time.m : 0
     var when = new Date(day.y, day.mo, day.d, h, m, 0, 0)
+    // "9:00 PM ET": that time where it was said, put in the local time.
+    var zone = time ? zoneAfter(t, time.end) : null
+    var said = ""
+    if (zone) {
+        when = new Date(Date.UTC(day.y, day.mo, day.d, h, m) - zone.offset(day.y, day.mo, day.d, h, m) * 60000)
+        said = t.slice(time.start, time.end).trim() + " " + zone.label
+        time.end = zone.end
+    }
     // "Monday 5pm" said on a Monday morning: today, not next week.
-    if (day.sameDay && !day.modified && time) {
+    if (day.sameDay && !day.modified && time && !zone) {
         var todayAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0, 0)
         if (todayAt.getTime() > now.getTime()) when = todayAt
     }
@@ -454,7 +527,7 @@ function dateKind(t, now, lang) {
     title = title.replace(/\s+/g, " ").replace(/^[\s,.;:–—\-]+|[\s,.;:–—\-]+$/g, "").replace(JOINERS, "").trim()
     if (title.length > 80) title = title.slice(0, 79).replace(/\s+\S*$/, "") + "…"
     var addr = addressIn(t)
-    return { kind: "date", detail: "", when: when.getTime(), hasTime: !!time || !!day.evening, title: title, location: addr,
+    return { kind: "date", detail: "", when: when.getTime(), hasTime: !!time || !!day.evening, title: title, location: addr, said: said,
              actions: [{ id: "calendar", model: false, when: when.getTime(), hasTime: !!time || !!day.evening, title: title, location: addr }] }
 }
 

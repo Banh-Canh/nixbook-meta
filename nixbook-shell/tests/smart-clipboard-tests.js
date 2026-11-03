@@ -356,6 +356,27 @@ expectDate("Thứ sáu tuần sau lúc 9 giờ sáng", "2026-11-06 09:00", {
 });
 expectDate("Hẹn gặp chủ nhật lúc 15:00", "2026-11-01 15:00", { lang: "vi" });
 expectDate("January 5th dinner with Anna", "2027-01-05 00:00");
+// Said in another time zone: put in the local time (TZ=Europe/Paris, CET
+// since 25 October; the US on daylight time until 1 November).
+{
+  const d = expectDate("Nov 4th at 9:00 PM ET.", "2026-11-05 03:00");
+  check("zone said", d && d.said === "9:00 PM ET", d && JSON.stringify(d.said));
+}
+expectDate("Meeting October 30 at 9am ET", "2026-10-30 14:00");
+expectDate("Launch call Nov 2 at 10am PT", "2026-11-02 19:00");
+expectDate("Call tomorrow 3pm Eastern Time", "2026-10-30 20:00");
+expectDate("Webinar le 12 novembre à 15h UTC", "2026-11-12 16:00", {
+  lang: "fr",
+});
+expectDate("Standup Monday 10:00 UTC+7", "2026-11-02 04:00");
+expectDate("Demo on July 1 at 9am CET", "2027-07-01 09:00");
+expectDate("Sync Friday 4pm (PST)", "2026-10-31 01:00");
+{
+  const d = expectDate("RDV demain à 14h et on verra", "2026-10-30 14:00", {
+    lang: "fr",
+  });
+  check("no zone in French 'et'", d && !d.said, d && JSON.stringify(d.said));
+}
 {
   const d = expectDate("Lunch with Sam tomorrow at 12:30", "2026-10-30 12:30");
   check(

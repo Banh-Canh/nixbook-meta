@@ -440,7 +440,9 @@ French, German and Vietnamese:
 
 Plain chips run at once. **Add to calendar** opens the Calendar's editor filled
 in (title, date and time, the place when the text has an address): you check
-it and save. The ✦ chips are AI: Quick AI's one-shots (Translate, Explain,
+it and save. A time said in another time zone ("Nov 4th at 9:00 PM ET",
+"15:00 CET", "10h UTC+7", "3pm Pacific Time") is put in your local time; the chip
+shows both, e.g. "Thu 5 Nov, 03:00 (9:00 PM ET)". The ✦ chips are AI: Quick AI's one-shots (Translate, Explain,
 Summarize, Rewrite) or an order for Muse (Fix it, Summarize the page, which
 reads the page with the page tools), answered in Muse's bubble; the text goes
 through the privacy mask for the model provider as everywhere else, and the

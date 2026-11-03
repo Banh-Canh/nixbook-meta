@@ -191,7 +191,9 @@ Singleton {
     function detail(c) {
         if (c.kind === "date") {
             const d = new Date(c.when)
-            return c.hasTime ? Qt.formatDateTime(d, "ddd d MMM, hh:mm") : Qt.formatDate(d, "ddd d MMM yyyy")
+            const shown = c.hasTime ? Qt.formatDateTime(d, "ddd d MMM, hh:mm") : Qt.formatDate(d, "ddd d MMM yyyy")
+            // Said in another time zone: the local time, then what was said.
+            return c.said ? `${shown} (${c.said})` : shown
         }
         if (c.kind === "error" || c.kind === "address") return String(c.detail ?? "").slice(0, 48)
         return String(c.detail ?? "")
