@@ -131,6 +131,8 @@ cmd_shell() {
   bash nixbook-shell/tests/meeting.sh || failed=1
   section 'nixbook-shell "Next up" predictions (nixbook-desktop-mcp predict)'
   bash nixbook-shell/tests/predict.sh || failed=1
+  section "nixbook-shell config assistant's answers"
+  bash nixbook-shell/tests/config-assistant.sh || failed=1
   section 'nixbook-shell "Find it" (find_anything, nixbook-desktop-mcp find)'
   bash nixbook-shell/tests/find-anything.sh || failed=1
   section 'nixbook-shell "While you were away" (nixbook-desktop-mcp away)'
