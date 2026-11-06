@@ -212,10 +212,10 @@ Agents are told to read through OCR or the accessibility tree before taking a sc
 
 ### Jellyfin
 
-Muse (the side panel's and the bubble's) reaches your Jellyfin library and its
-players through `jellyfin-mcp` ([its package](/packages/#jellyfin-mcp)),
-offered where Moonfin is installed (`nixbookShellConfig.jellyfinMcp.enable`)
-and off until set up:
+Muse (the side panel's and the bubble's) reaches your Jellyfin library and this
+computer's player through `jellyfin-mcp` ([its package](/packages/#jellyfin-mcp)),
+offered by default (`nixbookShellConfig.jellyfinMcp.enable`) and off until set
+up:
 
 1. **Settings → Desktop agents → Apps it can use**: turn **Jellyfin** on and
    enter your server (`ai.jellyfin.url`).
@@ -242,16 +242,14 @@ An admin's **API key** (Jellyfin: **Dashboard → API Keys**) still works:
 or `ai.jellyfin.apiKeyFile` in Nix. It reaches every user's library, so a
 sign-in is the better choice for anyone but the server's admin.
 
-**Where it plays.** By default fullscreen on this computer, in your own mpv
+**Where it plays.** Fullscreen on this computer, in your own mpv
 (its `mpv.conf`, scripts and keys): the `jellyfin-mpv-shim` user service
 (`jellyfinMcp.player.enable`), started once signed in, which Jellyfin's own
 apps can cast to as well. It saves where you stopped, marks watched and goes
 on to the next episode itself; nixbook's settings for it are merged into its
-`conf.json` on each switch, the rest of the file kept. Asked to play on
-**Moonfin**, the **TV** or a browser, Muse plays there instead, when that
-player takes remote control (the `sessions` tool says which do; other
-people's screens only when named; signed in as a user, only that user's
-players). A series starts at its next episode, an episode or film where you
+`conf.json` on each switch, the rest of the file kept. It is the only player
+Muse uses: never Moonfin, a TV or a browser, which the `sessions` tool only
+lists. A series starts at its next episode, an episode or film where you
 stopped.
 
 **Direct play.** The player plays the files as they are: mpv plays almost

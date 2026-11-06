@@ -200,7 +200,7 @@ Whether to enable the NixOS stateful firewall (nftables/iptables). Configures a 
 - **Type:** `boolean`
 - **Default:** `false`
 
-Whether to enable the gaming-oriented NixOS configuration. This module provides a production-grade gaming setup inspired by Jovian-NixOS (Steam Deck / SteamOS). It bundles: - Steam with remote play, Proton GE and Proton CachyOS compatibility, and extest - GameMode performance daemon - 32-bit graphics and driver support - Gamepad / controller udev rules (uinput, Valve HID devices) GPU-specific tuning (AMD kernel boot parameters and early modesetting) is gated behind the `gpu` option below, so this module is usable on both AMD and NVIDIA machines. Used on: anya (AMD gaming/streaming desktop), hanamichi (NVIDIA desktop). Reference: https://github.com/Jovian-Experiments/Jovian-NixOS
+Whether to enable the gaming-oriented NixOS configuration. This module provides a production-grade gaming setup inspired by Jovian-NixOS (Steam Deck / SteamOS). It bundles: - Steam with remote play, Proton GE and Proton CachyOS compatibility, and extest - GameMode performance daemon - 32-bit graphics and driver support - Gamepad / controller udev rules (uinput, Valve HID devices) GPU-specific tuning (AMD kernel boot parameters and early modesetting) is gated behind the `gpu` option below, so this module is usable on both AMD and NVIDIA machines. Used on: anya (AMD gaming/streaming desktop), hanamichi (NVIDIA desktop), totoro (AMD laptop, `gpu = "none"`: the AMD tuning is for desktops). Reference: https://github.com/Jovian-Experiments/Jovian-NixOS
 
 ### `customNixOSModules.gamingConfig.gpu`
 
@@ -488,7 +488,7 @@ Whether to hide desktop launcher entries for non-user-facing utilities, settings
 - **Type:** `boolean`
 - **Default:** `false`
 
-Whether to enable a curated set of development and DevOps tools. Installs: Language runtimes: - python3 Build / Nix tooling: - gnumake, devenv, nix-eval-jobs, nixos-generators Infrastructure-as-Code / deployment: - terraform, minio-client - google-cloud-sdk (with gke-gcloud-auth-plugin for GKE access) Code generation / API: - cobra-cli — Go CLI framework scaffolding - openapi-generator-cli — OpenAPI client/server generator - templ — Go HTML templating compiler - bruno / bruno-cli — open-source API client (Postman alternative) AI assistants: - antigravity-cli (`agy`) — Google's agent CLI (successor of gemini-cli, which nixpkgs is removing) - claude-code — Anthropic Claude Code CLI Developer utilities: - devbox — portable development environments via Nix - go-task — Makefile alternative (Taskfile) - runme — runnable Markdown notebooks - npins — Nix dependency pinning tool - openchoreo-cli — OpenChoreo internal developer platform CLI (occ) - opencode-manager (`ocm`) — k9s-style TUI to manage isolated OpenCode workspaces in containers; seeds the built-in module catalogue into ~/.config/opencode-manager/modules on activation Telemetry: sets CHECKPOINT_DISABLE (HashiCorp version/usage pings from terraform) and DO_NOT_TRACK (honoured by devbox, runme and other CLIs).
+Whether to enable a curated set of development and DevOps tools. Installs: Language runtimes: - python3 Build / Nix tooling: - gnumake, devenv, nix-eval-jobs, nixos-generators Infrastructure-as-Code / deployment: - terraform - google-cloud-sdk (with gke-gcloud-auth-plugin for GKE access) Code generation / API: - cobra-cli — Go CLI framework scaffolding - openapi-generator-cli — OpenAPI client/server generator - templ — Go HTML templating compiler - bruno / bruno-cli — open-source API client (Postman alternative) AI assistants: - antigravity-cli (`agy`) — Google's agent CLI (successor of gemini-cli, which nixpkgs is removing) - claude-code — Anthropic Claude Code CLI Developer utilities: - devbox — portable development environments via Nix - go-task — Makefile alternative (Taskfile) - runme — runnable Markdown notebooks - npins — Nix dependency pinning tool - openchoreo-cli — OpenChoreo internal developer platform CLI (occ) - opencode-manager (`ocm`) — k9s-style TUI to manage isolated OpenCode workspaces in containers; seeds the built-in module catalogue into ~/.config/opencode-manager/modules on activation Telemetry: sets CHECKPOINT_DISABLE (HashiCorp version/usage pings from terraform) and DO_NOT_TRACK (honoured by devbox, runme and other CLIs).
 
 ---
 
@@ -751,17 +751,17 @@ Whether to enable nixbook-shell, nixbook's Quickshell (QML) desktop shell (`prog
 
 ### `customHomeManagerModules.nixbookShellConfig.jellyfinMcp.enable`
 
-- **Type:** `null or boolean`
-- **Default:** `null`
+- **Type:** `boolean`
+- **Default:** `true`
 
-Whether to offer the nixbook-shell AI chat (Muse in the side panel and its speech bubble) the user's Jellyfin library through `customPkgs.jellyfin-mcp`: search, details, continue watching, next up, what plays where; play and control it, mark watched, favourites, playlists. Also the bubble's instant "play <title> season N episode M" (no model). Off in the chat until set up in Settings > Desktop agents > Apps it can use (the server, then a sign-in with your own Jellyfin account — no admin needed — or an admin's API key; or the `ai.jellyfin` settings).
+Whether to offer the nixbook-shell AI chat (Muse in the side panel and its speech bubble) the user's Jellyfin library through `customPkgs.jellyfin-mcp`: search, details, continue watching, next up, what plays where; play and control it in this computer's jellyfin-mpv-shim (`player.enable`, its only player), mark watched, favourites, playlists. Also the bubble's instant "play <title> season N episode M" (no model). Off in the chat until set up in Settings > Desktop agents > Apps it can use (the server, then a sign-in with your own Jellyfin account — no admin needed — or an admin's API key; or the `ai.jellyfin` settings).
 
 ### `customHomeManagerModules.nixbookShellConfig.jellyfinMcp.player.enable`
 
 - **Type:** `null or boolean`
 - **Default:** `null`
 
-Whether this computer is a Jellyfin player: jellyfin-mpv-shim as the `jellyfin-mpv-shim` user service, playing in your own mpv (fullscreen, your mpv config), castable from Jellyfin's apps, and where jellyfin-mcp plays by default. It saves progress, marks watched and plays the next episode itself. It starts once signed in, from Settings > Desktop agents > Jellyfin ("Connect the player").
+Whether this computer is a Jellyfin player: jellyfin-mpv-shim as the `jellyfin-mpv-shim` user service, playing in your own mpv (fullscreen, your mpv config), castable from Jellyfin's apps, and the only place jellyfin-mcp plays. It saves progress, marks watched and plays the next episode itself. It starts once signed in, from Settings > Desktop agents > Jellyfin ("Connect the player").
 
 ### `customHomeManagerModules.nixbookShellConfig.jellyfinMcp.player.maxBitrateMbps`
 
